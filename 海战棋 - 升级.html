@@ -1852,15 +1852,15 @@
             hitFocus: 2.0,              // 关注命中，但不如最高级敏感
             sonarFocus: 1.2,
             airstrikeAdvantage: 1.1,
-            sonarVarianceGate: 0.2,
+            sonarVarianceGate: 0.25,
             sonarUnknownRatio: 2 / 3,
             randomness: 0.2             // 20% 概率失误/随机
         },
         HARD: {
-            hitFocus: 4,                // 极度关注命中延伸
-            sonarFocus: 1.8,            // 高度信任声呐区域
+            hitFocus: 4.5,                // 极度关注命中延伸
+            sonarFocus: 2.0,            // 高度信任声呐区域
             airstrikeAdvantage: 0.85,   // 期望伤害略高即可转为空袭
-            sonarVarianceGate: 0.10,    // 低方差视为“机会不大”改侦查
+            sonarVarianceGate: 0.075,    // 低方差视为“机会不大”改侦查（标准化后，范围0,1
             sonarUnknownRatio: 5 / 9,     // 4格即可声呐侦查
             randomness: 0.0             // 绝对理性
         }
@@ -2192,7 +2192,13 @@
 
         const mean = scores.reduce((sum, v) => sum + v, 0) / scores.length;
         const variance = scores.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / scores.length;
-        const normVariance = maxScore > 0 ? variance / (maxScore * maxScore) : 0;
+        let normVariance = 0;
+        if (maxScore > 0) {
+            const half = maxScore / 2;
+            const denom = half > 0 ? half * half : 1;
+            normVariance = Math.min(1, variance / denom);
+        }
+        
         return { mean, variance, maxScore, normVariance };
     }
 
