@@ -7,7 +7,8 @@
 </head>
 <body>
   <header>
-    <h1>指挥官：决战大洋 (v7.0alpha)</h1>
+    <h1>指挥官：决战大洋</h1>
+    <button id="btn-menu-toggle" class="icon-btn" aria-label="菜单">⚙️</button>
   </header>
 
   <div id="help-btn" data-action="toggle-help">?</div>
@@ -54,6 +55,50 @@
       <div style="display: flex; gap: 10px; justify-content: center;">
         <button class="btn-blue" data-action="view-battlefield" style="font-size: 1.2rem; padding: 12px 20px;">👀 查看战场</button>
         <button class="btn-restart" data-action="restart-game" style="font-size: 1.2rem; padding: 12px 20px;">🔄 重新开始</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通用菜单模态框 (原设置菜单) -->
+  <div id="settings-modal" class="modal">
+    <div class="modal-content menu-modal-content">
+      <span class="close-btn" data-action="toggle-settings">&times;</span>
+      <h2 style="color: var(--accent); text-align: center; margin-top: 0;">☰ 菜单</h2>
+      
+      <div class="menu-grid">
+        <!-- 游戏控制 -->
+        <div class="menu-section">
+            <div class="menu-label">游戏控制</div>
+            <div class="menu-row">
+                <button id="mobile-menu-restart" class="menu-btn btn-restart">🔄 重新开始</button>
+                <button id="mobile-menu-random" class="menu-btn btn-blue">🎲 随机部署</button>
+            </div>
+            <button id="mobile-menu-reset" class="menu-btn btn-blue" style="width:100%; margin-top:8px">↩️ 全部回港</button>
+        </div>
+
+        <!-- 难度设置 -->
+        <div class="menu-section">
+            <div class="menu-label">AI 难度</div>
+            <div class="difficulty-bar">
+                <button class="diff-btn" id="mobile-diff-easy" data-difficulty="EASY">新兵</button>
+                <button class="diff-btn" id="mobile-diff-normal" data-difficulty="NORMAL">舰长</button>
+                <button class="diff-btn" id="mobile-diff-hard" data-difficulty="HARD">提督</button>
+            </div>
+        </div>
+
+        <!-- 选项 -->
+        <div class="menu-section">
+            <div class="menu-label">选项</div>
+            <div class="menu-row">
+                <button class="btn-mode" id="mobile-first-turn">先手：玩家 👤</button>
+                <button class="btn-mode" id="mobile-debug">🧠 AI 视角</button>
+            </div>
+        </div>
+        
+        <!-- 帮助 -->
+        <div class="menu-section">
+             <button id="mobile-menu-help" class="menu-btn btn-orange" style="width:100%">📖 游戏说明</button>
+        </div>
       </div>
     </div>
   </div>
@@ -107,22 +152,58 @@
 
       <div class="scroll-view">
         <div class="battlefield">
-          <div class="board-box">
-            <div class="board-title" style="color:#68d391">我方海域</div>
+          <div class="board-box" id="player-board-box">
+            <div class="board-title" style="color:#68d391">我方海域 (防守)</div>
             <div id="player-grid" class="grid"></div>
           </div>
-          <div class="board-box">
-            <div class="board-title" style="color:#fc8181">敌方海域</div>
+          <div class="board-box" id="enemy-board-box">
+            <div class="board-title" style="color:#fc8181">敌方海域 (进攻)</div>
             <div id="enemy-grid" class="grid"></div>
           </div>
         </div>
       </div>
 
-      <div class="bottom-controls">
-        <button class="btn-mode" id="btn-debug" title="AI 视角 (Debug)">🧠 AI 视角(别说我作弊哈)</button>
-        <button id="btn-reset" class="btn-blue" title="全部回港">🔄 全部回港</button>
-        <button id="btn-random" class="btn-blue" title="随机部署">🎲 随机部署</button>
-        <button class="btn-orange" id="start-btn" disabled>🚀 开始战斗</button>
+      <div class="bottom-controls" id="bottom-controls">
+        <!-- 移动端底部导航 (新设计) -->
+        <div class="mobile-bottom-bar">
+            <button class="nav-tab active" id="mb-tab-player">
+                <span class="icon">🛡️</span>
+                <span class="label">我方</span>
+            </button>
+            
+            <div class="action-center">
+                <!-- 部署阶段 -->
+                <div class="deploy-actions" id="mb-deploy-group">
+                    <button id="mb-btn-rotate" class="action-btn secondary" title="旋转">
+                        <span>🔄</span>
+                    </button>
+                    <button id="mb-btn-start" class="action-btn primary" disabled>
+                        <span>🚀 开始</span>
+                    </button>
+                </div>
+                <!-- 战斗阶段 -->
+                <div class="combat-actions" id="mb-combat-group" style="display:none">
+                    <button id="mb-btn-weapon" class="action-btn weapon-selector">
+                        <span id="mb-weapon-icon">💥</span>
+                        <span id="mb-weapon-name">主炮</span>
+                    </button>
+                </div>
+            </div>
+
+            <button class="nav-tab" id="mb-tab-enemy">
+                <span class="icon">🎯</span>
+                <span class="label">敌方</span>
+            </button>
+        </div>
+
+        <!-- 桌面端原有按钮 (移动端隐藏) -->
+        <div class="desktop-controls">
+            <button class="btn-mode" id="btn-debug" title="AI 视角 (Debug)">🧠 AI 视角</button>
+            <button id="btn-reset" class="btn-blue" title="全部回港">🔄 全部回港</button>
+            <button id="btn-settings" class="btn-blue" style="display:none" title="设置">⚙️ 设置</button>
+            <button id="btn-random" class="btn-blue" title="随机部署">🎲 随机部署</button>
+            <button class="btn-orange" id="start-btn" disabled>🚀 开始战斗</button>
+        </div>
       </div>
     </div>
 

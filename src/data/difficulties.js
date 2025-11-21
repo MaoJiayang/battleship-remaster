@@ -9,12 +9,12 @@
  */
 export const DIFFICULTY_SETTINGS = {
   EASY: {
-    hitFocus: 0.5, // 命中追击欲望最低，确保新手局更松散
-    sonarFocus: 0.5, // 对疑似目标反应弱，减少压迫感
-    airstrikeAdvantage: 1.6, // 只有空袭收益极佳时才投放
-    sonarVarianceGate: 0.4, // 仅在概率分布很平时才考虑声呐
-    sonarUnknownRatio: 1, // 必须几乎全是未知水域才扫描
-    randomness: 0.6 // 大量随机射击，主要依靠运气
+    hitFocus: 0.3, // 命中追击欲望最低，确保新手局更松散
+    sonarFocus: 0.2, // 对疑似目标反应弱，减少压迫感
+    airstrikeAdvantage: 1.5, // 只有空袭收益极佳时才投放
+    sonarVarianceGate: 0.4, // 概率分布不均匀度高时也考虑声呐
+    sonarUnknownRatio: 7 / 9, // 必须几乎全是未知水域才扫描
+    randomness: 0.5 // 大量随机射击，主要依靠运气
   },
   NORMAL: {
     hitFocus: 2.0, // 有明显连线意识但仍会分散火力
@@ -22,7 +22,7 @@ export const DIFFICULTY_SETTINGS = {
     airstrikeAdvantage: 1.1, // 空袭门槛适中，偶尔使用
     sonarVarianceGate: 0.25, // 当热点不够突出时会开声呐
     sonarUnknownRatio: 2 / 3, // 中等规模未知区域即可侦查
-    randomness: 0.35 // 仍保留少量随机，避免全程最优
+    randomness: 0.3 // 仍保留少量随机，避免全程最优
   },
   HARD: {
     hitFocus: 5.5, // 几乎不会放弃已命中线索

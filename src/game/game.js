@@ -1,12 +1,30 @@
-import { BOARD_SIZE, CELL_SIZE as DEFAULT_CELL_SIZE } from "../config/constants";
+import { BOARD_SIZE, CELL_SIZE as DEFAULT_CELL_SIZE, INTERACTION_TIMING } from "../config/constants";
 import { SHIP_TYPES } from "../data/ships";
 import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
     // === 动态尺寸获取 ===
     function getCellSize() {
         const cell = document.querySelector('.cell');
-        // 如果 DOM 中有格子，测量其实际渲染宽度；否则使用默认值
-        return cell ? cell.getBoundingClientRect().width : DEFAULT_CELL_SIZE;
+        let size = cell ? cell.getBoundingClientRect().width : 0;
+        
+        // 如果获取失败 (例如元素隐藏)，尝试根据 CSS 逻辑估算
+        if (!size || size === 0) {
+            if (window.innerWidth <= 768) {
+                // 对应 CSS: clamp(26px, 8.5vw, 34px)
+                const vw = window.innerWidth * 0.085;
+                size = Math.max(26, Math.min(vw, 34));
+            } else {
+                size = DEFAULT_CELL_SIZE;
+            }
+        }
+        return size;
+    }
+
+    // === 辅助：获取当前交互时间配置 ===
+    function getTiming() {
+        return window.innerWidth <= INTERACTION_TIMING.MOBILE_BREAKPOINT 
+            ? INTERACTION_TIMING.MOBILE 
+            : INTERACTION_TIMING.DESKTOP;
     }
 
     // === 配置 ===
@@ -106,6 +124,10 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
     export function initGame() {
         initGrids();
+        
+        // 优先初始化视图状态，确保移动端容器可见，以便正确计算尺寸
+        switchMobileView('player');
+
         initShips();
         bindUiEvents();
         
@@ -130,6 +152,9 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
         initHelpShips();
         setDifficulty(currentDifficulty, { silent: true });
+        
+        // 初始化默认视图
+        switchMobileView('player');
     }
 
     function createEmptyGrid() {
@@ -164,6 +189,15 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         const helpBtn = document.getElementById('help-btn');
         if (helpBtn) helpBtn.addEventListener('click', toggleHelp);
 
+        // 菜单按钮 (Header)
+        const menuBtn = document.getElementById('btn-menu-toggle');
+        const settingsModal = document.getElementById('settings-modal');
+        if (menuBtn && settingsModal) {
+            menuBtn.addEventListener('click', () => {
+                settingsModal.style.display = 'block';
+            });
+        }
+
         const helpModal = document.getElementById('help-modal');
         if (helpModal) {
             helpModal.addEventListener('click', (event) => {
@@ -174,7 +208,13 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         }
 
         document.querySelectorAll('[data-weapon]').forEach(btn => {
-            btn.addEventListener('click', () => selectWeapon(btn.dataset.weapon));
+            btn.addEventListener('click', () => {
+                selectWeapon(btn.dataset.weapon);
+                // 移动端选择武器后自动收起武器栏
+                if (window.innerWidth <= 768) {
+                    document.getElementById('weapon-bar').classList.remove('show');
+                }
+            });
         });
 
         document.querySelectorAll('[data-difficulty]').forEach(btn => {
@@ -208,6 +248,125 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
         const restartBtn = document.querySelector('[data-action="restart-game"]');
         if (restartBtn) restartBtn.addEventListener('click', closeGameOverAndReset);
+
+        // Settings Modal (Menu)
+        const settingsBtn = document.getElementById('btn-settings');
+        if (settingsBtn && settingsModal) {
+            settingsBtn.addEventListener('click', () => {
+                settingsModal.style.display = 'block';
+            });
+            
+            settingsModal.addEventListener('click', (e) => {
+                if (e.target === settingsModal) settingsModal.style.display = 'none';
+            });
+
+            const closeSettings = settingsModal.querySelector('.close-btn');
+            if (closeSettings) {
+                closeSettings.addEventListener('click', () => settingsModal.style.display = 'none');
+            }
+
+            // Mobile specific bindings
+            const mFirstTurn = document.getElementById('mobile-first-turn');
+            if (mFirstTurn) mFirstTurn.addEventListener('click', toggleFirstTurn);
+
+            const mDebug = document.getElementById('mobile-debug');
+            if (mDebug) mDebug.addEventListener('click', toggleAiDebug);
+
+            const mReset = document.getElementById('mobile-reset'); // 旧 ID 兼容
+            if (mReset) mReset.addEventListener('click', () => {
+                resetToDock();
+                settingsModal.style.display = 'none';
+            });
+
+            // 新菜单按钮绑定
+            const mmRestart = document.getElementById('mobile-menu-restart');
+            if (mmRestart) mmRestart.addEventListener('click', () => {
+                if (gameState === 'PLAYING' || gameState === 'END') {
+                    if(confirm("确定要重新开始吗？")) {
+                        resetGameFull();
+                        settingsModal.style.display = 'none';
+                    }
+                } else {
+                    resetGameFull();
+                    settingsModal.style.display = 'none';
+                }
+            });
+
+            const mmRandom = document.getElementById('mobile-menu-random');
+            if (mmRandom) mmRandom.addEventListener('click', () => {
+                autoDeploy();
+                settingsModal.style.display = 'none';
+            });
+
+            const mmReset = document.getElementById('mobile-menu-reset');
+            if (mmReset) mmReset.addEventListener('click', () => {
+                resetToDock();
+                settingsModal.style.display = 'none';
+            });
+
+            const mmHelp = document.getElementById('mobile-menu-help');
+            if (mmHelp) mmHelp.addEventListener('click', () => {
+                settingsModal.style.display = 'none';
+                toggleHelp();
+            });
+        }
+
+        // Mobile View Switch (Old & New)
+        const tabPlayer = document.getElementById('tab-view-player');
+        const tabEnemy = document.getElementById('tab-view-enemy');
+        if (tabPlayer) tabPlayer.addEventListener('click', () => switchMobileView('player'));
+        if (tabEnemy) tabEnemy.addEventListener('click', () => switchMobileView('enemy'));
+
+        // New Mobile Bottom Bar Bindings
+        const mbTabPlayer = document.getElementById('mb-tab-player');
+        const mbTabEnemy = document.getElementById('mb-tab-enemy');
+        if (mbTabPlayer) mbTabPlayer.addEventListener('click', () => switchMobileView('player'));
+        if (mbTabEnemy) mbTabEnemy.addEventListener('click', () => switchMobileView('enemy'));
+
+        const mbRotate = document.getElementById('mb-btn-rotate');
+        if (mbRotate) mbRotate.addEventListener('click', toggleDeployMode);
+
+        const mbStart = document.getElementById('mb-btn-start');
+        if (mbStart) mbStart.addEventListener('click', handleStartOrRestart);
+
+        const mbWeapon = document.getElementById('mb-btn-weapon');
+        if (mbWeapon) mbWeapon.addEventListener('click', () => {
+            const bar = document.getElementById('weapon-bar');
+            bar.classList.toggle('show');
+        });
+    }
+
+    // === 移动端视图切换逻辑 ===
+    function switchMobileView(viewName) {
+        // 仅在移动端生效 (通过检测按钮是否可见，或者直接操作类名，PC端CSS会忽略这些类名)
+        const pBox = document.getElementById('player-board-box');
+        const eBox = document.getElementById('enemy-board-box');
+        
+        // Old tabs
+        const tabP = document.getElementById('tab-view-player');
+        const tabE = document.getElementById('tab-view-enemy');
+        
+        // New tabs
+        const mbTabP = document.getElementById('mb-tab-player');
+        const mbTabE = document.getElementById('mb-tab-enemy');
+
+        // 移除所有激活状态
+        pBox.classList.remove('active-view');
+        eBox.classList.remove('active-view');
+        if(tabP) tabP.classList.remove('active');
+        if(tabE) tabE.classList.remove('active');
+        if(mbTabP) mbTabP.classList.remove('active');
+        if(mbTabE) mbTabE.classList.remove('active');
+
+        if (viewName === 'player') {
+            pBox.classList.add('active-view');
+            if(tabP) tabP.classList.add('active');
+            if(mbTabP) mbTabP.classList.add('active');
+        } else {
+            eBox.classList.add('active-view');
+            if(tabE) tabE.classList.add('active');
+            if(mbTabE) mbTabE.classList.add('active');
+        }
     }
 
     // === 新增：攻击范围高亮逻辑 ===
@@ -358,15 +517,31 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
     function toggleFirstTurn() {
         firstTurn = firstTurn === 'PLAYER' ? 'AI' : 'PLAYER';
+        const text = firstTurn === 'PLAYER' ? "先手：玩家 👤" : "先手：电脑 🤖";
+        
         const btn = document.getElementById('first-turn-toggle');
-        btn.innerText = firstTurn === 'PLAYER' ? "先手：玩家 👤" : "先手：电脑 🤖";
+        if (btn) btn.innerText = text;
+        
+        const mBtn = document.getElementById('mobile-first-turn');
+        if (mBtn) mBtn.innerText = text;
     }
 
     function toggleAiDebug() {
         showAiDebug = !showAiDebug;
+        const text = showAiDebug ? "🧠 AI 视角: 开启" : "🧠 AI 视角: 关闭";
+        const bg = showAiDebug ? "#ed8936" : "";
+
         const btn = document.getElementById('btn-debug');
-        btn.innerText = showAiDebug ? "🧠 AI 视角: 开启" : "🧠 AI 视角: 关闭";
-        btn.style.background = showAiDebug ? "#ed8936" : ""; // Orange when active
+        if (btn) {
+            btn.innerText = text;
+            btn.style.background = bg;
+        }
+
+        const mBtn = document.getElementById('mobile-debug');
+        if (mBtn) {
+            mBtn.innerText = text;
+            mBtn.style.background = bg;
+        }
         
         if (showAiDebug) {
             updateAiHeatmapVisuals();
@@ -743,8 +918,12 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
     function checkReady() {
         const allReady = myShips.every(s => !s.inDock);
         const btn = document.getElementById('start-btn');
+        const mbBtn = document.getElementById('mb-btn-start');
+        
         if (gameState === 'SETUP') {
             btn.disabled = !allReady;
+            if(mbBtn) mbBtn.disabled = !allReady;
+            
             if(allReady) {
                 btn.className = "btn-orange";
             } else {
@@ -765,44 +944,77 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
     }
 
     function resetGameFull() {
+        document.body.classList.remove('game-playing'); // 移除战斗状态类
         clearAiTurnTimeout();
         currentWinner = null;
         gameState = 'SETUP';
         document.getElementById('dock').style.display = 'flex';
         document.getElementById('battle-panel').style.display = 'none';
         
+        // 切换移动端底部栏
+        const mbDeploy = document.getElementById('mb-deploy-group');
+        const mbCombat = document.getElementById('mb-combat-group');
+        if(mbDeploy) mbDeploy.style.display = 'flex';
+        if(mbCombat) mbCombat.style.display = 'none';
+        
         document.getElementById('dock').style.pointerEvents = 'auto';
         document.getElementById('dock').style.opacity = 1;
-        document.getElementById('rotate-toggle').disabled = false;
-        document.getElementById('first-turn-toggle').disabled = false;
-        document.getElementById('btn-debug').disabled = false;
-        document.getElementById('btn-reset').disabled = false;
-        document.getElementById('btn-random').disabled = false;
+        
+        // Enable controls
+        const controls = [
+            'rotate-toggle', 'first-turn-toggle', 'btn-debug', 'btn-reset', 'btn-random',
+            'mobile-first-turn', 'mobile-debug', 'mobile-reset',
+            'mobile-menu-random', 'mobile-menu-reset'
+        ];
+        controls.forEach(id => {
+            const el = document.getElementById(id);
+            if(el) el.disabled = false;
+        });
 
         const btn = document.getElementById('start-btn');
         btn.innerText = "🚀 开始战斗";
         btn.className = "btn-orange";
         btn.disabled = true;
+        
+        const mbBtn = document.getElementById('mb-btn-start');
+        if(mbBtn) mbBtn.disabled = true;
 
         initGrids();
         document.getElementById('enemy-grid').style.pointerEvents = 'none';
         myGridMap = createEmptyGrid();
         resetToDock();
         document.getElementById('log').innerHTML = '<div class="log-line c-sys">游戏已重置。</div>';
+        
+        // 重置时切回我方视角以便部署
+        switchMobileView('player');
     }
 
     function startGame() {
+        document.body.classList.add('game-playing'); // 添加战斗状态类，用于 CSS 控制武器栏显示
         clearAiTurnTimeout();
         currentWinner = null;
         gameState = 'PLAYING';
         document.getElementById('dock').style.display = 'none';
         document.getElementById('battle-panel').style.display = 'flex';
         
-        document.getElementById('rotate-toggle').disabled = true;
-        document.getElementById('first-turn-toggle').disabled = true;
-        // document.getElementById('btn-debug').disabled = true; // Debug 按钮战斗中可用
-        document.getElementById('btn-reset').disabled = true;
-        document.getElementById('btn-random').disabled = true;
+        // 切换移动端底部栏
+        const mbDeploy = document.getElementById('mb-deploy-group');
+        const mbCombat = document.getElementById('mb-combat-group');
+        if(mbDeploy) mbDeploy.style.display = 'none';
+        if(mbCombat) mbCombat.style.display = 'flex';
+        
+        // Disable setup controls
+        const disableList = [
+            'rotate-toggle', 'first-turn-toggle', 'btn-reset', 'btn-random',
+            'mobile-first-turn', 'mobile-reset',
+            'mobile-menu-random', 'mobile-menu-reset'
+        ];
+        disableList.forEach(id => {
+            const el = document.getElementById(id);
+            if(el) el.disabled = true;
+        });
+        
+        // Debug remains active
         
         myShips.forEach(s => s.el.style.cursor = 'default');
         
@@ -818,10 +1030,13 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         if (firstTurn === 'PLAYER') {
             log("战斗开始！玩家先手，点击敌方海域开火。", "c-warn");
             document.getElementById('enemy-grid').style.pointerEvents = 'auto';
+            switchMobileView('enemy'); // 自动切到敌方视角
         } else {
             log("战斗开始！电脑先手。", "c-warn");
             document.getElementById('enemy-grid').style.pointerEvents = 'none';
-            scheduleAiTurn(1000); // AI先手时的初始延迟
+            switchMobileView('player'); // 自动切到我方视角
+            // AI 先手时的初始延迟，使用 AI_ACTION_DELAY 即可
+            scheduleAiTurn(getTiming().AI_ACTION_DELAY); 
         }
     }
 
@@ -891,6 +1106,15 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         document.querySelectorAll('.weapon-btn').forEach(btn => btn.classList.remove('active'));
         const btnId = type === 'AP' ? 'btn-ap' : (type === 'HE' ? 'btn-he' : 'btn-sonar');
         document.getElementById(btnId).classList.add('active');
+
+        // 更新移动端武器按钮显示
+        const mbName = document.getElementById('mb-weapon-name');
+        const mbIcon = document.getElementById('mb-weapon-icon');
+        if (mbName && mbIcon) {
+            if (type === 'AP') { mbName.innerText = '主炮'; mbIcon.innerText = '💥'; }
+            else if (type === 'HE') { mbName.innerText = '空袭'; mbIcon.innerText = '✈️'; }
+            else if (type === 'SONAR') { mbName.innerText = '水听'; mbIcon.innerText = '📡'; }
+        }
     }
 
     function updateWeaponStates() {
@@ -1050,7 +1274,14 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         updateStatus();
         document.getElementById('enemy-grid').style.pointerEvents = 'none';
         if (gameState === 'PLAYING') {
-            scheduleAiTurn(300); // 玩家回合结束后的AI反应延迟 
+            const timing = getTiming();
+            // 玩家回合结束，根据配置延迟切换视角
+            if (timing.VIEW_SWITCH_DELAY > 0) {
+                setTimeout(() => {
+                    if(gameState === 'PLAYING') switchMobileView('player');
+                }, timing.VIEW_SWITCH_DELAY);
+            }
+            scheduleAiTurn(timing.AI_ACTION_DELAY); 
         }
     }
 
@@ -1100,12 +1331,14 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         currentDifficulty = level;
         AI_PROB_CONFIG = { ...DIFFICULTY_SETTINGS[level] };
         
-        const btns = document.querySelectorAll('.diff-btn');
-        btns.forEach(b => b.classList.remove('active'));
-        
-        if (level === 'EASY') btns[0].classList.add('active');
-        else if (level === 'NORMAL') btns[1].classList.add('active');
-        else btns[2].classList.add('active');
+        // 更新所有难度按钮状态 (包括桌面端和移动端设置菜单)
+        document.querySelectorAll('.diff-btn').forEach(btn => {
+            if (btn.dataset.difficulty === level) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
 
         if (!silent) {
             log(`AI 难度已调整为: ${level === 'EASY' ? '新兵 (简单)' : (level === 'NORMAL' ? '舰长 (困难)' : '提督 (冷酷)')}`, "c-sys");
@@ -1129,8 +1362,19 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         }, delay);
     }
     
+    function clearLastEnemyAttacks() {
+        const pGrid = document.getElementById('player-grid');
+        pGrid.querySelectorAll('.last-enemy-attack').forEach(el => {
+            el.classList.remove('last-enemy-attack');
+        });
+    }
+
     function aiTurn() {
         if (gameState !== 'PLAYING') return;
+        
+        // 清除上一次的攻击标记
+        clearLastEnemyAttacks();
+
         // 1. 资源与能力检查
         const aiCV = enemyShips.some(s => s.code === 'CV' && !s.sunk);
         const aiCL = enemyShips.some(s => s.code === 'CL' && !s.sunk);
@@ -1221,6 +1465,17 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
             });
             log(`敌方发动空袭 (${r+1},${c+1})`, "c-e");
         } else if (weapon === 'SONAR') {
+            // 标记声纳扫描区域 (3x3)
+            for(let i=-1; i<=1; i++) {
+                for(let j=-1; j<=1; j++) {
+                    let nr = r+i, nc = c+j;
+                    if (nr>=0 && nr<BOARD_SIZE && nc>=0 && nc<BOARD_SIZE) {
+                        const cell = document.querySelector(`#player-grid .cell[data-r='${nr}'][data-c='${nc}']`);
+                        if(cell) cell.classList.add('last-enemy-attack');
+                    }
+                }
+            }
+
             let found = false;
             for(let i=-1; i<=1; i++) {
                 for(let j=-1; j<=1; j++) {
@@ -1238,6 +1493,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
                 markAiDetectionArea(r, c);
             } else {
                 log(`敌方声纳扫描 (${r+1},${c+1})：无反应。`, "c-sys");
+                
                 for(let i=-1; i<=1; i++) {
                     for(let j=-1; j<=1; j++) {
                         let nr = r+i, nc = c+j;
@@ -1257,6 +1513,13 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         const enemyGridEl = document.getElementById('enemy-grid');
         if (gameState === 'PLAYING') {
             enemyGridEl.style.pointerEvents = 'auto';
+            // AI 回合结束，根据配置切回敌方视角
+            const timing = getTiming();
+            if (timing.TURN_BACK_DELAY > 0) {
+                setTimeout(() => {
+                    if(gameState === 'PLAYING') switchMobileView('enemy');
+                }, timing.TURN_BACK_DELAY);
+            }
         } else {
             enemyGridEl.style.pointerEvents = 'none';
         }
@@ -1501,6 +1764,9 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
     function aiProcessHit(r, c, dmg) {
         const uiCell = document.querySelector(`#player-grid .cell[data-r='${r}'][data-c='${c}']`);
         uiCell.classList.remove('ai-detect');
+        
+        // 标记为最后一次攻击点
+        uiCell.classList.add('last-enemy-attack');
 
         let hitShip = null;
         let hitIndex = -1;

@@ -1,4 +1,4 @@
-        :root {
+:root {
             --bg-color: #1a202c;
             --panel-bg: #2d3748;
             --water: #2b6cb0;
@@ -126,6 +126,14 @@
             justify-content: center;
         }
 
+        /* 移动端按钮宽度适配 */
+        @media (max-width: 768px) {
+            .bottom-controls button {
+                min-width: auto; /* 取消最小宽度限制 */
+                padding: 8px 12px;
+            }
+        }
+
         /* 面板收起状态 */
         .panel-collapsed {
             width: 0 !important;
@@ -233,6 +241,15 @@
             z-index: 60;
         }
 
+        /* 敌方最后一次攻击的高亮 */
+        .last-enemy-attack {
+            /* 浅红色半透明背景 */
+            background-color: rgba(252, 129, 129, 0.3) !important;
+            /* 浅红色边框 */
+            box-shadow: inset 0 0 0 2px #fc8181;
+            z-index: 200;
+        }
+
         /* 武器栏 */
         .weapon-bar {
             display: flex;
@@ -331,7 +348,7 @@
             z-index: 20;
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             overflow: hidden;
-            white-space: nowrap;
+            white-space: normal; /* 修复：允许自动换行 */
         }
         .log-header { padding: 10px; background: #232936; text-align: center; font-weight: bold; color: #90cdf4; }
         .log-content { flex: 1; overflow-y: auto; padding: 10px; font-family: Consolas, monospace; font-size: 12px; }
@@ -627,35 +644,177 @@
     .toggle-btn { display: none; }
 
     /* 滚动区域自适应 */
-    .scroll-view { overflow: visible; }
+    .scroll-view { 
+        overflow: visible; 
+        padding-bottom: 120px; /* 防止被底部固定栏遮挡 */
+    }
 
-    /* 战场垂直排列 */
+    /* 战场垂直排列 -> 改为单视图切换模式 (优化版：使用 Grid 堆叠避免闪烁) */
     .battlefield {
-        flex-direction: column;
-        gap: 20px;
-        padding: 10px 0;
+        display: grid;
+        grid-template-areas: "stack";
+        width: 100%;
+        flex: 1;
+        padding: 0;
         margin: 0;
+        gap: 0;
+        position: relative;
     }
     
-    .board-box { width: 100%; }
-
-    /* 底部按钮栏 */
-    .bottom-controls {
-        height: auto;
-        flex-wrap: wrap;
-        padding: 10px;
-        gap: 8px;
-        position: sticky;
-        bottom: 0;
-        background: rgba(23, 25, 35, 0.95);
-        border-top: 1px solid #4a5568;
+    /* 移动端默认隐藏所有棋盘盒子 */
+    .board-box { 
+        grid-area: stack;
+        width: 100%; 
+        display: flex;
+        flex: 1;
+        justify-content: center;
+        padding-top: 20px;
+        
+        /* 优化动画：不再隐藏旧视图，而是让其留在底层 */
+        /* 这样新视图淡入时，底部是旧视图而不是黑色背景，彻底消除闪烁 */
+        visibility: visible; 
+        z-index: 0;
+        opacity: 1;
+        pointer-events: none; /* 非激活状态不可交互 */
     }
 
-    .bottom-controls button {
-        flex: 1 1 40%;
-        min-width: 0;
-        padding: 12px 5px;
-        font-size: 13px;
+    /* 只有被激活的视图才显示 */
+    .board-box.active-view {
+        z-index: 10;
+        pointer-events: auto;
+    }
+
+    /* 标题进入动画 */
+    .board-box.active-view .board-title {
+        animation: titleEnter 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    }
+    
+    /* 修复：非激活视图隐藏标题，防止文字重叠透视 */
+    .board-box:not(.active-view) .board-title {
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0s; /* 瞬间隐藏 */
+    }
+
+    /* 棋盘进入动画 */
+    .board-box.active-view .grid {
+        animation: gridEnter 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5); /* 增强阴影提升层次感 */
+    }
+
+    @keyframes titleEnter {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes gridEnter {
+        from { opacity: 0; transform: scale(0.95) translateY(10px); }
+        to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    /* @keyframes fadeInView ... 移除 */
+
+    /* 底部按钮栏 - 改造为固定 HUD */
+    .bottom-controls {
+        height: auto;
+        flex-wrap: nowrap; /* 不换行 */
+        padding: 8px 10px;
+        gap: 8px;
+        position: fixed; /* 固定底部 */
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(26, 32, 44, 0.98);
+        border-top: 1px solid #4a5568;
+        z-index: 1000;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
+        display: flex;
+        justify-content: space-between;
+    }
+
+    /* 隐藏原有的非核心按钮，精简界面 */
+    #btn-reset, #btn-debug {
+        display: none; 
+    }
+    /* 移动端显示随机部署与设置 */
+    #btn-random, #btn-settings {
+        display: flex !important;
+    }
+
+    /* 移动端隐藏部分顶部控件 (移至设置菜单) */
+    .dock-panel .difficulty-bar, 
+    .dock-panel #first-turn-toggle,
+    .dock-panel .control-group > div:first-child { /* "AI 难度" label */
+        display: none;
+    }
+    
+    /* 确保方向切换按钮仍然显示 */
+    .dock-panel #rotate-toggle {
+        display: flex;
+        width: 100%; /* 独占一行 */
+        justify-content: center;
+    }
+
+    /* 移动端专属：视角切换按钮 - 默认显示 */
+    .mobile-tab-btn {
+        display: flex !important; /* 强制显示 */
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        background: transparent;
+        border: none;
+        color: #718096;
+        padding: 0 15px;
+        min-width: 60px;
+        cursor: pointer;
+    }
+    .mobile-tab-btn.active {
+        color: #63b3ed;
+        text-shadow: 0 0 10px rgba(99, 179, 237, 0.5);
+    }
+    .mobile-tab-btn span { font-size: 20px; margin-bottom: 4px; display: block; }
+
+    /* 调整 Start 按钮在移动端的样式 */
+    #start-btn {
+        flex: 2;
+        margin: 0 10px;
+        border-radius: 20px;
+        box-shadow: 0 4px 10px rgba(237, 137, 54, 0.4);
+    }
+
+    /* 武器栏微调 */
+    .weapon-bar {
+        position: fixed;
+        bottom: 70px; /* 在底部栏上方 */
+        left: 50%;
+        transform: translateX(-50%);
+        width: 90%;
+        background: rgba(45, 55, 72, 0.9);
+        padding: 8px;
+        border-radius: 12px;
+        border: 1px solid #4a5568;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+        z-index: 999;
+        display: none; /* 默认隐藏，战斗开始后显示 */
+    }
+    
+    /* 战斗状态下显示武器栏 - 移除此规则，完全由 JS 控制 */
+    /* body.game-playing .weapon-bar { display: flex; } */
+
+    /* 调整装备区，防止被底部遮挡 */
+    .dock-panel {
+        padding-bottom: 20px;
+    }
+    
+    /* 调整日志区 */
+    .log-panel {
+        display: none; /* 移动端战斗时暂时隐藏日志，太占地 */
+    }
+
+    /* 帮助按钮上移 */
+    #help-btn {
+        bottom: 140px; 
     }
 
     /* 装备区容器横向排列 (针对舰船列表) */
@@ -693,4 +852,227 @@
     }
 }
 
-        
+/* === 新增交互设计样式 === */
+
+/* 顶部菜单按钮 */
+.icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 24px;
+    cursor: pointer;
+    padding: 8px;
+    display: none; /* 默认隐藏，移动端显示 */
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 60;
+    text-shadow: 0 0 10px rgba(0,0,0,0.5);
+}
+.icon-btn:hover {
+    color: var(--accent);
+    transform: translateY(-50%) rotate(90deg);
+    transition: all 0.3s;
+}
+
+/* 菜单模态框样式优化 */
+.menu-modal-content {
+    background: #1a202c;
+    border: 1px solid #2d3748;
+    padding: 20px;
+}
+.menu-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+.menu-section {
+    background: #2d3748;
+    padding: 15px;
+    border-radius: 12px;
+}
+.menu-label {
+    font-size: 12px;
+    color: #a0aec0;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: bold;
+}
+.menu-row {
+    display: flex;
+    gap: 10px;
+}
+.menu-btn {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: none;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+/* 底部栏新设计容器 */
+.mobile-bottom-bar {
+    display: none; /* 默认隐藏 */
+    width: 100%;
+    height: 65px;
+    background: #1a202c;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.3);
+    position: relative;
+    z-index: 100;
+}
+
+.nav-tab {
+    flex: 0 0 60px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: #718096;
+    font-size: 10px;
+    padding: 0;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+.nav-tab .icon { font-size: 22px; margin-bottom: 4px; }
+.nav-tab.active { color: #63b3ed; }
+.nav-tab.active .icon { transform: scale(1.1); }
+
+.action-center {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    padding: 0 15px;
+}
+
+.deploy-actions, .combat-actions {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+    justify-content: center;
+}
+
+.action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: none;
+    border-radius: 16px;
+    font-weight: bold;
+    transition: transform 0.1s, background 0.2s;
+    cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+.action-btn:active { transform: scale(0.95); }
+
+.action-btn.primary {
+    background: var(--accent);
+    color: #1a202c;
+    flex: 2;
+    height: 44px;
+    font-size: 16px;
+}
+.action-btn.primary:disabled {
+    background: #4a5568;
+    color: #a0aec0;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.action-btn.secondary {
+    background: #2d3748;
+    color: var(--text);
+    flex: 1;
+    height: 44px;
+    border: 1px solid #4a5568;
+    font-size: 18px; /* 图标大一点 */
+}
+
+.weapon-selector {
+    background: linear-gradient(135deg, #3182ce, #2b6cb0);
+    color: white;
+    width: 100%;
+    height: 44px;
+    border-radius: 22px;
+    font-size: 16px;
+    border: 1px solid #4299e1;
+}
+
+/* 桌面端控制栏 */
+.desktop-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    width: 100%;
+    justify-content: center;
+}
+
+/* 移动端适配覆盖 */
+@media (max-width: 768px) {
+    header {
+        justify-content: space-between;
+        padding: 0 15px;
+    }
+    .icon-btn { display: block; }
+    
+    .bottom-controls {
+        padding: 0;
+        background: #1a202c;
+        height: auto;
+        border-top: 1px solid #2d3748;
+    }
+    
+    .mobile-bottom-bar { display: flex; }
+    .desktop-controls { display: none; }
+    
+    /* 调整武器栏位置，使其位于底部栏上方 */
+    .weapon-bar {
+        bottom: 75px !important; /* 65px bar + 10px gap */
+        width: auto !important;
+        left: 15px !important;
+        right: 15px !important;
+        transform: none !important;
+        background: rgba(26, 32, 44, 0.95) !important;
+        backdrop-filter: blur(10px);
+        border: 1px solid #4a5568;
+        display: none; /* 默认隐藏，通过 JS 控制显示 */
+    }
+    
+    /* 当武器栏激活时显示 */
+    .weapon-bar.show {
+        display: flex !important;
+        animation: slideUp 0.2s ease-out;
+    }
+    
+    @keyframes slideUp {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* 隐藏旧的移动端元素 */
+    .mobile-tab-btn { display: none !important; }
+    #btn-random, #btn-settings { display: none !important; }
+    
+    /* 调整 Dock 面板，避免被底部栏遮挡 */
+    .dock-panel {
+        padding-bottom: 10px;
+    }
+    
+    /* 调整滚动区域 */
+    .scroll-view {
+        padding-bottom: 80px;
+    }
+}
