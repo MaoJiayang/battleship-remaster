@@ -1,18 +1,25 @@
-import { BOARD_SIZE, CELL_SIZE } from "../config/constants";
+import { BOARD_SIZE, CELL_SIZE as DEFAULT_CELL_SIZE } from "../config/constants";
 import { SHIP_TYPES } from "../data/ships";
 import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
+
+    // === 动态尺寸获取 ===
+    function getCellSize() {
+        const cell = document.querySelector('.cell');
+        // 如果 DOM 中有格子，测量其实际渲染宽度；否则使用默认值
+        return cell ? cell.getBoundingClientRect().width : DEFAULT_CELL_SIZE;
+    }
 
     // === 配置 ===
 
     // 移除 SVG_SHIPS，改用 DOM 生成
     function getShipDom(code) {
         let html = '';
-        // 缩放比例：根据美术资源尺寸(240/170/120/60)与游戏格子(160/120/80/40)的比例计算
-        // 大约是 0.66 (2/3)
+        // 原始美术资源宽度定义 (px)
+        // BB: 240, CV: 240, CL: 170, DD: 120, SS: 60
         
         if (code === 'BB') {
             html = `
-                <div class="hull-scale-wrapper" style="transform: scale(0.66)">
+                <div class="hull-scale-wrapper" data-original-width="240">
                     <div class="hull-bb">
                         <div class="turret-base facing-left" style="left: 25px;"><div class="turret-bb"></div></div>
                         <div class="turret-base facing-left" style="left: 52px; z-index: 11;"><div class="turret-bb"></div></div>
@@ -30,7 +37,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
                 </div>`;
         } else if (code === 'CV') {
             html = `
-                <div class="hull-scale-wrapper" style="transform: scale(0.66)">
+                <div class="hull-scale-wrapper" data-original-width="240">
                     <div class="hull-cv">
                         <div class="cv-arrow"></div>
                         <div class="cv-elevator"></div>
@@ -39,9 +46,8 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
                     </div>
                 </div>`;
         } else if (code === 'CL') {
-            // CL 原长 170，目标 120 (3格)，120/170 ≈ 0.705
             html = `
-                <div class="hull-scale-wrapper" style="transform: scale(0.7)">
+                <div class="hull-scale-wrapper" data-original-width="170">
                     <div class="hull-cl">
                         <div class="turret-base facing-left" style="left: 15px;"><div class="turret-cl"></div></div>
                         <div class="turret-base facing-left" style="left: 35px; z-index:11"><div class="turret-cl"></div></div>
@@ -56,7 +62,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
                 </div>`;
         } else if (code === 'DD') {
             html = `
-                <div class="hull-scale-wrapper" style="transform: scale(0.66)">
+                <div class="hull-scale-wrapper" data-original-width="120">
                     <div class="hull-dd">
                         <div class="turret-base facing-left" style="left: 10px;"><div class="turret-dd"></div></div>
                         <div class="turret-base facing-left" style="left: 24px; z-index:11"><div class="turret-dd"></div></div>
@@ -71,7 +77,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
                 </div>`;
         } else if (code === 'SS') {
             html = `
-                <div class="hull-scale-wrapper" style="transform: scale(0.66)">
+                <div class="hull-scale-wrapper" data-original-width="60">
                     <div class="hull-ss">
                         <div class="ss-tower">
                             <div class="ss-periscope"></div>
@@ -102,8 +108,26 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         initGrids();
         initShips();
         bindUiEvents();
+        
+        // Mouse Events
         document.addEventListener('mouseup', onGlobalMouseUp);
         document.addEventListener('mousemove', onGlobalMouseMove);
+        
+        // Touch Events (Mobile)
+        document.addEventListener('touchend', onGlobalTouchEnd, { passive: false });
+        document.addEventListener('touchmove', onGlobalTouchMove, { passive: false });
+
+        // 监听窗口大小变化，实时调整舰船尺寸
+        window.addEventListener('resize', () => {
+            myShips.forEach(ship => updateShipVisuals(ship));
+            // 同时也需要更新已显示的敌舰
+            document.querySelectorAll('.revealed-enemy-ship').forEach(el => {
+                const shipId = parseInt(el.dataset.id);
+                const ship = enemyShips.find(s => s.id === shipId);
+                if (ship) updateRevealedShipVisuals(el, ship);
+            });
+        });
+
         initHelpShips();
         setDifficulty(currentDifficulty, { silent: true });
     }
@@ -269,29 +293,54 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
             };
 
             shipEl.onmousedown = (e) => onShipMouseDown(e, shipObj);
+            shipEl.ontouchstart = (e) => onShipTouchStart(e, shipObj);
 
             dock.appendChild(shipEl);
             myShips.push(shipObj);
         });
     }
 
+    function updateShipScale(shipEl, len, cellSize) {
+        const wrapper = shipEl.querySelector('.hull-scale-wrapper');
+        if (!wrapper) return;
+        
+        const originalWidth = parseFloat(wrapper.dataset.originalWidth);
+        if (!originalWidth) return;
+
+        const targetWidth = len * cellSize;
+        // 稍微缩小一点点 (0.95) 以留出间隙，避免视觉上过于拥挤
+        const scale = (targetWidth / originalWidth) * 0.95;
+        
+        wrapper.style.transform = `scale(${scale})`;
+    }
+
     function updateShipVisuals(ship, isDragging = false) {
-        const widthPx = (ship.len * CELL_SIZE) + 'px';
-        const heightPx = CELL_SIZE + 'px';
+        const cellSize = getCellSize();
+        const widthPx = (ship.len * cellSize) + 'px';
+        const heightPx = cellSize + 'px';
 
         ship.el.style.setProperty('--w', widthPx);
         ship.el.style.setProperty('--h', heightPx);
+
+        // 动态计算缩放
+        updateShipScale(ship.el, ship.len, cellSize);
 
         const showVertical = ship.vertical && (!ship.inDock || isDragging);
 
         if(showVertical) {
             ship.el.classList.add('vertical');
-            ship.el.style.width = CELL_SIZE + 'px';
+            ship.el.style.width = cellSize + 'px';
             ship.el.style.height = widthPx;
         } else {
             ship.el.classList.remove('vertical');
             ship.el.style.width = widthPx;
-            ship.el.style.height = CELL_SIZE + 'px';
+            ship.el.style.height = cellSize + 'px';
+        }
+        
+        // 如果已经在棋盘上，需要更新位置
+        if (!ship.inDock && !isDragging) {
+            ship.el.style.left = (ship.c * cellSize) + 'px';
+            ship.el.style.top = (ship.r * cellSize) + 'px';
         }
     }
 
@@ -370,6 +419,34 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
     let isDragging = false;
     let currentPreview = null;
 
+    // 统一处理坐标提取
+    function getEventPos(e) {
+        if (e.touches && e.touches.length > 0) {
+            return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        } else if (e.changedTouches && e.changedTouches.length > 0) {
+            return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+        }
+        return { x: e.clientX, y: e.clientY };
+    }
+
+    function onShipTouchStart(e, ship) {
+        if (e.touches.length > 1) return;
+        // 阻止默认行为以防止滚动，但要注意这可能会影响页面其他交互
+        // 在 ship 上阻止默认行为通常是安全的
+        if (e.cancelable) e.preventDefault();
+        
+        // 复用 MouseDown 逻辑，构造一个伪事件对象
+        const pos = getEventPos(e);
+        const fakeEvent = {
+            button: 0,
+            preventDefault: () => {},
+            clientX: pos.x,
+            clientY: pos.y,
+            target: e.target
+        };
+        onShipMouseDown(fakeEvent, ship);
+    }
+
     function onShipMouseDown(e, ship) {
         if (gameState !== 'SETUP') return;
         if (e.button !== 0) return; 
@@ -405,6 +482,17 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         if (!ship.inDock) clearGrid(ship);
     }
 
+    function onGlobalTouchMove(e) {
+        if (!dragTarget) return;
+        if (e.cancelable) e.preventDefault(); // 防止拖拽时滚动页面
+        const pos = getEventPos(e);
+        const fakeEvent = {
+            clientX: pos.x,
+            clientY: pos.y
+        };
+        onGlobalMouseMove(fakeEvent);
+    }
+
     function onGlobalMouseMove(e) {
         if (!dragTarget) return;
         isDragging = true;
@@ -413,27 +501,40 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         ship.el.style.top = (e.clientY - dragOffset.y) + 'px';
 
         clearHighlights();
+        
+        // 移动端兼容：elementFromPoint
         const elemBelow = document.elementFromPoint(e.clientX, e.clientY);
         if (!elemBelow) { currentPreview = null; return; }
 
         const cell = elemBelow.closest('.cell');
         const pGrid = document.getElementById('player-grid');
+        const cellSize = getCellSize(); // 动态获取
 
         if (cell && pGrid.contains(cell)) {
             const gridRect = pGrid.getBoundingClientRect();
             const shipLeft = e.clientX - dragOffset.x;
             const shipTop = e.clientY - dragOffset.y;
             
-            const relX = shipLeft - gridRect.left + (CELL_SIZE/2);
-            const relY = shipTop - gridRect.top + (CELL_SIZE/2);
+            const relX = shipLeft - gridRect.left + (cellSize/2);
+            const relY = shipTop - gridRect.top + (cellSize/2);
             
-            const c = Math.floor(relX / CELL_SIZE);
-            const r = Math.floor(relY / CELL_SIZE);
+            const c = Math.floor(relX / cellSize);
+            const r = Math.floor(relY / cellSize);
             
             previewPlacement(ship, r, c);
         } else {
             currentPreview = null;
         }
+    }
+
+    function onGlobalTouchEnd(e) {
+        if (!dragTarget) return;
+        const pos = getEventPos(e);
+        const fakeEvent = {
+            clientX: pos.x,
+            clientY: pos.y
+        };
+        onGlobalMouseUp(fakeEvent);
     }
 
     function onGlobalMouseUp(e) {
@@ -442,6 +543,8 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         ship.el.classList.remove('dragging');
         const pGrid = document.getElementById('player-grid');
         const gridRect = pGrid.getBoundingClientRect();
+        const cellSize = getCellSize(); // 动态获取
+
         const isOverGrid = (
             e.clientX >= gridRect.left && e.clientX <= gridRect.right &&
             e.clientY >= gridRect.top && e.clientY <= gridRect.bottom
@@ -460,10 +563,10 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         } else if (isOverGrid) {
             const shipLeft = e.clientX - dragOffset.x;
             const shipTop = e.clientY - dragOffset.y;
-            const relX = shipLeft - gridRect.left + (CELL_SIZE/2);
-            const relY = shipTop - gridRect.top + (CELL_SIZE/2);
-            const c = Math.floor(relX / CELL_SIZE);
-            const r = Math.floor(relY / CELL_SIZE);
+            const relX = shipLeft - gridRect.left + (cellSize/2);
+            const relY = shipTop - gridRect.top + (cellSize/2);
+            const c = Math.floor(relX / cellSize);
+            const r = Math.floor(relY / cellSize);
             if (isValidPos(r, c, ship.len, ship.vertical, null)) {
                 placeShip(ship, r, c, ship.vertical);
                 placed = true;
@@ -512,9 +615,13 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
     function placeShip(ship, r, c, isVertical) {
         const pGrid = document.getElementById('player-grid');
+        const cellSize = getCellSize(); // 动态获取
         ship.inDock = false;
         ship.r = r; ship.c = c;
         ship.vertical = isVertical;
+
+        // 1. 暂时禁用 transition，防止从 body -> grid 的坐标系变换产生飞入动画
+        ship.el.style.transition = 'none';
 
         ship.el.style.position = 'absolute';
         ship.el.style.margin = '0';
@@ -522,14 +629,24 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
         updateShipVisuals(ship);
 
-        ship.el.style.left = (c * CELL_SIZE) + 'px';
-        ship.el.style.top = (r * CELL_SIZE) + 'px';
+        ship.el.style.left = (c * cellSize) + 'px';
+        ship.el.style.top = (r * cellSize) + 'px';
         
+        // 2. 强制浏览器重绘，确保新位置立即生效且无动画
+        void ship.el.offsetWidth;
+
+        // 3. 恢复 transition (清除内联样式，回退到 CSS 类定义的 transition)
+        ship.el.style.transition = ''; 
+
         markGrid(ship, 1);
     }
 
     function returnToDock(ship) {
         const dock = document.getElementById('dock');
+        
+        // 同样防止回港时的飞入动画
+        ship.el.style.transition = 'none';
+
         ship.inDock = true;
         ship.r = -1; ship.c = -1;
         
@@ -547,6 +664,10 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         
         updateShipVisuals(ship);
         dock.appendChild(ship.el);
+
+        // 强制重绘并恢复
+        void ship.el.offsetWidth;
+        ship.el.style.transition = '';
     }
 
     function rotateShipOnBoard(ship) {
@@ -1467,6 +1588,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
     function revealSingleEnemyShip(ship) {
         const eGrid = document.getElementById('enemy-grid');
+        const cellSize = getCellSize(); // 动态获取
         // 检查是否已显示，避免重复
         if (eGrid.querySelector(`.revealed-enemy-ship[data-id="${ship.id}"]`)) return;
 
@@ -1474,8 +1596,8 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         shipEl.className = 'ship revealed-enemy-ship ship-visuals-root'; 
         shipEl.dataset.id = ship.id;
         shipEl.style.position = 'absolute';
-        shipEl.style.left = (ship.c * CELL_SIZE) + 'px';
-        shipEl.style.top = (ship.r * CELL_SIZE) + 'px';
+        shipEl.style.left = (ship.c * cellSize) + 'px';
+        shipEl.style.top = (ship.r * cellSize) + 'px';
         shipEl.style.pointerEvents = 'none'; 
         // z-index 已在 CSS 中设为 1
         
@@ -1484,18 +1606,18 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         inner.innerHTML = getShipDom(ship.code);
         shipEl.appendChild(inner);
 
-        const widthPx = (ship.len * CELL_SIZE) + 'px';
-        const heightPx = CELL_SIZE + 'px';
+        const widthPx = (ship.len * cellSize) + 'px';
+        const heightPx = cellSize + 'px';
         shipEl.style.setProperty('--w', widthPx);
         shipEl.style.setProperty('--h', heightPx);
         
         if (ship.v) {
             shipEl.classList.add('vertical');
-            shipEl.style.width = CELL_SIZE + 'px';
+            shipEl.style.width = cellSize + 'px';
             shipEl.style.height = widthPx;
         } else {
             shipEl.style.width = widthPx;
-            shipEl.style.height = CELL_SIZE + 'px';
+            shipEl.style.height = cellSize + 'px';
         }
 
         if (ship.sunk) {
@@ -1505,7 +1627,34 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
             shipEl.style.filter = 'drop-shadow(0 0 5px white)';
         }
 
+        // 动态缩放
+        updateShipScale(shipEl, ship.len, cellSize);
+
         eGrid.appendChild(shipEl);
+    }
+
+    // 新增：更新已显示敌舰的视觉（用于 resize）
+    function updateRevealedShipVisuals(shipEl, ship) {
+        const cellSize = getCellSize();
+        const widthPx = (ship.len * cellSize) + 'px';
+        const heightPx = cellSize + 'px';
+        
+        shipEl.style.left = (ship.c * cellSize) + 'px';
+        shipEl.style.top = (ship.r * cellSize) + 'px';
+        
+        shipEl.style.setProperty('--w', widthPx);
+        shipEl.style.setProperty('--h', heightPx);
+        
+        // 动态缩放
+        updateShipScale(shipEl, ship.len, cellSize);
+        
+        if (ship.v) {
+            shipEl.style.width = cellSize + 'px';
+            shipEl.style.height = widthPx;
+        } else {
+            shipEl.style.width = widthPx;
+            shipEl.style.height = cellSize + 'px';
+        }
     }
 
     function closeGameOverModal() {
@@ -1570,6 +1719,12 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
                 vertical: false,
                 inDock: false
             });
+            
+            // 帮助面板里的预览需要特殊处理，因为它的父容器大小是固定的，不是基于 cellSize
+            // 我们可以强制给它一个较小的 scale，或者让它基于 30px 的格子计算
+            // 这里简单处理：手动覆盖 scale
+            const wrapper = previewShip.querySelector('.hull-scale-wrapper');
+            if (wrapper) wrapper.style.transform = 'scale(0.4)';
 
             divImg.appendChild(previewShip);
             tdImg.appendChild(divImg);

@@ -348,6 +348,7 @@
             cursor: grab;
             display: block; 
             transition: top 0.1s, left 0.1s;
+            touch-action: none;
         }
 
         .ship:not(.sunk):hover .ship-inner {
@@ -376,7 +377,7 @@
             filter: drop-shadow(5px 5px 10px rgba(0,0,0,0.5));
         }
 
-        .ship.vertical { width: 40px !important; }
+        .ship.vertical { width: var(--cell-size) !important; }
         .ship.vertical .ship-inner {
             width: var(--w) !important; 
             height: var(--h) !important;
@@ -572,5 +573,124 @@
             font-size: 16px;
         }
         .difficulty-bar { margin-bottom: 0; }
+
+/* === 移动端适配 (Responsive Design) === */
+@media (max-width: 768px) {
+    :root {
+        /* 缩小格子尺寸以适应窄屏 */
+        --cell-size: clamp(26px, 8.5vw, 34px);
+    }
+
+    body {
+        height: auto;
+        min-height: 100vh;
+        overflow-y: auto; /* 允许 body 滚动 */
+    }
+
+    .layout {
+        flex-direction: column;
+        height: auto;
+        overflow: visible;
+    }
+
+    /* 面板调整：改为垂直堆叠 */
+    .dock-panel {
+        width: 100%;
+        min-width: 100%;
+        height: auto;
+        max-height: none;
+        border-right: none;
+        border-bottom: 1px solid #4a5568;
+        order: 1; /* 放在最上方方便部署 */
+        padding: 10px;
+        overflow: visible;
+    }
+
+    .center-area {
+        order: 2;
+        height: auto;
+        overflow: visible;
+        flex: none;
+        background-attachment: fixed;
+    }
+
+    .log-panel {
+        width: 100%;
+        min-width: 100%;
+        height: 200px;
+        border-left: none;
+        border-top: 1px solid #4a5568;
+        order: 3;
+    }
+
+    /* 隐藏侧边收缩按钮 */
+    .toggle-btn { display: none; }
+
+    /* 滚动区域自适应 */
+    .scroll-view { overflow: visible; }
+
+    /* 战场垂直排列 */
+    .battlefield {
+        flex-direction: column;
+        gap: 20px;
+        padding: 10px 0;
+        margin: 0;
+    }
+    
+    .board-box { width: 100%; }
+
+    /* 底部按钮栏 */
+    .bottom-controls {
+        height: auto;
+        flex-wrap: wrap;
+        padding: 10px;
+        gap: 8px;
+        position: sticky;
+        bottom: 0;
+        background: rgba(23, 25, 35, 0.95);
+        border-top: 1px solid #4a5568;
+    }
+
+    .bottom-controls button {
+        flex: 1 1 40%;
+        min-width: 0;
+        padding: 12px 5px;
+        font-size: 13px;
+    }
+
+    /* 装备区容器横向排列 (针对舰船列表) */
+    #dock.dock-container {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 15px;
+    }
+
+    /* 战斗面板保持垂直 */
+    #battle-panel {
+        flex-direction: column;
+    }
+
+    /* 帮助按钮防遮挡 */
+    #help-btn {
+        bottom: 90px; 
+        right: 15px;
+        width: 40px;
+        height: 40px;
+        font-size: 20px;
+    }
+
+    /* 模态框适配 */
+    .modal-content {
+        width: 92%;
+        margin: 10% auto;
+        padding: 15px;
+        max-height: 80vh;
+    }
+    
+    .game-over-title {
+        font-size: 2rem;
+    }
+}
 
         
