@@ -199,27 +199,39 @@
             box-sizing: border-box;
             transition: background 0.1s;
             position: relative;
+            /* z-index: 5;  <-- 移除全局 z-index，改为分别设置 */
         }
+
+        /* 敌方棋盘格子层级较高，为了遮挡未发现的船只 (revealed-enemy-ship z-index: 1) */
+        #enemy-grid .cell { z-index: 5; }
+        
+        /* 我方棋盘格子层级默认 (auto)，以便让船只 (z-index: 100) 浮在背景上 */
+        /* 但格子的内容(图标)需要比船高，通过伪元素 z-index 控制 */
+        #player-grid .cell { z-index: auto; }
 
         .cell.highlight-valid { background-color: rgba(72, 187, 120, 0.7) !important; box-shadow: inset 0 0 0 2px #fff; }
         .cell.highlight-invalid { background-color: rgba(245, 101, 101, 0.7) !important; box-shadow: inset 0 0 0 2px red; }
         
         #enemy-grid .cell:hover:not(.hit):not(.miss):not(.destroyed):not(.detect) { background-color: rgba(255,255,255,0.2); cursor: crosshair; }
         
-        /* 状态：受损 (HIT) - 船还在，只是被打中 */
-        .hit { background-color: rgba(236, 201, 75, 0.5) !important; position: relative; }
-        .hit::after { content: '💥'; position: absolute; inset:0; display:flex; justify-content:center; align-items:center; font-size:24px; }
+        /* 状态：受损 (HIT) */
+        .hit { background-color: rgba(236, 201, 75, 0.4) !important; position: relative; }
+        .hit::after { content: '💥'; position: absolute; inset:0; display:flex; justify-content:center; align-items:center; font-size:18px; z-index: 102; }
         
-        /* 状态：毁坏 (X) - 该格彻底报废 */
-        .destroyed { background-color: rgba(229, 62, 62, 0.8) !important; position: relative; }
-        .destroyed::after { content: '☠️'; position: absolute; inset:0; display:flex; justify-content:center; align-items:center; font-size:24px; }
+        /* 状态：毁坏 (X) */
+        .destroyed { background-color: rgba(229, 62, 62, 0.4) !important; position: relative; }
+        .destroyed::after { content: '☠️'; position: absolute; inset:0; display:flex; justify-content:center; align-items:center; font-size:18px; z-index: 102; }
 
-        /* 状态：疑似 (DETECT) - 水听扫描发现有东西但未确认 */
+        /* 状态：疑似 (DETECT) - 玩家水听 */
         .detect { background-color: rgba(236, 201, 75, 0.3) !important; position: relative; }
-        .detect::after { content: '❓'; position: absolute; inset:0; display:flex; justify-content:center; align-items:center; font-size:24px; }
+        .detect::after { content: '❓'; position: absolute; inset:0; display:flex; justify-content:center; align-items:center; font-size:18px; z-index: 102; }
+
+        /* 状态：AI 疑似 (AI DETECT) - 敌人声呐 */
+        .ai-detect { background-color: rgba(236, 201, 75, 0.3) !important; position: relative; }
+        .ai-detect::after { content: '❓'; position: absolute; inset:0; display:flex; justify-content:center; align-items:center; font-size:18px; z-index: 102; }
 
         .miss { background-color: rgba(255,255,255,0.1) !important; position: relative; }
-        .miss::after { content: ''; position: absolute; width: 10px; height: 10px; border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(255,255,255,0.5); }
+        .miss::after { content: ''; position: absolute; width: 10px; height: 10px; border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(255,255,255,0.5); z-index: 102; }
 
         /* 攻击范围高亮 */
         .attack-range-highlight {
@@ -303,7 +315,7 @@
         /* 新增：位于舰船上方的命中标记 (解决航母遮挡问题) */
         .top-hit-marker {
             position: absolute;
-            z-index: 101; /* 比船(100)高 */
+            z-index: 102; /* 比船(100)高 */
             pointer-events: none;
             width: var(--cell-size);
             height: var(--cell-size);
@@ -378,11 +390,14 @@
             transform: rotate(90deg) translateY(-100%);
         }
 
-        .ship.sunk { filter: grayscale(100%) brightness(0.4); border: 1px solid red; }
+        .ship.sunk { filter: grayscale(100%) brightness(0.8); border: 1px solid red; }
         @keyframes shake { 0%, 100% {transform: translateX(0);} 25% {transform: translateX(-5px);} 75% {transform: translateX(5px);} }
         .shake { animation: shake 0.2s ease-in-out 2; }
         
         .wreck { position: absolute; border: 2px solid #fc8181; background: rgba(0,0,0,0.3); pointer-events: none; z-index: 10; }
+
+        /* 敌方显示的舰船，层级在格子之下 */
+        .revealed-enemy-ship { z-index: 1 !important; }
 
         /* 按钮 */
         .btn-area { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -773,7 +788,7 @@
 <body>
 
 <header>
-    <h1>指挥官：决战大洋 (v7.0)</h1>
+    <h1>指挥官：决战大洋 (v7.0alpha)</h1>
 </header>
 
 <div id="help-btn" onclick="toggleHelp()">?</div>
@@ -819,7 +834,10 @@
     <div class="modal-content game-over-content">
         <h2 id="game-over-title" class="game-over-title"></h2>
         <p id="game-over-msg" style="font-size: 1.2rem; margin-bottom: 30px; color: #cbd5e0;"></p>
-        <button class="btn-restart" onclick="closeGameOverAndReset()" style="font-size: 1.2rem; padding: 12px 30px;">🔄 重新开始</button>
+        <div style="display: flex; gap: 10px; justify-content: center;">
+            <button class="btn-blue" onclick="closeGameOverModal()" style="font-size: 1.2rem; padding: 12px 20px;">👀 查看战场</button>
+            <button class="btn-restart" onclick="closeGameOverAndReset()" style="font-size: 1.2rem; padding: 12px 20px;">🔄 重新开始</button>
+        </div>
     </div>
 </div>
 
@@ -1552,7 +1570,7 @@
         } else {
             log("战斗开始！电脑先手。", "c-warn");
             document.getElementById('enemy-grid').style.pointerEvents = 'none';
-            setTimeout(aiTurn, 1000);
+            setTimeout(aiTurn, 1000); // AI先手时的初始延迟
         }
     }
 
@@ -1561,6 +1579,7 @@
         // 1. 清理敌方网格 UI (修复重叠问题)
         const eGrid = document.getElementById('enemy-grid');
         eGrid.querySelectorAll('.wreck').forEach(el => el.remove());
+        eGrid.querySelectorAll('.revealed-enemy-ship').forEach(el => el.remove()); // 清理显示的敌舰
         eGrid.querySelectorAll('.cell').forEach(cell => {
             cell.className = 'cell';
             // 移除可能存在的内部标记
@@ -1779,7 +1798,7 @@
 
         updateStatus();
         document.getElementById('enemy-grid').style.pointerEvents = 'none';
-        setTimeout(aiTurn, 800); 
+        setTimeout(aiTurn, 300); // 玩家回合结束后的AI反应延迟 
     }
 
     function processHit(r, c, dmg) {
@@ -1807,7 +1826,7 @@
             if (ship.hp.every(h => h <= 0) && !ship.sunk) {
                 ship.sunk = true;
                 log(`战报：敌方【${ship.name}】确认沉没！`, "c-warn");
-                renderWreck(ship);
+                revealSingleEnemyShip(ship); // 击沉时立即显示
                 checkWin("玩家");
             }
         } else {
@@ -1815,15 +1834,8 @@
         }
     }
 
-    function renderWreck(ship) {
-        const div = document.createElement('div');
-        div.className = 'wreck';
-        div.style.left = (ship.c * CELL_SIZE) + 'px';
-        div.style.top = (ship.r * CELL_SIZE) + 'px';
-        div.style.width = (ship.v ? CELL_SIZE : ship.len * CELL_SIZE) + 'px';
-        div.style.height = (ship.v ? ship.len * CELL_SIZE : CELL_SIZE) + 'px';
-        document.getElementById('enemy-grid').appendChild(div);
-    }
+    // 移除旧的 renderWreck，改用 revealSingleEnemyShip
+    // function renderWreck(ship) { ... }
 
     // === AI 智能系统：概率推断 ===
 
@@ -1832,7 +1844,7 @@
             hitFocus: 0.5,              // 几乎不关注命中连线
             sonarFocus: 0.5,            // 几乎不关注声呐
             airstrikeAdvantage: 1.6,    // 期望伤害制下仍大幅偏向主炮
-            sonarVarianceGate: 0.6,      // 归一化方差低于该值则倾向声纳
+            sonarVarianceGate: 0.4,      // 归一化方差低于该值则倾向声纳
             sonarUnknownRatio: 8 / 9,     // 极高的九格内空格率要求才扫描
             randomness: 0.8             // 80% 概率随机乱打
         },
@@ -1840,7 +1852,7 @@
             hitFocus: 2.0,              // 关注命中，但不如最高级敏感
             sonarFocus: 1.2,
             airstrikeAdvantage: 1.1,
-            sonarVarianceGate: 0.4,
+            sonarVarianceGate: 0.2,
             sonarUnknownRatio: 2 / 3,
             randomness: 0.2             // 20% 概率失误/随机
         },
@@ -1848,7 +1860,7 @@
             hitFocus: 4,                // 极度关注命中延伸
             sonarFocus: 1.8,            // 高度信任声呐区域
             airstrikeAdvantage: 0.85,   // 期望伤害略高即可转为空袭
-            sonarVarianceGate: 0.20,    // 低方差即可视为“机会不大”改侦查
+            sonarVarianceGate: 0.10,    // 低方差视为“机会不大”改侦查
             sonarUnknownRatio: 5 / 9,     // 4格即可声呐侦查
             randomness: 0.0             // 绝对理性
         }
@@ -1973,6 +1985,11 @@
             }
             if (found) {
                 log(`敌方声纳扫描 (${r+1},${c+1})：发现信号！`, "c-e");
+                
+                // 1. 中心点显形 (造成 0 伤害的攻击判定，显示真实状态)
+                aiProcessHit(r, c, 0);
+
+                // 2. 周围标记疑似
                 markAiDetectionArea(r, c);
             } else {
                 log(`敌方声纳扫描 (${r+1},${c+1})：无反应。`, "c-sys");
@@ -2213,6 +2230,7 @@
     function markAiDetectionArea(centerR, centerC) {
         for (let i=-1; i<=1; i++) {
             for (let j=-1; j<=1; j++) {
+                if (i===0 && j===0) continue; // 跳过中心点，中心点已显示真实状态
                 const nr = centerR + i;
                 const nc = centerC + j;
                 if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
@@ -2255,22 +2273,10 @@
             uiCell.classList.remove('hit', 'destroyed', 'miss');
             if (hitShip.hp[hitIndex] <= 0) {
                 uiCell.classList.add('destroyed');
-                let marker = uiCell.querySelector('.top-hit-marker');
-                if (!marker) {
-                    marker = document.createElement('div');
-                    marker.className = 'top-hit-marker';
-                    uiCell.appendChild(marker);
-                }
-                marker.innerText = '☠️';
+                // 移除手动添加的 top-hit-marker，改用 CSS ::after
             } else {
                 uiCell.classList.add('hit');
-                let marker = uiCell.querySelector('.top-hit-marker');
-                if (!marker) {
-                    marker = document.createElement('div');
-                    marker.className = 'top-hit-marker';
-                    uiCell.appendChild(marker);
-                }
-                marker.innerText = '💥';
+                // 移除手动添加的 top-hit-marker，改用 CSS ::after
             }
 
             if (hitShip.hp.every(h => h <= 0) && !hitShip.sunk) {
@@ -2293,6 +2299,7 @@
         
         if (pDead || eDead) {
             gameState = 'END';
+            revealEnemyShips(); // 游戏结束时显示敌方舰船
             const modal = document.getElementById('game-over-modal');
             const title = document.getElementById('game-over-title');
             const msg = document.getElementById('game-over-msg');
@@ -2311,6 +2318,59 @@
                 modal.style.display = 'block';
             }, 500);
         }
+    }
+
+    function revealEnemyShips() {
+        enemyShips.forEach(ship => {
+            revealSingleEnemyShip(ship);
+        });
+    }
+
+    function revealSingleEnemyShip(ship) {
+        const eGrid = document.getElementById('enemy-grid');
+        // 检查是否已显示，避免重复
+        if (eGrid.querySelector(`.revealed-enemy-ship[data-id="${ship.id}"]`)) return;
+
+        const shipEl = document.createElement('div');
+        shipEl.className = 'ship revealed-enemy-ship ship-visuals-root'; 
+        shipEl.dataset.id = ship.id;
+        shipEl.style.position = 'absolute';
+        shipEl.style.left = (ship.c * CELL_SIZE) + 'px';
+        shipEl.style.top = (ship.r * CELL_SIZE) + 'px';
+        shipEl.style.pointerEvents = 'none'; 
+        // z-index 已在 CSS 中设为 1
+        
+        const inner = document.createElement('div');
+        inner.className = 'ship-inner';
+        inner.innerHTML = getShipDom(ship.code);
+        shipEl.appendChild(inner);
+
+        const widthPx = (ship.len * CELL_SIZE) + 'px';
+        const heightPx = CELL_SIZE + 'px';
+        shipEl.style.setProperty('--w', widthPx);
+        shipEl.style.setProperty('--h', heightPx);
+        
+        if (ship.v) {
+            shipEl.classList.add('vertical');
+            shipEl.style.width = CELL_SIZE + 'px';
+            shipEl.style.height = widthPx;
+        } else {
+            shipEl.style.width = widthPx;
+            shipEl.style.height = CELL_SIZE + 'px';
+        }
+
+        if (ship.sunk) {
+            shipEl.classList.add('sunk');
+        } else {
+            shipEl.style.opacity = '0.9';
+            shipEl.style.filter = 'drop-shadow(0 0 5px white)';
+        }
+
+        eGrid.appendChild(shipEl);
+    }
+
+    function closeGameOverModal() {
+        document.getElementById('game-over-modal').style.display = 'none';
     }
 
     function closeGameOverAndReset() {
