@@ -323,8 +323,8 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         if (mbTabPlayer) mbTabPlayer.addEventListener('click', () => switchMobileView('player'));
         if (mbTabEnemy) mbTabEnemy.addEventListener('click', () => switchMobileView('enemy'));
 
-        const mbRotate = document.getElementById('mb-btn-rotate');
-        if (mbRotate) mbRotate.addEventListener('click', toggleDeployMode);
+        // const mbRotate = document.getElementById('mb-btn-rotate');
+        // if (mbRotate) mbRotate.addEventListener('click', toggleDeployMode);
 
         const mbStart = document.getElementById('mb-btn-start');
         if (mbStart) mbStart.addEventListener('click', handleStartOrRestart);
