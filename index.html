@@ -11,8 +11,6 @@
     <button id="btn-menu-toggle" class="icon-btn" aria-label="菜单">⚙️</button>
   </header>
 
-  <div id="help-btn" data-action="toggle-help">?</div>
-
   <div id="help-modal" class="modal">
     <div class="modal-content">
       <span class="close-btn" data-action="toggle-help">&times;</span>
@@ -44,6 +42,11 @@
         <li>❓ <b>问号</b>：疑似目标 (声呐扫描结果)。</li>
         <li>💥 <b>冒烟</b>：受损 (Hit)，船还在。</li>
         <li>☠️ <b>红叉</b>：毁坏 (Destroyed)，该格血量归零。</li>
+      </ul>
+
+      <h3>5. 小提示</h3>
+      <ul style="font-size: 14px; line-height: 1.6;">
+        <li>移动端长按要攻击的格位可以预览攻击范围</li>
       </ul>
     </div>
   </div>
@@ -105,7 +108,10 @@
 
   <div class="layout">
     <div class="dock-panel">
-      <div class="dock-header">⚓ 装备区</div>
+      <div class="dock-header">
+        <span>⚓ 装备区</span>
+        <div id="help-btn" data-action="toggle-help">?</div>
+      </div>
 
       <div id="battle-panel" class="dock-container" style="display: none; align-items: stretch;">
         <div class="weapon-bar" id="weapon-bar">

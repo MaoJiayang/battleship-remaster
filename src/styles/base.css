@@ -24,6 +24,7 @@
         header {
             height: 50px;
             background: #171923;
+            display: flex;
             align-items: center;
             justify-content: center;
             box-shadow: 0 2px 5px rgba(0,0,0,0.5);
@@ -68,7 +69,16 @@
             overflow: hidden;
             white-space: nowrap;
         }
-        .dock-header { font-weight: bold; color: #90cdf4; margin-bottom: 10px; text-align: center; }
+        .dock-header { 
+            font-weight: bold; 
+            color: #90cdf4; 
+            margin-bottom: 10px; 
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
         .dock-container {
             flex: 1;
             background: rgba(0,0,0,0.2);
@@ -602,6 +612,7 @@
         height: auto;
         min-height: 100vh;
         overflow-y: auto; /* 允许 body 滚动 */
+        padding-top: 50px; /* 补偿固定头部的高度 */
     }
 
     .layout {
@@ -812,10 +823,19 @@
         display: none; /* 移动端战斗时暂时隐藏日志，太占地 */
     }
 
-    /* 帮助按钮上移 */
+    /* 帮助按钮：移动端跟随标题 */
     #help-btn {
-        bottom: 140px; 
+        position: static;
+        width: 18px;
+        height: 18px;
+        font-size: 12px;
+        box-shadow: none;
+        transform: none;
+        margin-left: 5px;
+        bottom: auto;
+        right: auto;
     }
+    #help-btn:hover { transform: none; }
 
     /* 装备区容器横向排列 (针对舰船列表) */
     #dock.dock-container {
@@ -830,14 +850,7 @@
         flex-direction: column;
     }
 
-    /* 帮助按钮防遮挡 */
-    #help-btn {
-        bottom: 90px; 
-        right: 15px;
-        width: 40px;
-        height: 40px;
-        font-size: 20px;
-    }
+    /* 帮助按钮防遮挡 - 已移除，改为跟随标题 */
 
     /* 模态框适配 */
     .modal-content {
@@ -1023,8 +1036,11 @@
 /* 移动端适配覆盖 */
 @media (max-width: 768px) {
     header {
-        justify-content: space-between;
+        justify-content: center;
         padding: 0 15px;
+        position: fixed;
+        top: 0;
+        width: 100%;
     }
     .icon-btn { display: block; }
     
