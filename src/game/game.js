@@ -95,6 +95,8 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
     let currentWeapon = 'AP'; // AP, HE, SONAR 
     let firstTurn = 'PLAYER';
     let showAiDebug = false;
+    let currentWinner = null;
+    let aiTurnTimeout = null;
 
     export function initGame() {
         initGrids();
@@ -642,6 +644,8 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
     }
 
     function resetGameFull() {
+        clearAiTurnTimeout();
+        currentWinner = null;
         gameState = 'SETUP';
         document.getElementById('dock').style.display = 'flex';
         document.getElementById('battle-panel').style.display = 'none';
@@ -660,12 +664,15 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         btn.disabled = true;
 
         initGrids();
+        document.getElementById('enemy-grid').style.pointerEvents = 'none';
         myGridMap = createEmptyGrid();
         resetToDock();
         document.getElementById('log').innerHTML = '<div class="log-line c-sys">游戏已重置。</div>';
     }
 
     function startGame() {
+        clearAiTurnTimeout();
+        currentWinner = null;
         gameState = 'PLAYING';
         document.getElementById('dock').style.display = 'none';
         document.getElementById('battle-panel').style.display = 'flex';
@@ -693,7 +700,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         } else {
             log("战斗开始！电脑先手。", "c-warn");
             document.getElementById('enemy-grid').style.pointerEvents = 'none';
-            setTimeout(aiTurn, 1000); // AI先手时的初始延迟
+            scheduleAiTurn(1000); // AI先手时的初始延迟
         }
     }
 
@@ -921,7 +928,9 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
         updateStatus();
         document.getElementById('enemy-grid').style.pointerEvents = 'none';
-        setTimeout(aiTurn, 300); // 玩家回合结束后的AI反应延迟 
+        if (gameState === 'PLAYING') {
+            scheduleAiTurn(300); // 玩家回合结束后的AI反应延迟 
+        }
     }
 
     function processHit(r, c, dmg) {
@@ -983,8 +992,24 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
     }
     
     const MIN_PLACEMENT_WEIGHT = 0.0001; // 防止极小船型被归零
+
+    function clearAiTurnTimeout() {
+        if (aiTurnTimeout !== null) {
+            clearTimeout(aiTurnTimeout);
+            aiTurnTimeout = null;
+        }
+    }
+
+    function scheduleAiTurn(delay) {
+        clearAiTurnTimeout();
+        aiTurnTimeout = setTimeout(() => {
+            aiTurnTimeout = null;
+            aiTurn();
+        }, delay);
+    }
     
     function aiTurn() {
+        if (gameState !== 'PLAYING') return;
         // 1. 资源与能力检查
         const aiCV = enemyShips.some(s => s.code === 'CV' && !s.sunk);
         const aiCL = enemyShips.some(s => s.code === 'CL' && !s.sunk);
@@ -1107,8 +1132,13 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         }
 
         updateStatus();
-        if (showAiDebug) updateAiHeatmapVisuals(probabilityGrid); // 实时更新热力图
-        document.getElementById('enemy-grid').style.pointerEvents = 'auto';
+        if (showAiDebug) updateAiHeatmapVisuals(); // 实时更新热力图
+        const enemyGridEl = document.getElementById('enemy-grid');
+        if (gameState === 'PLAYING') {
+            enemyGridEl.style.pointerEvents = 'auto';
+        } else {
+            enemyGridEl.style.pointerEvents = 'none';
+        }
     }
 
     function getAiViewGrid() {
@@ -1399,30 +1429,34 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
     }
 
     function checkWin(who) {
+        if (currentWinner) return;
         const pDead = myShips.every(s => s.sunk);
         const eDead = enemyShips.every(s => s.sunk);
+        if (!(pDead || eDead)) return;
+
+        currentWinner = who;
+        gameState = 'END';
+        clearAiTurnTimeout();
+        const enemyGridEl = document.getElementById('enemy-grid');
+        if (enemyGridEl) enemyGridEl.style.pointerEvents = 'none';
+        revealEnemyShips(); // 游戏结束时显示敌方舰船
+        const modal = document.getElementById('game-over-modal');
+        const title = document.getElementById('game-over-title');
+        const msg = document.getElementById('game-over-msg');
         
-        if (pDead || eDead) {
-            gameState = 'END';
-            revealEnemyShips(); // 游戏结束时显示敌方舰船
-            const modal = document.getElementById('game-over-modal');
-            const title = document.getElementById('game-over-title');
-            const msg = document.getElementById('game-over-msg');
-            
-            if (who === '玩家') {
-                title.innerText = "VICTORY";
-                title.className = "game-over-title win-text";
-                msg.innerText = "恭喜指挥官！敌方舰队已被全歼！";
-            } else {
-                title.innerText = "DEFEAT";
-                title.className = "game-over-title lose-text";
-                msg.innerText = "很遗憾，我方舰队已全军覆没...";
-            }
-            
-            setTimeout(() => {
-                modal.style.display = 'block';
-            }, 500);
+        if (who === '玩家') {
+            title.innerText = "VICTORY";
+            title.className = "game-over-title win-text";
+            msg.innerText = "恭喜指挥官！敌方舰队已被全歼！";
+        } else {
+            title.innerText = "DEFEAT";
+            title.className = "game-over-title lose-text";
+            msg.innerText = "很遗憾，我方舰队已全军覆没...";
         }
+        
+        setTimeout(() => {
+            modal.style.display = 'block';
+        }, 500);
     }
 
     function revealEnemyShips() {
