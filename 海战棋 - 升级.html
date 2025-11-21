@@ -934,7 +934,7 @@
         'wdd': 'AP',     // 上右右 - 主炮
         'wsdaw': 'SONAR'   // 上下右左上 - 水听
     };
-    const SEQUENCE_TIMEOUT = 5000; // x毫秒内完成输入
+    //const SEQUENCE_TIMEOUT = 20000; // x毫秒内完成输入，这应该是在第一个输入后开始计时
 
     function clearWeaponSequence() {
     weaponSequence = [];
@@ -946,15 +946,22 @@
         for (const [combo, weapon] of Object.entries(WEAPON_COMBOS)) {
             if (sequenceStr.includes(combo)) {
                 selectWeapon(weapon);
-                log(`组合键激活: ${combo} → ${weapon === 'AP' ? '主炮' : weapon === 'HE' ? '空袭' : '水听'}`, "c-warn");
+                log(`${weaponSequence} → ${weapon === 'AP' ? '主炮' : weapon === 'HE' ? '空袭' : '水听'}`, "c-warn");
                 clearWeaponSequence();
                 return true;
             }
+
+            // 如果不包含有效指令，清除重新开始
+            if (combo.startsWith(sequenceStr)) {
+                log(weaponSequence,"c-warn");
+                return true;
+            }
+
         }
         
         // 如果序列太长，清除重新开始
-        if (weaponSequence.length > 6) {
-            clearWeaponSequence();
+        if (weaponSequence.length < 10) {
+            return false;
         }
         
         return false;
@@ -968,16 +975,20 @@
         if (!validKeys.includes(key)) return;
         
         weaponSequence.push(key);
-        log(weaponSequence,"c-warn");
-        
-        // 检查是否匹配任何组合
+
+        //log(checkWeaponCombo(),"c-warn")
+
+        // 检查是否匹配任何组合，合法时返回true，不清除
         if (!checkWeaponCombo()) {
+            log(`${weaponSequence} 指令错误, 请重新输入`,"c-warn");
+            clearWeaponSequence();
+            /*
             // 设置超时清除序列
             setTimeout(() => {
                 if (weaponSequence.length > 0) {
                     clearWeaponSequence();
                 }
-            }, SEQUENCE_TIMEOUT);
+            }, SEQUENCE_TIMEOUT);*/
         }
     }
     //!helldiver
@@ -1925,7 +1936,7 @@
             hitFocus: 4.5,                // 极度关注命中延伸
             sonarFocus: 2.0,            // 高度信任声呐区域
             airstrikeAdvantage: 0.85,   // 期望伤害略高即可转为空袭
-            sonarVarianceGate: 0.08,    // 低方差视为“机会不大”改侦查（标准化后，范围0,1
+            sonarVarianceGate: 0.075,    // 低方差视为“机会不大”改侦查（标准化后，范围0,1
             sonarUnknownRatio: 5 / 9,     // 4格即可声呐侦查
             randomness: 0.0             // 绝对理性
         }
