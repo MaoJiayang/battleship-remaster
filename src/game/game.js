@@ -987,7 +987,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         else btns[2].classList.add('active');
 
         if (!silent) {
-            log(`AI 难度已调整为: ${level === 'EASY' ? '新兵 (随机)' : (level === 'NORMAL' ? '舰长 (普通)' : '提督 (困难)')}`, "c-sys");
+            log(`AI 难度已调整为: ${level === 'EASY' ? '新兵 (简单)' : (level === 'NORMAL' ? '舰长 (困难)' : '提督 (冷酷)')}`, "c-sys");
         }
     }
     
