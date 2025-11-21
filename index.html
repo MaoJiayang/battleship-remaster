@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>指挥官：决战大洋</title>
+</head>
+<body>
+  <header>
+    <h1>指挥官：决战大洋 (v7.0alpha)</h1>
+  </header>
+
+  <div id="help-btn" data-action="toggle-help">?</div>
+
+  <div id="help-modal" class="modal">
+    <div class="modal-content">
+      <span class="close-btn" data-action="toggle-help">&times;</span>
+      <h2 style="color: var(--accent); text-align: center; margin-top: 0;">游戏规则说明</h2>
+
+      <h3>1. 胜利条件</h3>
+      <p>率先击沉敌方所有 5 艘舰船的一方获胜。</p>
+
+      <h3>2. 舰船属性</h3>
+      <table class="rules-table">
+        <thead>
+          <tr><th>图示</th><th>代号</th><th>名称</th><th>长度</th><th>血量/格</th><th>特殊能力</th></tr>
+        </thead>
+        <tbody id="rules-ship-table-body"></tbody>
+      </table>
+
+      <h3>3. 武器系统</h3>
+      <table class="rules-table">
+        <tr><th>武器</th><th>范围</th><th>伤害</th><th>说明</th></tr>
+        <tr><td><b>主炮</b></td><td>单点</td><td>1~3</td><td>基础攻击。伤害取决于存活舰船(BB/SS=3, CL=2, 其他=1)。</td></tr>
+        <tr><td><b>空袭</b></td><td>X型 (5格)</td><td>1</td><td>需航母(CV)存活。对中心及四角造成伤害。</td></tr>
+        <tr><td><b>水听</b></td><td>3x3 区域</td><td>0</td><td>需驱逐(DD)存活。探测区域内是否有船。若有，显示中心真实状态，并标记周围为疑似。</td></tr>
+      </table>
+
+      <h3>4. 状态标识</h3>
+      <ul style="font-size: 14px; line-height: 1.6;">
+        <li>🌊 <b>空白</b>：未知海域。</li>
+        <li>⚪ <b>水花</b>：未命中 (Miss)。</li>
+        <li>❓ <b>问号</b>：疑似目标 (声呐扫描结果)。</li>
+        <li>💥 <b>冒烟</b>：受损 (Hit)，船还在。</li>
+        <li>☠️ <b>红叉</b>：毁坏 (Destroyed)，该格血量归零。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="game-over-modal" class="modal">
+    <div class="modal-content game-over-content">
+      <h2 id="game-over-title" class="game-over-title"></h2>
+      <p id="game-over-msg" style="font-size: 1.2rem; margin-bottom: 30px; color: #cbd5e0;"></p>
+      <div style="display: flex; gap: 10px; justify-content: center;">
+        <button class="btn-blue" data-action="view-battlefield" style="font-size: 1.2rem; padding: 12px 20px;">👀 查看战场</button>
+        <button class="btn-restart" data-action="restart-game" style="font-size: 1.2rem; padding: 12px 20px;">🔄 重新开始</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="dock-panel">
+      <div class="dock-header">⚓ 装备区</div>
+
+      <div id="battle-panel" class="dock-container" style="display: none; align-items: stretch;">
+        <div class="weapon-bar" id="weapon-bar">
+          <button class="weapon-btn active" id="btn-ap" data-weapon="AP">
+            <span>💥 主炮</span>
+            <span id="ap-desc" style="font-size:10px; opacity:0.8">单点 3伤</span>
+          </button>
+          <button class="weapon-btn" id="btn-he" data-weapon="HE">
+            <span>✈️ 空袭</span>
+            <span style="font-size:10px; opacity:0.8">范围 1伤</span>
+          </button>
+          <button class="weapon-btn" id="btn-sonar" data-weapon="SONAR">
+            <span>📡 水听</span>
+            <span style="font-size:10px; opacity:0.8">侦查 3x3</span>
+          </button>
+        </div>
+
+        <div class="status-panel" id="status-panel">
+          <div style="text-align:center; color:#90cdf4; font-weight:bold; margin-bottom:5px">舰队状态</div>
+          <div id="ship-status-list"></div>
+        </div>
+      </div>
+
+      <div class="dock-container" id="dock"></div>
+
+      <div class="control-group">
+        <div style="font-size: 12px; color: #a0aec0; margin-bottom: 2px;">AI 难度</div>
+        <div class="difficulty-bar" id="diff-bar">
+          <button class="diff-btn" data-difficulty="EASY">新兵 (简单)</button>
+          <button class="diff-btn" data-difficulty="NORMAL">舰长 (普通)</button>
+          <button class="diff-btn active" data-difficulty="HARD">提督 (困难)</button>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-mode" id="rotate-toggle" title="切换部署方向">方向：水平 ⮕</button>
+          <button class="btn-mode" id="first-turn-toggle" title="切换先手">先手：玩家 👤</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="center-area">
+      <div class="toggle-btn toggle-left" data-panel-toggle="left" title="切换装备区">◀</div>
+      <div class="toggle-btn toggle-right" data-panel-toggle="right" title="切换日志区">▶</div>
+
+      <div class="scroll-view">
+        <div class="battlefield">
+          <div class="board-box">
+            <div class="board-title" style="color:#68d391">我方海域</div>
+            <div id="player-grid" class="grid"></div>
+          </div>
+          <div class="board-box">
+            <div class="board-title" style="color:#fc8181">敌方海域</div>
+            <div id="enemy-grid" class="grid"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bottom-controls">
+        <button class="btn-mode" id="btn-debug" title="AI 视角 (Debug)">🧠 AI 视角(别说我作弊哈)</button>
+        <button id="btn-reset" class="btn-blue" title="全部回港">🔄 全部回港</button>
+        <button id="btn-random" class="btn-blue" title="随机部署">🎲 随机部署</button>
+        <button class="btn-orange" id="start-btn" disabled>🚀 开始战斗</button>
+      </div>
+    </div>
+
+    <div class="log-panel">
+      <div class="log-header">⚡ 战况记录</div>
+      <div id="log" class="log-content">
+        <div class="log-line c-sys">拖拽部署，绿色区域为有效。</div>
+        <div class="log-line c-sys">准备就绪后点击开始。</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
