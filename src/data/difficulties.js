@@ -5,7 +5,7 @@ export const DIFFICULTY_SETTINGS = {
     airstrikeAdvantage: 1.6,
     sonarVarianceGate: 0.4,
     sonarUnknownRatio: 8 / 9,
-    randomness: 0.8
+    randomness: 0.7
   },
   NORMAL: {
     hitFocus: 2.0,
@@ -13,7 +13,7 @@ export const DIFFICULTY_SETTINGS = {
     airstrikeAdvantage: 1.1,
     sonarVarianceGate: 0.25,
     sonarUnknownRatio: 2 / 3,
-    randomness: 0.2
+    randomness: 0.35
   },
   HARD: {
     hitFocus: 5,
