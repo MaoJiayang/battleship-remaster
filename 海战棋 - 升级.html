@@ -1723,7 +1723,8 @@
                 for(let j=-1; j<=1; j++) {
                     let nr = r+i, nc = c+j;
                     if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                        if (enemyGridMap[nr][nc].shipId !== -1) shipCount++;
+                        const cellState = enemyGridMap[nr][nc];
+                        if (cellState.shipId !== -1 && !cellState.hit) shipCount++;
                     }
                 }
             }
@@ -1733,10 +1734,12 @@
                     for(let j=-1; j<=1; j++) {
                         let nr = r+i, nc = c+j;
                         if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                            if (!enemyGridMap[nr][nc].hit) {
-                                enemyGridMap[nr][nc].hit = true;
-                                const uiCell = document.querySelector(`#enemy-grid .cell[data-r='${nr}'][data-c='${nc}']`);
-                                uiCell.classList.add('miss');
+                            const cellState = enemyGridMap[nr][nc];
+                            const uiCell = document.querySelector(`#enemy-grid .cell[data-r='${nr}'][data-c='${nc}']`);
+                            if (uiCell) uiCell.classList.remove('detect');
+                            if (!cellState.hit) {
+                                cellState.hit = true;
+                                if (uiCell) uiCell.classList.add('miss');
                             }
                         }
                     }
@@ -1756,10 +1759,13 @@
                         
                         if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
                             const neighborCell = enemyGridMap[nr][nc];
-                            // 只有未探索的格子才标记为疑似
-                            if (!neighborCell.hit) {
-                                const uiCell = document.querySelector(`#enemy-grid .cell[data-r='${nr}'][data-c='${nc}']`);
-                                if (!uiCell.classList.contains('detect')) {
+                            const uiCell = document.querySelector(`#enemy-grid .cell[data-r='${nr}'][data-c='${nc}']`);
+                            if (!neighborCell.hit && uiCell) {
+                                const uncovered = !uiCell.classList.contains('miss')
+                                    && !uiCell.classList.contains('hit')
+                                    && !uiCell.classList.contains('destroyed')
+                                    && !uiCell.classList.contains('detect');
+                                if (uncovered) {
                                     uiCell.classList.add('detect');
                                 }
                             }
