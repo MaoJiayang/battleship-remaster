@@ -840,42 +840,30 @@
     /* 帮助按钮：移动端跟随标题 */
     #help-btn {
         position: static;
-        width: 18px;
-        height: 18px;
+        width: 20px; /* 稍微加大一点 */
+        height: 20px;
         font-size: 12px;
-        box-shadow: none;
+        /* 恢复一些按钮特征 */
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        border: 1px solid rgba(255,255,255,0.3);
         transform: none;
-        margin-left: 5px;
+        margin-left: 8px;
         bottom: auto;
         right: auto;
     }
     #help-btn:hover { transform: none; }
 
-    /* 装备区容器横向排列 (针对舰船列表) */
-    #dock.dock-container {
-        flex-direction: row;
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 15px;
+    /* 未点击过的高亮呼吸效果 */
+    .pulse-highlight {
+        animation: pulse-orange 2s infinite;
+        background-color: #f6ad55 !important; /* 更亮的橙色 */
+        border-color: #fff !important;
     }
 
-    /* 战斗面板保持垂直 */
-    #battle-panel {
-        flex-direction: column;
-    }
-
-    /* 帮助按钮防遮挡 - 已移除，改为跟随标题 */
-
-    /* 模态框适配 */
-    .modal-content {
-        width: 92%;
-        margin: 10% auto;
-        padding: 15px;
-        max-height: 80vh;
-    }
-    
-    .game-over-title {
-        font-size: 2rem;
+    @keyframes pulse-orange {
+        0% { box-shadow: 0 0 0 0 rgba(237, 137, 54, 0.7); transform: scale(1); }
+        70% { box-shadow: 0 0 0 6px rgba(237, 137, 54, 0); transform: scale(1.1); }
+        100% { box-shadow: 0 0 0 0 rgba(237, 137, 54, 0); transform: scale(1); }
     }
 }
 

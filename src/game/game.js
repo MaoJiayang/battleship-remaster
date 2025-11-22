@@ -187,7 +187,19 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 
     function bindUiEvents() {
         const helpBtn = document.getElementById('help-btn');
-        if (helpBtn) helpBtn.addEventListener('click', toggleHelp);
+        if (helpBtn) {
+            // 检查是否点击过帮助，如果没有则添加高亮动画
+            if (!localStorage.getItem('hasClickedHelp')) {
+                helpBtn.classList.add('pulse-highlight');
+            }
+
+            helpBtn.addEventListener('click', () => {
+                // 点击后移除高亮并记录
+                helpBtn.classList.remove('pulse-highlight');
+                localStorage.setItem('hasClickedHelp', 'true');
+                toggleHelp();
+            });
+        }
 
         // 菜单按钮 (Header)
         const menuBtn = document.getElementById('btn-menu-toggle');
