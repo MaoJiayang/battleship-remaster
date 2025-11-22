@@ -64,16 +64,18 @@
             border-radius: 50%;
         }
         .turret-dd::before {
-            content: ''; position: absolute;
-            top: 5px; width: 10px; height: 2px;
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 10px; height: 2px;
             background: var(--color-barrel);
+            transform: translate(-100%, -50%);
         }
 
         /* 炮塔朝向与炮管修正 */
         /* 默认炮管位置 (相对于炮塔坐标系向左伸出) */
         .turret-bb::before { left: -20px; }
         .turret-cl::before { left: -10px; }
-        .turret-dd::before { left: -8px; }
         .turret-bb::after { left: 0; }
 
         /* 朝向控制 */
