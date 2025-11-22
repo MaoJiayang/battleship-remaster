@@ -1,6 +1,7 @@
 import { BOARD_SIZE, CELL_SIZE as DEFAULT_CELL_SIZE, INTERACTION_TIMING } from "../config/constants";
 import { SHIP_TYPES } from "../data/ships";
 import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
+import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
 
     // === 动态尺寸获取 ===
     function getCellSize() {
@@ -567,7 +568,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         // 概率图即使在准备阶段也可查看，便于调试
         const viewGrid = getAiViewGrid();
         const targets = myShips.filter(s => !s.sunk);
-        const probabilityMap = precomputedMap || calculateProbabilityGrid(viewGrid, targets);
+        const probabilityMap = precomputedMap || (targets.length > 0 ? calculateProbabilityGrid(viewGrid, targets, AI_PROB_CONFIG) : Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0)));
 
         const pGrid = document.getElementById('player-grid');
         for(let r=0; r<BOARD_SIZE; r++) {
@@ -1356,8 +1357,6 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
             log(`AI 难度已调整为: ${level === 'EASY' ? '新兵 (简单)' : (level === 'NORMAL' ? '舰长 (困难)' : '提督 (冷酷)')}`, "c-sys");
         }
     }
-    
-    const MIN_PLACEMENT_WEIGHT = 0.0001; // 防止极小船型被归零
 
     function clearAiTurnTimeout() {
         if (aiTurnTimeout !== null) {
@@ -1387,86 +1386,28 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         // 清除上一次的攻击标记
         clearLastEnemyAttacks();
 
-        // 1. 资源与能力检查
-        const aiCV = enemyShips.some(s => s.code === 'CV' && !s.sunk);
-        const aiCL = enemyShips.some(s => s.code === 'CL' && !s.sunk);
+        // 1. 准备决策上下文
+        const viewGrid = getAiViewGrid();
+        const context = {
+            viewGrid,
+            myShips,
+            enemyShips,
+            difficultyConfig: AI_PROB_CONFIG
+        };
+
+        // 2. 调用 AI 策略模块进行决策
+        const { r, c, weapon } = makeAIDecision(context);
+
+        // 3. 计算 AI 当前的伤害能力（用于执行攻击）
         const aiBB = enemyShips.some(s => s.code === 'BB' && !s.sunk);
         const aiSS = enemyShips.some(s => s.code === 'SS' && !s.sunk);
-        const aiDD = enemyShips.some(s => s.code === 'DD' && !s.sunk);
+        const aiCL = enemyShips.some(s => s.code === 'CL' && !s.sunk);
         
         let aiAPDamage = 1;
         if (aiBB || aiSS) aiAPDamage = 3;
         else if (aiCL) aiAPDamage = 2;
 
-        const canUseAir = aiCV;
-        const canUseSonar = aiDD;
-        
-        // 2. 构建 AI 视野与概率图
-        // AI 只能看到：0=未知, 1=Miss, 2=Hit(存活), 3=Destroyed(沉没/毁坏), 4=Suspect, 5=Sunk
-        const viewGrid = getAiViewGrid();
-        const targets = myShips.filter(s => !s.sunk);
-        const largestAliveLen = targets.reduce((max, ship) => Math.max(max, ship.len), 0);
-        const probabilityGrid = calculateProbabilityGrid(viewGrid, targets);
-
-        // 3. 决策制定
-        let bestAction = { r: -1, c: -1, score: 0, weapon: 'AP' };
-
-        // === 难度控制：随机性干扰 ===
-        // 如果触发随机性，则忽略概率图，直接随机选取一个有效点
-        if (Math.random() < AI_PROB_CONFIG.randomness) {
-            let r, c;
-            let attempts = 0;
-            // 尝试找一个有效点 (0或4)
-            do {
-                r = Math.floor(Math.random() * BOARD_SIZE);
-                c = Math.floor(Math.random() * BOARD_SIZE);
-                attempts++;
-            } while ((viewGrid[r][c] === 1 || viewGrid[r][c] === 3 || viewGrid[r][c] === 5) && attempts < 200);
-            
-            // 随机模式下，偶尔也会用特殊武器 (纯随机)
-            if (canUseAir && Math.random() < 0.1) bestAction = { r, c, weapon: 'HE' };
-            else if (canUseSonar && Math.random() < 0.1) bestAction = { r, c, weapon: 'SONAR' };
-            else bestAction = { r, c, weapon: 'AP' };
-            
-        } else {
-            // === 理性决策流程 ===
-
-            // 3.1 基础：寻找最高分的单点 (用于 AP)
-            const bestPoint = findBestPoint(probabilityGrid, viewGrid, aiAPDamage);
-            const scoreStats = evaluateScoreStats(probabilityGrid, viewGrid, aiAPDamage);
-            bestAction = { ...bestPoint, weapon: 'AP' };
-
-            // 3.2 进阶：如果有空袭，寻找最高分的 X 型区域
-            if (canUseAir) {
-                const bestArea = findBestArea(probabilityGrid, viewGrid, 1);
-                if (bestArea.score > bestPoint.score * AI_PROB_CONFIG.airstrikeAdvantage) {
-                    bestAction = { ...bestArea, weapon: 'HE' };
-                }
-            }
-
-            // 3.3 侦查：概率不足时用声纳扩大情报
-            if (canUseSonar) {
-                const scanPoint = findBestScanPoint(probabilityGrid, viewGrid);
-                const clarityIndex = 1 - (scoreStats.normEntropy ?? 0);
-                const needRecon = clarityIndex < AI_PROB_CONFIG.sonarEntropyGate;
-                const requiredUnknown = Math.max(1, largestAliveLen);
-                if (scanPoint.r !== -1 && scanPoint.unknownCount >= requiredUnknown && needRecon) {
-                    // 未知格足够覆盖最长存活船只，且集中度不足时才会发动声呐
-                    bestAction = { ...scanPoint, weapon: 'SONAR' };
-                }
-            }
-        }
-
-        // 4. 执行行动
-        if (bestAction.r === -1) {
-            // Fallback
-            let r, c;
-            do { r = Math.floor(Math.random()*10); c = Math.floor(Math.random()*10); }
-            while (viewGrid[r][c] === 1 || viewGrid[r][c] === 3 || viewGrid[r][c] === 5);
-            bestAction = { r, c, weapon: 'AP' };
-        }
-
-        const { r, c, weapon } = bestAction;
+        // 4. 执行攻击行动
 
         if (weapon === 'AP') {
             aiProcessHit(r, c, aiAPDamage);
@@ -1565,212 +1506,6 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         });
 
         return grid;
-    }
-
-    function calculateProbabilityGrid(viewGrid, targets) {
-        const map = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
-        let totalWeight = 0;
-
-        targets.forEach(ship => {
-            const placements = enumerateShipPlacements(ship, viewGrid);
-            placements.forEach(({ cells, weight }) => {
-                const viableCells = cells.filter(cell => {
-                    const state = viewGrid[cell.r][cell.c];
-                    return state === 0 || state === 4;
-                });
-                if (viableCells.length === 0) return;
-                const contribution = weight / viableCells.length;
-                viableCells.forEach(cell => {
-                    map[cell.r][cell.c] += contribution;
-                    totalWeight += contribution;
-                });
-            });
-        });
-
-        if (totalWeight > 0) {
-            for (let r=0; r<BOARD_SIZE; r++) {
-                for (let c=0; c<BOARD_SIZE; c++) {
-                    map[r][c] = map[r][c] / totalWeight;
-                }
-            }
-        }
-
-        for (let r=0; r<BOARD_SIZE; r++) {
-            for (let c=0; c<BOARD_SIZE; c++) {
-                const state = viewGrid[r][c];
-                if (state === 2) map[r][c] = 1;
-                if (state === 1 || state === 3 || state === 5) map[r][c] = 0;
-            }
-        }
-
-        return map;
-    }
-
-    function enumerateShipPlacements(ship, viewGrid) {
-        const placements = [];
-        const len = ship.len;
-        const aliveSegments = Math.max(1, ship.hp.filter(h => h > 0).length);
-        const scale = aliveSegments / len;
-
-        for (let r=0; r<BOARD_SIZE; r++) {
-            for (let c=0; c<=BOARD_SIZE - len; c++) {
-                pushPlacement(r, c, false);
-            }
-        }
-        for (let r=0; r<=BOARD_SIZE - len; r++) {
-            for (let c=0; c<BOARD_SIZE; c++) {
-                pushPlacement(r, c, true);
-            }
-        }
-
-        return placements;
-
-        function pushPlacement(r, c, vertical) {
-            const cells = [];
-            let focusScore = 1;
-
-            for (let i=0; i<len; i++) {
-                const nr = vertical ? r + i : r;
-                const nc = vertical ? c : c + i;
-                const state = viewGrid[nr][nc];
-
-                if (state === 1 || state === 5) return;
-                cells.push({ r: nr, c: nc });
-                if (state === 2 || state === 3) focusScore += AI_PROB_CONFIG.hitFocus;
-                else if (state === 4) focusScore += AI_PROB_CONFIG.sonarFocus;
-            }
-
-            const weight = Math.max(MIN_PLACEMENT_WEIGHT, focusScore * scale);
-            placements.push({ cells, weight });
-        }
-    }
-
-    function findBestPoint(probMap, viewGrid, damagePerHit = 1) {
-        let bestScore = -1;
-        const candidates = [];
-
-        for (let r=0; r<BOARD_SIZE; r++) {
-            for (let c=0; c<BOARD_SIZE; c++) {
-                const state = viewGrid[r][c];
-                if (state === 1 || state === 3 || state === 5) continue;
-                const baseProb = state === 2 ? 1 : (probMap[r][c] || 0);
-                const score = baseProb * damagePerHit;
-                if (score > bestScore + 1e-6) {
-                    bestScore = score;
-                    candidates.length = 0;
-                    candidates.push({ r, c });
-                } else if (Math.abs(score - bestScore) < 1e-6) {
-                    candidates.push({ r, c });
-                }
-            }
-        }
-
-        if (candidates.length === 0) return { r: -1, c: -1, score: 0 };
-        const choice = candidates[Math.floor(Math.random() * candidates.length)];
-        return { ...choice, score: bestScore };
-    }
-
-    function findBestArea(probMap, viewGrid, damagePerCell = 1) {
-        const offsets = [[0,0], [-1,-1], [-1,1], [1,-1], [1,1]];
-        let bestScore = -1;
-        const candidates = [];
-
-        for (let r=0; r<BOARD_SIZE; r++) {
-            for (let c=0; c<BOARD_SIZE; c++) {
-                let score = 0;
-                offsets.forEach(off => {
-                    const nr = r + off[0];
-                    const nc = c + off[1];
-                    if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) return;
-                    const state = viewGrid[nr][nc];
-                    if (state === 1 || state === 3 || state === 5) return;
-                    const baseProb = state === 2 ? 1 : (probMap[nr][nc] || 0);
-                    score += baseProb * damagePerCell;
-                });
-                if (score > bestScore + 1e-6) {
-                    bestScore = score;
-                    candidates.length = 0;
-                    candidates.push({ r, c });
-                } else if (Math.abs(score - bestScore) < 1e-6 && score >= 0) {
-                    candidates.push({ r, c });
-                }
-            }
-        }
-
-        if (candidates.length === 0) return { r: -1, c: -1, score: 0 };
-        const choice = candidates[Math.floor(Math.random() * candidates.length)];
-        return { ...choice, score: bestScore };
-    }
-
-    function evaluateScoreStats(probMap, viewGrid, damagePerHit = 1) {
-            const scores = [];
-            let maxScore = 0;
-
-            for (let r=0; r<BOARD_SIZE; r++) {
-                for (let c=0; c<BOARD_SIZE; c++) {
-                    const state = viewGrid[r][c];
-                    if (state === 1 || state === 3 || state === 5) continue;
-                    const baseProb = state === 2 ? 1 : (probMap[r][c] || 0);
-                    const s = baseProb * damagePerHit;
-                    scores.push(s);
-                    if (s > maxScore) maxScore = s;
-                }
-            }
-
-            if (!scores.length) return { mean: 0, variance: 0, maxScore: 0, normEntropy: 1 };
-
-            const mean = scores.reduce((sum, v) => sum + v, 0) / scores.length;
-            const variance = scores.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / scores.length;
-            let normEntropy = 1;
-            const positiveScores = scores.filter(v => v > 0);
-            if (positiveScores.length > 0) {
-                const total = positiveScores.reduce((sum, v) => sum + v, 0);
-                if (total > 0) {
-                    const entropy = positiveScores.reduce((sum, v) => {
-                        const p = v / total;
-                        return p > 0 ? sum - (p * Math.log(p)) : sum;
-                    }, 0);
-                    const maxEntropy = Math.log(positiveScores.length);
-                    if (maxEntropy > 0) {
-                        normEntropy = Math.min(1, entropy / maxEntropy);
-                    } else {
-                        normEntropy = 0;
-                    }
-                }
-            }
-        
-            return { mean, variance, maxScore, normEntropy };
-        }
-
-    function findBestScanPoint(probMap, viewGrid) {
-        let best = { r: -1, c: -1, score: 0, density: 0, unknownCount: 0 };
-
-        for (let r=0; r<BOARD_SIZE; r++) {
-            for (let c=0; c<BOARD_SIZE; c++) {
-                let unknown = 0;
-                let mass = 0;
-                for (let i=-1; i<=1; i++) {
-                    for (let j=-1; j<=1; j++) {
-                        const nr = r + i;
-                        const nc = c + j;
-                        if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
-                        const state = viewGrid[nr][nc];
-                        if (state === 0) {
-                            unknown++;
-                            mass += probMap[nr][nc] || 0;
-                        }
-                    }
-                }
-                if (unknown === 0) continue;
-                const coverage = unknown / 9;
-                const density = mass / unknown;
-                if (coverage > best.score + 1e-6 || (Math.abs(coverage - best.score) < 1e-6 && density > best.density)) {
-                    best = { r, c, score: coverage, density, unknownCount: unknown };
-                }
-            }
-        }
-
-        return best;
     }
 
     function markAiDetectionArea(centerR, centerC) {
