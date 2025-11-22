@@ -211,7 +211,6 @@
         /* 统一缩放容器，保持中心对齐 */
         .hull-scale-wrapper {
             transform-origin: center center;
-            /* 默认缩放比例，JS中可能会覆盖，或者这里写死 */
-            transform: scale(0.66); 
+            /* 缩放比例由 JS 动态计算 */
         }
     
