@@ -194,7 +194,8 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
                 helpBtn.classList.add('pulse-highlight');
             }
 
-            helpBtn.addEventListener('click', () => {
+            helpBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
                 // 点击后移除高亮并记录
                 helpBtn.classList.remove('pulse-highlight');
                 localStorage.setItem('hasClickedHelp', 'true');
@@ -214,10 +215,16 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
         const helpModal = document.getElementById('help-modal');
         if (helpModal) {
             helpModal.addEventListener('click', (event) => {
-                if (event.target === helpModal) toggleHelp();
+                if (event.target === helpModal) {
+                    event.stopPropagation();
+                    toggleHelp();
+                }
             });
             const closeBtn = helpModal.querySelector('.close-btn');
-            if (closeBtn) closeBtn.addEventListener('click', toggleHelp);
+            if (closeBtn) closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleHelp();
+            });
         }
 
         document.querySelectorAll('[data-weapon]').forEach(btn => {
@@ -1704,7 +1711,10 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
 
     function toggleHelp() {
         const modal = document.getElementById('help-modal');
-        modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
+        // 使用 requestAnimationFrame 优化渲染，减少闪烁
+        requestAnimationFrame(() => {
+            modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
+        });
     }
 
     function togglePanel(side) {

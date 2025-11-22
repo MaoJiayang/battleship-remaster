@@ -502,22 +502,24 @@
             position: fixed;
             bottom: 20px;
             right: 20px;
-            width: 50px;
+            width: auto;
             height: 50px;
+            padding: 0 20px;
             background: var(--accent);
             color: #1a202c;
-            border-radius: 50%;
+            border-radius: 25px;
             display: flex;
             justify-content: center;
             align-items: center;
-            font-size: 24px;
+            font-size: 18px;
             font-weight: bold;
             cursor: pointer;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
             z-index: 1000;
             transition: transform 0.2s;
+            gap: 8px;
         }
-        #help-btn:hover { transform: scale(1.1); }
+        #help-btn:hover { transform: scale(1.05); }
 
         /* 模态框 */
         .modal {
@@ -857,8 +859,9 @@
     /* 帮助按钮：移动端跟随标题 */
     #help-btn {
         position: static;
-        width: 20px; /* 稍微加大一点 */
-        height: 20px;
+        width: auto;
+        height: 24px;
+        padding: 0 8px;
         font-size: 12px;
         /* 恢复一些按钮特征 */
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
@@ -867,21 +870,23 @@
         margin-left: 8px;
         bottom: auto;
         right: auto;
+        border-radius: 12px;
+        gap: 4px;
     }
     #help-btn:hover { transform: none; }
+}
 
-    /* 未点击过的高亮呼吸效果 */
-    .pulse-highlight {
-        animation: pulse-orange 2s infinite;
-        background-color: #f6ad55 !important; /* 更亮的橙色 */
-        border-color: #fff !important;
-    }
+/* 未点击过的高亮呼吸效果 - 全局生效 */
+.pulse-highlight {
+    animation: pulse-orange 2s infinite;
+    background-color: #f6ad55 !important; /* 更亮的橙色 */
+    border-color: #fff !important;
+}
 
-    @keyframes pulse-orange {
-        0% { box-shadow: 0 0 0 0 rgba(237, 137, 54, 0.7); transform: scale(1); }
-        70% { box-shadow: 0 0 0 6px rgba(237, 137, 54, 0); transform: scale(1.1); }
-        100% { box-shadow: 0 0 0 0 rgba(237, 137, 54, 0); transform: scale(1); }
-    }
+@keyframes pulse-orange {
+    0% { box-shadow: 0 0 0 0 rgba(237, 137, 54, 0.7); transform: scale(1); }
+    70% { box-shadow: 0 0 0 6px rgba(237, 137, 54, 0); transform: scale(1.1); }
+    100% { box-shadow: 0 0 0 0 rgba(237, 137, 54, 0); transform: scale(1); }
 }
 
 /* === 新增交互设计样式 === */
