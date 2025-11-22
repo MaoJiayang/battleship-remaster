@@ -1405,6 +1405,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
         // AI 只能看到：0=未知, 1=Miss, 2=Hit(存活), 3=Destroyed(沉没/毁坏), 4=Suspect, 5=Sunk
         const viewGrid = getAiViewGrid();
         const targets = myShips.filter(s => !s.sunk);
+        const largestAliveLen = targets.reduce((max, ship) => Math.max(max, ship.len), 0);
         const probabilityGrid = calculateProbabilityGrid(viewGrid, targets);
 
         // 3. 决策制定
@@ -1446,8 +1447,11 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
             // 3.3 侦查：概率不足时用声纳扩大情报
             if (canUseSonar) {
                 const scanPoint = findBestScanPoint(probabilityGrid, viewGrid);
-                const lowContrast = scoreStats.normVariance < AI_PROB_CONFIG.sonarVarianceGate;
-                if (scanPoint.r !== -1 && scanPoint.score >= AI_PROB_CONFIG.sonarUnknownRatio && lowContrast) {
+                const clarityIndex = 1 - (scoreStats.normEntropy ?? 0);
+                const needRecon = clarityIndex < AI_PROB_CONFIG.sonarEntropyGate;
+                const requiredUnknown = Math.max(1, largestAliveLen);
+                if (scanPoint.r !== -1 && scanPoint.unknownCount >= requiredUnknown && needRecon) {
+                    // 未知格足够覆盖最长存活船只，且集中度不足时才会发动声呐
                     bestAction = { ...scanPoint, weapon: 'SONAR' };
                 }
             }
@@ -1699,36 +1703,47 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
     }
 
     function evaluateScoreStats(probMap, viewGrid, damagePerHit = 1) {
-        const scores = [];
-        let maxScore = 0;
+            const scores = [];
+            let maxScore = 0;
 
-        for (let r=0; r<BOARD_SIZE; r++) {
-            for (let c=0; c<BOARD_SIZE; c++) {
-                const state = viewGrid[r][c];
-                if (state === 1 || state === 3 || state === 5) continue;
-                const baseProb = state === 2 ? 1 : (probMap[r][c] || 0);
-                const s = baseProb * damagePerHit;
-                scores.push(s);
-                if (s > maxScore) maxScore = s;
+            for (let r=0; r<BOARD_SIZE; r++) {
+                for (let c=0; c<BOARD_SIZE; c++) {
+                    const state = viewGrid[r][c];
+                    if (state === 1 || state === 3 || state === 5) continue;
+                    const baseProb = state === 2 ? 1 : (probMap[r][c] || 0);
+                    const s = baseProb * damagePerHit;
+                    scores.push(s);
+                    if (s > maxScore) maxScore = s;
+                }
             }
-        }
 
-        if (!scores.length) return { mean: 0, variance: 0, maxScore: 0, normVariance: 0 };
+            if (!scores.length) return { mean: 0, variance: 0, maxScore: 0, normEntropy: 1 };
 
-        const mean = scores.reduce((sum, v) => sum + v, 0) / scores.length;
-        const variance = scores.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / scores.length;
-        let normVariance = 0;
-        if (maxScore > 0) {
-            const half = maxScore / 2;
-            const denom = half > 0 ? half * half : 1;
-            normVariance = Math.min(1, variance / denom);
-        }
+            const mean = scores.reduce((sum, v) => sum + v, 0) / scores.length;
+            const variance = scores.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / scores.length;
+            let normEntropy = 1;
+            const positiveScores = scores.filter(v => v > 0);
+            if (positiveScores.length > 0) {
+                const total = positiveScores.reduce((sum, v) => sum + v, 0);
+                if (total > 0) {
+                    const entropy = positiveScores.reduce((sum, v) => {
+                        const p = v / total;
+                        return p > 0 ? sum - (p * Math.log(p)) : sum;
+                    }, 0);
+                    const maxEntropy = Math.log(positiveScores.length);
+                    if (maxEntropy > 0) {
+                        normEntropy = Math.min(1, entropy / maxEntropy);
+                    } else {
+                        normEntropy = 0;
+                    }
+                }
+            }
         
-        return { mean, variance, maxScore, normVariance };
-    }
+            return { mean, variance, maxScore, normEntropy };
+        }
 
     function findBestScanPoint(probMap, viewGrid) {
-        let best = { r: -1, c: -1, score: 0, density: 0 };
+        let best = { r: -1, c: -1, score: 0, density: 0, unknownCount: 0 };
 
         for (let r=0; r<BOARD_SIZE; r++) {
             for (let c=0; c<BOARD_SIZE; c++) {
@@ -1750,7 +1765,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
                 const coverage = unknown / 9;
                 const density = mass / unknown;
                 if (coverage > best.score + 1e-6 || (Math.abs(coverage - best.score) < 1e-6 && density > best.density)) {
-                    best = { r, c, score: coverage, density };
+                    best = { r, c, score: coverage, density, unknownCount: unknown };
                 }
             }
         }

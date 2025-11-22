@@ -457,10 +457,27 @@
         }
         .diff-btn:hover { background: #4a5568; }
         .diff-btn.active {
+            color: #1a202c;
+            font-weight: 700;
+        }
+        /* 针对不同难度的高亮色 */
+        .diff-btn.active[data-difficulty="EASY"] {
             background: #38a169;
-            color: white;
             border-color: #48bb78;
-            box-shadow: 0 0 5px rgba(72, 187, 120, 0.5);
+            color: #f0fff4;
+            box-shadow: 0 0 6px rgba(56, 161, 105, 0.5);
+        }
+        .diff-btn.active[data-difficulty="NORMAL"] {
+            background: #ecc94b;
+            border-color: #f6e05e;
+            color: #442a00;
+            box-shadow: 0 0 6px rgba(236, 201, 75, 0.6);
+        }
+        .diff-btn.active[data-difficulty="HARD"] {
+            background: #e53e3e;
+            border-color: #fc8181;
+            color: #fff5f5;
+            box-shadow: 0 0 6px rgba(229, 62, 62, 0.6);
         }
 
         /* Debug 热力图样式 */
