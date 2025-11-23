@@ -131,6 +131,7 @@ function makeRationalDecision(probabilityGrid, viewGrid, abilities, difficultyCo
         const clarityIndex = 1 - (scoreStats.normEntropy ?? 0);
         const needRecon = clarityIndex < difficultyConfig.sonarEntropyGate;
         const requiredUnknown = Math.max(1, largestAliveLen);
+        console.log(`[AI调试] 声纳判定 clarity=${clarityIndex.toFixed(3)} gate=${difficultyConfig.sonarEntropyGate} needRecon=${needRecon}`);
         
         if (scanPoint.r !== -1 && scanPoint.unknownCount >= requiredUnknown && needRecon) {
             bestAction = { r: scanPoint.r, c: scanPoint.c, weapon: 'SONAR' };
@@ -257,6 +258,11 @@ function enumerateShipPlacements(ship, viewGrid, difficultyConfig = null) {
 
 /**
  * 寻找最佳单点攻击目标
+*  - **单点筛选实现细节 (`findBestPoint`)**：
+    1. 遍历整张 10x10 棋盘，仅保留仍可攻击的格子（排除 `state ∈ {1,3,5}` 的 Miss/毁坏/沉没格）。
+    2. 若格子已经是已知命中 (`state === 2`)，直接视为概率 1，用来优先“补刀”；其余格子的基础概率取自 `probabilityGrid`（无值视为 0）。
+    3. 将基础概率乘以当前主炮伤害 `aiAPDamage` 得到收益 `score = baseProb * damage`，持续维护全局最高收益，并把并列最高的坐标收集为候选列表。
+    4. 最终在候选列表中等概率随机挑选一个格子，以避免高分点完全重合时的机械重复，从而制造少量不可预测性。
  */
 function findBestPoint(probMap, viewGrid, damagePerHit = 1) {
     let bestScore = -1;
@@ -403,7 +409,7 @@ function findBestScanPoint(probMap, viewGrid) {
 
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
-            let unknown = 0;      // 未知+疑似格子数量
+            let unknown = 0;      // 未知格子数量
             let mass = 0;         // 概率质量总和
             
             // 遍历以 (r, c) 为中心的 3x3 区域
@@ -417,6 +423,10 @@ function findBestScanPoint(probMap, viewGrid) {
                         if (state === 0) {
                             unknown++;
                             mass += probMap[nr][nc] || 0;
+                        }
+                        if (state === 4) {
+                            // unknown++;// 疑似格子不计入未知
+                            mass += probMap[nr][nc] || 0;// 但是会增加概率质量
                         }
                     }
                 }

@@ -11,21 +11,21 @@
 const BASE_SETTINGS = {
   EASY: {
     _hitFocusBase: 5.0,
-    _sonarFocusBase: 2.5,
+    _sonarFocusBase: 1.0,
     airstrikeAdvantage: 0.9,
     sonarEntropyGate: 0.04,
     randomness: 0.8 // 大量随机射击，主要依靠运气
   },
   NORMAL: {
     _hitFocusBase: 7.5,
-    _sonarFocusBase: 3.75,
+    _sonarFocusBase: 2.0,
     airstrikeAdvantage: 0.9,
     sonarEntropyGate: 0.04,
     randomness: 0.4 // 仍保留少量随机，避免全程最优
   },
   HARD: {
     _hitFocusBase: 10.0, // 几乎不会放弃已命中线索
-    _sonarFocusBase: 5.0, // 大幅信任疑似情报
+    _sonarFocusBase: 3.0, // 大幅信任疑似情报
     airstrikeAdvantage: 0.9, // 只要空袭稍优就会出手
     sonarEntropyGate: 0.04, // 稍有集中度即继续攻击
     randomness: 0.0 // 完全理性，零随机干扰
