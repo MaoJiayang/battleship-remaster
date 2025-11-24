@@ -1444,8 +1444,11 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
             for(let i=-1; i<=1; i++) {
                 for(let j=-1; j<=1; j++) {
                     let nr = r+i, nc = c+j;
-                    if (nr>=0 && nr<10 && nc>=0 && nc<10 && myGridMap[nr][nc] === 1) found = true;
+                    if (nr>=0 && nr<BOARD_SIZE && nc>=0 && nc<BOARD_SIZE) {
+                        if (hasAlivePlayerSegment(nr, nc)) { found = true; break; }
+                    }
                 }
+                if (found) break;
             }
             if (found) {
                 log(`敌方声纳扫描 (${r+1},${c+1})：发现信号！`, "c-e");
@@ -1461,7 +1464,7 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
                 for(let i=-1; i<=1; i++) {
                     for(let j=-1; j<=1; j++) {
                         let nr = r+i, nc = c+j;
-                        if (nr>=0 && nr<10 && nc>=0 && nc<10) {
+                        if (nr>=0 && nr<BOARD_SIZE && nc>=0 && nc<BOARD_SIZE) {
                             const cell = document.querySelector(`#player-grid .cell[data-r='${nr}'][data-c='${nc}']`);
                             if(!cell.classList.contains('hit') && !cell.classList.contains('destroyed')) {
                                 cell.classList.add('miss');
@@ -1513,6 +1516,23 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
         });
 
         return grid;
+    }
+
+    // 检查坐标是否存在仍存活的我方舰段
+    function hasAlivePlayerSegment(r, c) {
+        for (let ship of myShips) {
+            if (ship.sunk) continue;
+            if (ship.vertical) {
+                if (c !== ship.c || r < ship.r || r >= ship.r + ship.len) continue;
+                const idx = r - ship.r;
+                if (ship.hp[idx] > 0) return true;
+            } else {
+                if (r !== ship.r || c < ship.c || c >= ship.c + ship.len) continue;
+                const idx = c - ship.c;
+                if (ship.hp[idx] > 0) return true;
+            }
+        }
+        return false;
     }
 
     function markAiDetectionArea(centerR, centerC) {
