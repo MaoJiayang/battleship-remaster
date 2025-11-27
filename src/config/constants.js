@@ -1,7 +1,7 @@
 export const BOARD_SIZE = 10;
 export const CELL_SIZE = 40;
 export const GAME_TITLE = "海权:决战深蓝";
-export const GAME_VERSION = "v2.2α";
+export const GAME_VERSION = "v2.3α";
 
 // 交互时间配置 (单位: ms)
 export const INTERACTION_TIMING = {
