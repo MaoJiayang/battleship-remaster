@@ -18,6 +18,18 @@
 
 import { BOARD_SIZE } from '../config/constants.js';
 
+// 导入武器类用于获取范围（避免重复定义）
+import { APWeapon } from '../game/weapons/APWeapon.js';
+import { HEWeapon } from '../game/weapons/HEWeapon.js';
+import { SonarWeapon } from '../game/weapons/SonarWeapon.js';
+
+// 创建武器实例用于获取范围
+const weaponInstances = {
+    AP: new APWeapon(),
+    HE: new HEWeapon(),
+    SONAR: new SonarWeapon()
+};
+
 // ============================================================================
 // 常量定义
 // ============================================================================
@@ -479,30 +491,14 @@ class BeliefState {
 
     /**
      * 获取武器覆盖的格子
+     * 使用武器类的 previewArea 方法，保持一致性
      */
     _getWeaponCoverage(weapon, r, c) {
-        if (weapon === 'AP') {
-            return [{ r, c }];
-        } else if (weapon === 'HE') {
-            // X 型：中心 + 四角
-            return [
-                { r, c },
-                { r: r - 1, c: c - 1 },
-                { r: r - 1, c: c + 1 },
-                { r: r + 1, c: c - 1 },
-                { r: r + 1, c: c + 1 }
-            ];
-        } else if (weapon === 'SONAR') {
-            // 3x3 区域
-            const cells = [];
-            for (let i = -1; i <= 1; i++) {
-                for (let j = -1; j <= 1; j++) {
-                    cells.push({ r: r + i, c: c + j });
-                }
-            }
-            return cells;
+        const instance = weaponInstances[weapon];
+        if (instance) {
+            return instance.previewArea({ r, c }).cells;
         }
-        return [];
+        return [{ r, c }];
     }
 }
 
@@ -537,7 +533,7 @@ function evaluateAction(beliefState, action, abilities, alpha) {
     // 3. 综合评分
     // 声纳不造成伤害，但信息价值高
     if (weapon === 'SONAR') {
-        return alpha * normInfoGain * 1.5; // 声纳的信息价值加成
+        return alpha * normInfoGain;
     }
     
     return alpha * normInfoGain + (1 - alpha) * normDamage;

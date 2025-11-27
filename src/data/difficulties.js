@@ -18,15 +18,15 @@
 
 export const DIFFICULTY_SETTINGS = {
     EASY: {
-        alpha: 0.3,         // 偏重伤害，较少侦查
+        alpha: 0.2,         // 偏重伤害，较少侦查
         randomness: 0.5     // 60% 概率随机决策
     },
     NORMAL: {
-        alpha: 0.5,         // 平衡探索与利用
+        alpha: 0.4,         // 平衡探索与利用
         randomness: 0.25    // 25% 概率随机决策
     },
     HARD: {
-        alpha: 0.7,        // 略偏信息收集，先侦查后集火0.65
+        alpha: 0.6,        // 略偏信息收集，先侦查后集火0.65
         randomness: 0.0     // 完全理性
     }
 };

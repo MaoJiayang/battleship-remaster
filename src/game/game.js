@@ -3,6 +3,15 @@ import { SHIP_TYPES } from "../data/ships";
 import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
 
+// 武器系统导入
+import { WeaponRegistry } from './weapons/WeaponRegistry.js';
+import { WeaponService } from './weapons/WeaponService.js';
+import { BattleRenderer } from './battle/BattleRenderer.js';
+import { APWeapon } from './weapons/APWeapon.js';
+import { HEWeapon } from './weapons/HEWeapon.js';
+import { SonarWeapon } from './weapons/SonarWeapon.js';
+import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
+
     // === 动态尺寸获取 ===
     function getCellSize() {
         const cell = document.querySelector('.cell');
@@ -123,6 +132,11 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
     let currentWinner = null;
     let aiTurnTimeout = null;
 
+    // 武器系统实例（模块级变量）
+    let weaponRegistry = null;
+    let battleRenderer = null;
+    let weaponService = null;
+
     export function initGame() {
         initGrids();
         
@@ -131,6 +145,9 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
 
         initShips();
         bindUiEvents();
+        
+        // 初始化武器系统
+        initWeaponSystem();
         
         // Mouse Events
         document.addEventListener('mouseup', onGlobalMouseUp);
@@ -156,6 +173,101 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
         
         // 初始化默认视图
         switchMobileView('player');
+    }
+
+    /**
+     * 初始化武器系统
+     */
+    function initWeaponSystem() {
+        // 创建渲染器
+        battleRenderer = new BattleRenderer({
+            logFn: log,
+            onShipSunk: (shipId, grid) => {
+                if (grid === 'ENEMY') {
+                    const ship = enemyShips.find(s => s.id === shipId);
+                    if (ship) revealSingleEnemyShip(ship);
+                }
+                // 玩家船只沉没时，ship.el 上会添加 sunk 类，这部分在 resolve 时处理
+            }
+        });
+        
+        // 创建注册中心并注册武器
+        weaponRegistry = new WeaponRegistry();
+        weaponRegistry.register(new APWeapon());
+        weaponRegistry.register(new HEWeapon());
+        weaponRegistry.register(new SonarWeapon());
+        
+        // 创建服务
+        weaponService = new WeaponService(weaponRegistry, battleRenderer);
+    }
+
+    /**
+     * 构建玩家武器上下文
+     */
+    function buildPlayerWeaponContext() {
+        return {
+            attackerShips: myShips.map(s => new ShipState(s)),
+            defenderGrid: enemyGridMap,
+            defenderShips: enemyShips,
+            isPlayer: true
+        };
+    }
+
+    /**
+     * 构建 AI 武器上下文
+     */
+    function buildAIWeaponContext() {
+        return {
+            attackerShips: enemyShips.map(s => new ShipState(s)),
+            defenderGrid: buildPlayerGridForAI(),
+            defenderShips: myShips,
+            isPlayer: false
+        };
+    }
+
+    /**
+     * 创建 AI 视角的玩家网格
+     * AI 攻击玩家时需要一个与 enemyGridMap 结构相同的网格
+     */
+    function buildPlayerGridForAI() {
+        const grid = [];
+        for (let r = 0; r < BOARD_SIZE; r++) {
+            grid[r] = [];
+            for (let c = 0; c < BOARD_SIZE; c++) {
+                let shipId = -1;
+                let segmentIndex = -1;
+                
+                // 遍历玩家船只查找位置
+                for (const ship of myShips) {
+                    const cells = [];
+                    for (let i = 0; i < ship.len; i++) {
+                        cells.push(ship.vertical 
+                            ? { r: ship.r + i, c: ship.c, idx: i }
+                            : { r: ship.r, c: ship.c + i, idx: i }
+                        );
+                    }
+                    const match = cells.find(cell => cell.r === r && cell.c === c);
+                    if (match) {
+                        shipId = ship.id;
+                        segmentIndex = match.idx;
+                        break;
+                    }
+                }
+                
+                // 从 DOM 推断 hit 状态
+                const cell = document.querySelector(
+                    `#player-grid .cell[data-r="${r}"][data-c="${c}"]`
+                );
+                const hit = cell && (
+                    cell.classList.contains('hit') || 
+                    cell.classList.contains('destroyed') || 
+                    cell.classList.contains('miss')
+                );
+                
+                grid[r][c] = { hit, shipId, segmentIndex };
+            }
+        }
+        return grid;
     }
 
     function createEmptyGrid() {
@@ -389,40 +501,26 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
         }
     }
 
-    // === 新增：攻击范围高亮逻辑 ===
+    // === 攻击范围高亮逻辑 ===
     function handleEnemyGridHover(r, c) {
         if (gameState !== 'PLAYING') return;
         if (document.getElementById('enemy-grid').style.pointerEvents === 'none') return;
 
         clearAttackHighlights();
 
-        let cellsToHighlight = [];
-
-        if (currentWeapon === 'AP') {
-            // 主炮：单点
-            cellsToHighlight.push({r, c});
-        } else if (currentWeapon === 'HE') {
-            // 空袭：X型
-            const offsets = [[0,0], [-1,-1], [-1,1], [1,-1], [1,1]];
-            offsets.forEach(off => {
-                cellsToHighlight.push({r: r + off[0], c: c + off[1]});
-            });
-        } else if (currentWeapon === 'SONAR') {
-            // 水听：3x3
-            for(let i=-1; i<=1; i++) {
-                for(let j=-1; j<=1; j++) {
-                    cellsToHighlight.push({r: r + i, c: c + j});
+        // 使用武器系统获取预览范围
+        if (weaponService) {
+            weaponService.setCurrentWeapon(currentWeapon);
+            const preview = weaponService.getPreviewArea({ r, c });
+            
+            const eGrid = document.getElementById('enemy-grid');
+            preview.cells.forEach(pos => {
+                if (pos.r >= 0 && pos.r < BOARD_SIZE && pos.c >= 0 && pos.c < BOARD_SIZE) {
+                    const cell = eGrid.querySelector(`.cell[data-r="${pos.r}"][data-c="${pos.c}"]`);
+                    if (cell) cell.classList.add('attack-range-highlight');
                 }
-            }
+            });
         }
-
-        const eGrid = document.getElementById('enemy-grid');
-        cellsToHighlight.forEach(pos => {
-            if (pos.r >= 0 && pos.r < BOARD_SIZE && pos.c >= 0 && pos.c < BOARD_SIZE) {
-                const cell = eGrid.querySelector(`.cell[data-r="${pos.r}"][data-c="${pos.c}"]`);
-                if (cell) cell.classList.add('attack-range-highlight');
-            }
-        });
     }
 
     function clearAttackHighlights() {
@@ -1204,90 +1302,17 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
         if (gameState !== 'PLAYING') return;
         if (document.getElementById('enemy-grid').style.pointerEvents === 'none') return;
 
-        if (currentWeapon === 'AP') {
-            const cell = enemyGridMap[r][c];
-            if (cell.hit && cell.shipId !== -1 && enemyShips[cell.shipId].hp[cell.segmentIndex] <= 0) return;
-            if (cell.hit && cell.shipId === -1) return; 
-
-            const dmg = getAPDamage();
-            processHit(r, c, dmg);
-            log(`使用主炮攻击 (${r+1},${c+1})，伤害: ${dmg}`, "c-p");
+        // === 新路径：完全使用武器系统 ===
+        if (weaponService) {
+            weaponService.setCurrentWeapon(currentWeapon);
+            const context = buildPlayerWeaponContext();
+            const result = weaponService.executePlayerAction({ r, c }, context);
             
-        } else if (currentWeapon === 'HE') {
-            const offsets = [[0,0], [-1,-1], [-1,1], [1,-1], [1,1]];
-            let hitCount = 0;
-            offsets.forEach(off => {
-                let nr = r + off[0], nc = c + off[1];
-                if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                    const cell = enemyGridMap[nr][nc];
-                    const isDestroyed = cell.hit && cell.shipId !== -1 && enemyShips[cell.shipId].hp[cell.segmentIndex] <= 0;
-                    const isMiss = cell.hit && cell.shipId === -1;
-                    
-                    if (!isMiss && !isDestroyed) {
-                        processHit(nr, nc, 1);
-                        hitCount++;
-                    }
-                }
-            });
-            log(`呼叫空袭覆盖 (${r+1},${c+1}) 周边，打击点数: ${hitCount}`, "c-p");
-
-        } else if (currentWeapon === 'SONAR') {
-            let shipCount = 0;
-            for(let i=-1; i<=1; i++) {
-                for(let j=-1; j<=1; j++) {
-                    let nr = r+i, nc = c+j;
-                    if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                        const cellState = enemyGridMap[nr][nc];
-                        if (cellState.shipId !== -1 && !cellState.hit) shipCount++;
-                    }
-                }
-            }
+            if (!result.success) return;
             
-            if (shipCount === 0) {
-                for(let i=-1; i<=1; i++) {
-                    for(let j=-1; j<=1; j++) {
-                        let nr = r+i, nc = c+j;
-                        if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                            const cellState = enemyGridMap[nr][nc];
-                            const uiCell = document.querySelector(`#enemy-grid .cell[data-r='${nr}'][data-c='${nc}']`);
-                            if (uiCell) uiCell.classList.remove('detect');
-                            if (!cellState.hit) {
-                                cellState.hit = true;
-                                if (uiCell) uiCell.classList.add('miss');
-                            }
-                        }
-                    }
-                }
-                log(`声纳扫描 (${r+1},${c+1}) 区域：无反应。`, "c-sys");
-            } else {
-                const cell = enemyGridMap[r][c];
-                if (!cell.hit) {
-                    processHit(r, c, 0); 
-                }
-                
-                // 标记周围为疑似 (DETECT)
-                for(let i=-1; i<=1; i++) {
-                    for(let j=-1; j<=1; j++) {
-                        let nr = r+i, nc = c+j;
-                        if (i===0 && j===0) continue; // 跳过中心点
-                        
-                        if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                            const neighborCell = enemyGridMap[nr][nc];
-                            const uiCell = document.querySelector(`#enemy-grid .cell[data-r='${nr}'][data-c='${nc}']`);
-                            if (!neighborCell.hit && uiCell) {
-                                const uncovered = !uiCell.classList.contains('miss')
-                                    && !uiCell.classList.contains('hit')
-                                    && !uiCell.classList.contains('destroyed')
-                                    && !uiCell.classList.contains('detect');
-                                if (uncovered) {
-                                    uiCell.classList.add('detect');
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                log(`声纳扫描 (${r+1},${c+1}) 区域：发现信号！周边标记为疑似。`, "c-warn");
+            // 检查胜负（仅对攻击类武器，声纳不会击沉船只）
+            if (currentWeapon !== 'SONAR' && result.shipsSunk && result.shipsSunk.length > 0) {
+                checkWin("玩家");
             }
         }
 
@@ -1304,42 +1329,6 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
             scheduleAiTurn(timing.AI_ACTION_DELAY); 
         }
     }
-
-    function processHit(r, c, dmg) {
-        const cell = enemyGridMap[r][c];
-        const uiCell = document.querySelector(`#enemy-grid .cell[data-r='${r}'][data-c='${c}']`);
-        
-        if (cell.hit && cell.shipId === -1) return; 
-        
-        cell.hit = true;
-        uiCell.classList.remove('detect'); // 清除疑似标记
-        
-        if (cell.shipId !== -1) {
-            const ship = enemyShips[cell.shipId];
-            if (dmg > 0) {
-                ship.hp[cell.segmentIndex] -= dmg;
-            }
-            
-            uiCell.classList.remove('hit', 'destroyed');
-            if (ship.hp[cell.segmentIndex] <= 0) {
-                uiCell.classList.add('destroyed');
-            } else {
-                uiCell.classList.add('hit');
-            }
-            
-            if (ship.hp.every(h => h <= 0) && !ship.sunk) {
-                ship.sunk = true;
-                log(`战报：敌方【${ship.name}】确认沉没！`, "c-warn");
-                revealSingleEnemyShip(ship); // 击沉时立即显示
-                checkWin("玩家");
-            }
-        } else {
-            uiCell.classList.add('miss');
-        }
-    }
-
-    // 移除旧的 renderWreck，改用 revealSingleEnemyShip
-    // function renderWreck(ship) { ... }
 
     // === AI 智能系统：概率推断 ===
 
@@ -1395,7 +1384,7 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
 
         // 1. 准备决策上下文
         const viewGrid = getAiViewGrid();
-        const context = {
+        const aiDecisionContext = {
             viewGrid,
             myShips,
             enemyShips,
@@ -1403,75 +1392,23 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
         };
 
         // 2. 调用 AI 策略模块进行决策
-        const { r, c, weapon } = makeAIDecision(context);
+        const decision = makeAIDecision(aiDecisionContext);
 
-        // 3. 计算 AI 当前的伤害能力（用于执行攻击）
-        const aiBB = enemyShips.some(s => s.code === 'BB' && !s.sunk);
-        const aiSS = enemyShips.some(s => s.code === 'SS' && !s.sunk);
-        const aiCL = enemyShips.some(s => s.code === 'CL' && !s.sunk);
-        
-        let aiAPDamage = 1;
-        if (aiBB || aiSS) aiAPDamage = 3;
-        else if (aiCL) aiAPDamage = 2;
-
-        // 4. 执行攻击行动
-
-        if (weapon === 'AP') {
-            aiProcessHit(r, c, aiAPDamage);
-            log(`敌方使用主炮攻击 (${r+1},${c+1})`, "c-e");
-        } else if (weapon === 'HE') {
-            const offsets = [[0,0], [-1,-1], [-1,1], [1,-1], [1,1]];
-            offsets.forEach(off => {
-                let nr = r + off[0], nc = c + off[1];
-                if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                    aiProcessHit(nr, nc, 1);
-                }
-            });
-            log(`敌方发动空袭 (${r+1},${c+1})`, "c-e");
-        } else if (weapon === 'SONAR') {
-            // 标记声纳扫描区域 (3x3)
-            for(let i=-1; i<=1; i++) {
-                for(let j=-1; j<=1; j++) {
-                    let nr = r+i, nc = c+j;
-                    if (nr>=0 && nr<BOARD_SIZE && nc>=0 && nc<BOARD_SIZE) {
-                        const cell = document.querySelector(`#player-grid .cell[data-r='${nr}'][data-c='${nc}']`);
-                        if(cell) cell.classList.add('last-enemy-attack');
+        // 3. 使用武器系统执行攻击
+        if (weaponService) {
+            const context = buildAIWeaponContext();
+            const result = weaponService.executeAIAction(decision, context);
+            
+            // 4. 检查胜负（仅对攻击类武器）
+            if (decision.weapon !== 'SONAR' && result.shipsSunk && result.shipsSunk.length > 0) {
+                // AI 击沉玩家船只时，需要给对应的船添加 sunk 类
+                for (const shipId of result.shipsSunk) {
+                    const ship = myShips.find(s => s.id === shipId);
+                    if (ship && ship.el) {
+                        ship.el.classList.add('sunk');
                     }
                 }
-            }
-
-            let found = false;
-            for(let i=-1; i<=1; i++) {
-                for(let j=-1; j<=1; j++) {
-                    let nr = r+i, nc = c+j;
-                    if (nr>=0 && nr<BOARD_SIZE && nc>=0 && nc<BOARD_SIZE) {
-                        if (hasAlivePlayerSegment(nr, nc)) { found = true; break; }
-                    }
-                }
-                if (found) break;
-            }
-            if (found) {
-                log(`敌方声纳扫描 (${r+1},${c+1})：发现信号！`, "c-e");
-                
-                // 1. 中心点显形 (造成 0 伤害的攻击判定，显示真实状态)
-                aiProcessHit(r, c, 0);
-
-                // 2. 周围标记疑似
-                markAiDetectionArea(r, c);
-            } else {
-                log(`敌方声纳扫描 (${r+1},${c+1})：无反应。`, "c-sys");
-                
-                for(let i=-1; i<=1; i++) {
-                    for(let j=-1; j<=1; j++) {
-                        let nr = r+i, nc = c+j;
-                        if (nr>=0 && nr<BOARD_SIZE && nc>=0 && nc<BOARD_SIZE) {
-                            const cell = document.querySelector(`#player-grid .cell[data-r='${nr}'][data-c='${nc}']`);
-                            if(!cell.classList.contains('hit') && !cell.classList.contains('destroyed')) {
-                                cell.classList.add('miss');
-                            }
-                        }
-                    }
-                }
+                checkWin("电脑");
             }
         }
 
@@ -1516,92 +1453,6 @@ import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
         });
 
         return grid;
-    }
-
-    // 检查坐标是否存在仍存活的我方舰段
-    function hasAlivePlayerSegment(r, c) {
-        for (let ship of myShips) {
-            if (ship.sunk) continue;
-            if (ship.vertical) {
-                if (c !== ship.c || r < ship.r || r >= ship.r + ship.len) continue;
-                const idx = r - ship.r;
-                if (ship.hp[idx] > 0) return true;
-            } else {
-                if (r !== ship.r || c < ship.c || c >= ship.c + ship.len) continue;
-                const idx = c - ship.c;
-                if (ship.hp[idx] > 0) return true;
-            }
-        }
-        return false;
-    }
-
-    function markAiDetectionArea(centerR, centerC) {
-        for (let i=-1; i<=1; i++) {
-            for (let j=-1; j<=1; j++) {
-                if (i===0 && j===0) continue; // 跳过中心点，中心点已显示真实状态
-                const nr = centerR + i;
-                const nc = centerC + j;
-                if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
-                const cell = document.querySelector(`#player-grid .cell[data-r='${nr}'][data-c='${nc}']`);
-                if (!cell) continue;
-                if (cell.classList.contains('hit') || cell.classList.contains('destroyed')) continue;
-                cell.classList.add('ai-detect');
-            }
-        }
-    }
-
-    function aiProcessHit(r, c, dmg) {
-        const uiCell = document.querySelector(`#player-grid .cell[data-r='${r}'][data-c='${c}']`);
-        uiCell.classList.remove('ai-detect');
-        
-        // 标记为最后一次攻击点
-        uiCell.classList.add('last-enemy-attack');
-
-        let hitShip = null;
-        let hitIndex = -1;
-        
-        for(let s of myShips) {
-            if (s.vertical) {
-                if (c === s.c && r >= s.r && r < s.r + s.len) {
-                    hitShip = s;
-                    hitIndex = r - s.r;
-                    break;
-                }
-            } else {
-                if (r === s.r && c >= s.c && c < s.c + s.len) {
-                    hitShip = s;
-                    hitIndex = c - s.c;
-                    break;
-                }
-            }
-        }
-
-        if (hitShip) {
-            if (hitShip.hp[hitIndex] <= 0) return; 
-            
-            hitShip.hp[hitIndex] -= dmg;
-            
-            uiCell.classList.remove('hit', 'destroyed', 'miss');
-            if (hitShip.hp[hitIndex] <= 0) {
-                uiCell.classList.add('destroyed');
-                // 移除手动添加的 top-hit-marker，改用 CSS ::after
-            } else {
-                uiCell.classList.add('hit');
-                // 移除手动添加的 top-hit-marker，改用 CSS ::after
-            }
-
-            if (hitShip.hp.every(h => h <= 0) && !hitShip.sunk) {
-                hitShip.sunk = true;
-                hitShip.el.classList.add('sunk');
-                log(`严重警报：我方【${hitShip.name}】沉没！`, "c-e");
-                checkWin("电脑");
-            }
-
-        } else {
-            if (!uiCell.classList.contains('miss') && !uiCell.classList.contains('hit') && !uiCell.classList.contains('destroyed')) {
-                uiCell.classList.add('miss');
-            }
-        }
     }
 
     function checkWin(who) {
