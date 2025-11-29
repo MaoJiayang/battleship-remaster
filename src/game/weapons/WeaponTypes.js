@@ -26,6 +26,24 @@ export const EventType = {
 };
 
 /**
+ * 战斗上下文类型定义
+ * 武器执行时的统一上下文结构
+ * 
+ * @typedef {Object} BattleContext
+ * @property {Array<ShipState>} attackerShips - 攻击方船只状态数组
+ * @property {Array<Array<GridCell>>} defenderGrid - 防守方网格数据
+ *   GridCell: { hit: boolean, shipId: number, segmentIndex: number }
+ *   - hit: 是否已被攻击
+ *   - shipId: 船只ID，-1 表示无船
+ *   - segmentIndex: 船体段索引，-1 表示无船
+ * @property {Array<Object>} defenderShips - 防守方船只数组（原始对象，resolve 会修改）
+ * @property {boolean} isPlayer - 是否为玩家发起的攻击
+ * 
+ * 注意：resolve 方法会原地修改 defenderGrid 和 defenderShips 的数据
+ * 如需不可变操作，调用方应在传入前进行深拷贝
+ */
+
+/**
  * 船只状态快照（用于传递给武器，避免直接修改原对象）
  */
 export class ShipState {

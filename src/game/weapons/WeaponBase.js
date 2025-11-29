@@ -4,6 +4,18 @@
 /**
  * 武器抽象基类
  * 所有武器必须实现此接口
+ * 
+ * ## 上下文约定（BattleContext）
+ * 所有方法接收的 context 参数应包含以下字段：
+ * - attackerShips: ShipState[] - 攻击方船只状态快照
+ * - defenderGrid: GridCell[][] - 防守方网格（{ hit, shipId, segmentIndex }）
+ * - defenderShips: Ship[] - 防守方船只数组（原始对象，resolve 会修改）
+ * - isPlayer: boolean - 是否为玩家发起的攻击
+ * 
+ * ## 实现注意事项
+ * 1. resolve() 会原地修改 defenderGrid 和 defenderShips
+ * 2. 返回的 events 数组由 BattleRenderer 统一渲染
+ * 3. 新增武器只需继承此类并实现 canUse/previewArea/resolve
  */
 export class WeaponBase {
     /**
@@ -20,8 +32,16 @@ export class WeaponBase {
     
     /**
      * 判断武器是否可用
-     * @param {Object} context - 武器执行上下文
-     * @returns {boolean}
+     * 通常基于 attackerShips 中特定船只的存活状态判断
+     * 
+     * @param {BattleContext} context - 战斗上下文
+     * @returns {boolean} 武器是否可用
+     * 
+     * @example
+     * // 检查航母是否存活以启用空袭
+     * canUse(context) {
+     *     return context.attackerShips.some(s => s.code === 'CV' && !s.sunk);
+     * }
      */
     canUse(context) {
         throw new Error('子类必须实现 canUse 方法');
@@ -55,9 +75,17 @@ export class WeaponBase {
     
     /**
      * 执行武器效果
-     * @param {Object} target - { r, c }
-     * @param {Object} context - 武器执行上下文
-     * @returns {Object} { events: Event[], shipsSunk: number[] }
+     * 此方法会原地修改 context.defenderGrid 和 context.defenderShips
+     * 
+     * @param {Object} target - 目标坐标 { r, c }
+     * @param {BattleContext} context - 战斗上下文
+     * @returns {Object} 结算结果
+     * @returns {Array<Event>} returns.events - 事件数组，由 BattleRenderer 渲染
+     *   - EventType.CELL_UPDATE: 格子状态变更
+     *   - EventType.SHIP_UPDATE: 船只状态变更
+     *   - EventType.LOG: 日志输出
+     *   - EventType.EFFECT: 特效播放（预留）
+     * @returns {Array<number>} returns.shipsSunk - 本次攻击沉没的船只 ID 数组
      */
     resolve(target, context) {
         throw new Error('子类必须实现 resolve 方法');

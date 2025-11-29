@@ -81,7 +81,7 @@ export class WeaponService {
     /**
      * 执行 AI 攻击
      * @param {Object} decision - { r, c, weapon }
-     * @param {Object} context - AI 武器上下文
+     * @param {Object} context - AI 武器上下文（BattleContext）
      * @returns {Object} 执行结果 { success, events, shipsSunk, reason }
      */
     executeAIAction(decision, context) {
@@ -90,6 +90,18 @@ export class WeaponService {
         
         if (!weapon) {
             return { success: false, events: [], shipsSunk: [], reason: '武器不存在' };
+        }
+        
+        // 校验武器可用性（只是保证与玩家分支一致，实则AI层已经保证了可用性）
+        if (!weapon.canUse(context)) {
+            console.warn(`[AI] 武器 ${weaponId} 不可用，跳过攻击`);
+            return { success: false, events: [], shipsSunk: [], reason: '武器不可用' };
+        }
+        
+        // 校验目标有效性
+        if (!weapon.isValidTarget({ r, c }, context)) {
+            console.warn(`[AI] 目标 (${r},${c}) 无效，跳过攻击`);
+            return { success: false, events: [], shipsSunk: [], reason: '目标无效' };
         }
         
         const result = weapon.resolve({ r, c }, context);
