@@ -1,7 +1,7 @@
 import { BOARD_SIZE, CELL_SIZE as DEFAULT_CELL_SIZE, INTERACTION_TIMING } from "../config/constants";
 import { SHIP_TYPES } from "../data/ships";
 import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
-import { makeAIDecision, calculateProbabilityGrid } from '../ai/aiStrategy.js';
+import { makeAIDecision, calculateProbabilityGrid, resetAIState } from '../ai/aiStrategy.js';
 
 // 武器系统导入
 import { WeaponRegistry } from './weapons/WeaponRegistry.js';
@@ -1140,6 +1140,7 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         btn.innerText = "🔄 重新开始";
         btn.className = "btn-restart";
 
+        resetAIState(); // 重置 AI 内部状态（伤害记录等）
         initEnemy();
         updateStatus();
         selectWeapon('AP');

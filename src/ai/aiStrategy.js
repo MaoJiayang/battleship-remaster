@@ -1,19 +1,36 @@
 ﻿/**
- * AI 策略模块 v2.0 - 基于信息论的统一决策框架
+ * AI 策略模块 v2.1 - 基于信息论的统一决策框架
  * 
  * 设计思想：信息增益最大化 (Max Information Gain)
  * - 将所有武器（主炮/空袭/声纳）统一评估为"信息获取 + 伤害输出"的组合
  * - 用信息熵作为统一度量，消除多个启发式超参数
  * - 唯一核心参数：alpha（探索权重）控制信息收集 vs 伤害输出的平衡
+ * - 伤害溢出优化：记录已造成伤害，避免重复攻击已被"打穿"的格子
  * 
- * 输入接口：
- * - viewGrid: AI 视角下的棋盘状态（0=未知，1=未命中，2=命中，3=摧毁，4=疑似，5=已沉没）
- * - myShips: 玩家舰船列表（用于推断存活船型）
- * - enemyShips: 敌方舰船列表（用于判断自身能力）
- * - difficultyConfig: 难度配置参数
+ * ============================================================================
+ * 导出接口（公开 API）
+ * ============================================================================
  * 
- * 输出接口：
- * - { weapon: 'AP'|'HE'|'SONAR', r: number, c: number } 攻击指令
+ * 【生命周期管理】
+ * - resetAIState(): 重置 AI 内部状态，每局游戏开始前必须调用
+ * 
+ * 【决策接口】
+ * - makeAIDecision(context): AI 决策主入口，返回攻击指令
+ *   - context.viewGrid: AI 视角下的棋盘状态（0=未知，1=未命中，2=命中，3=摧毁，4=疑似，5=已沉没）
+ *   - context.myShips: 玩家舰船列表（AI 的攻击目标）
+ *   - context.enemyShips: 敌方舰船列表（用于判断 AI 自身能力）
+ *   - context.difficultyConfig: 难度配置参数
+ *   - 返回值: { weapon: 'AP'|'HE'|'SONAR', r: number, c: number }
+ * 
+ * 【调试接口】
+ * - calculateProbabilityGrid(viewGrid, targets): 计算概率热力图，供调试显示
+ * 
+ * ============================================================================
+ * 注意事项
+ * ============================================================================
+ * - AI 模块维护内部状态（伤害记录），不再是完全无状态
+ * - 每局游戏开始前必须调用 resetAIState() 重置状态
+ * - makeAIDecision() 返回的决策假定一定会被执行，AI 会据此更新内部状态
  */
 
 import { BOARD_SIZE } from '../config/constants.js';
@@ -49,6 +66,70 @@ const SAMPLE_COUNT = 2000;
 
 /** 最小概率阈值，防止数值问题 */
 const MIN_PROB = 1e-10;
+
+// ============================================================================
+// AI 内部状态（模块级）
+// ============================================================================
+
+/**
+ * AI 已造成伤害记录
+ * damageDealtGrid[r][c] = 该格子已承受的总伤害
+ * 用于计算期望有效伤害，避免伤害溢出
+ */
+let damageDealtGrid = null;
+
+/**
+ * 创建空的伤害记录网格
+ */
+function createEmptyDamageGrid() {
+    return Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
+}
+
+/**
+ * 重置 AI 内部状态
+ * 每局游戏开始前必须调用此函数
+ * 
+ * @export
+ */
+export function resetAIState() {
+    damageDealtGrid = createEmptyDamageGrid();
+}
+
+/**
+ * 记录 AI 攻击造成的伤害
+ * 在 makeAIDecision 返回前调用，假设决策一定会被执行
+ * 
+ * @param {Object} action - 攻击行动 { weapon, r, c }
+ * @param {Object} abilities - AI 能力（含 apDamage）
+ */
+function recordDamageDealt(action, abilities) {
+    if (!damageDealtGrid) {
+        damageDealtGrid = createEmptyDamageGrid();
+    }
+    
+    const { weapon, r, c } = action;
+    
+    if (weapon === 'SONAR') {
+        return; // 声纳不造成伤害
+    }
+    
+    if (weapon === 'AP') {
+        // AP 单点攻击
+        if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE) {
+            damageDealtGrid[r][c] += abilities.apDamage;
+        }
+    } else if (weapon === 'HE') {
+        // HE X 型攻击，每格 1 点伤害
+        const offsets = [[0, 0], [-1, -1], [-1, 1], [1, -1], [1, 1]];
+        for (const [dr, dc] of offsets) {
+            const nr = r + dr;
+            const nc = c + dc;
+            if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                damageDealtGrid[nr][nc] += 1;
+            }
+        }
+    }
+}
 
 // ============================================================================
 // 主入口
@@ -111,6 +192,9 @@ export function makeAIDecision(context) {
 
     // 从并列最优中随机选择（增加不可预测性）
     bestAction = candidates[Math.floor(Math.random() * candidates.length)];
+    
+    // 记录即将造成的伤害（假设决策一定会被执行）
+    recordDamageDealt(bestAction, abilities);
     
     return bestAction;
 }
@@ -524,7 +608,9 @@ function evaluateAction(beliefState, action, abilities, alpha) {
     const normInfoGain = currentEntropy > MIN_PROB ? infoGain / currentEntropy : 0;
     
     // 2. 计算期望伤害
-    const expectedDamage = calculateExpectedDamage(action, probGrid, abilities);
+    // 动态获取当前存活船只的最大血量，用于估算伤害溢出
+    const maxShipHp = Math.max(...beliefState.ships.map(s => s.maxHp ?? 1));
+    const expectedDamage = calculateExpectedDamage(action, probGrid, abilities, maxShipHp);
     
     // 归一化期望伤害（除以最大可能伤害）
     const maxDamage = weapon === 'HE' ? 5 : (weapon === 'AP' ? abilities.apDamage : 0);
@@ -540,22 +626,40 @@ function evaluateAction(beliefState, action, abilities, alpha) {
 }
 
 /**
- * 计算期望伤害
+ * 计算期望有效伤害
+ * 
+ * 考虑伤害溢出：已造成的伤害会减少后续攻击的有效伤害
+ * 有效伤害 = min(武器伤害, 估计剩余血量)
+ * 估计剩余血量 = max(0, 最大可能血量 - 已造成伤害)
+ * 
+ * 注意：AI 不知道格子的真实血量（信息对等原则），
+ * 只能基于已知的「我打了多少」来估计「还能打多少」
+ * 
+ * @param {Object} action - 攻击行动
+ * @param {Array<Array<number>>} probGrid - 概率网格
+ * @param {Object} abilities - AI 能力
+ * @param {number} maxShipHp - 当前存活船只的最大血量
  */
-function calculateExpectedDamage(action, probGrid, abilities) {
+function calculateExpectedDamage(action, probGrid, abilities, maxShipHp) {
     const { weapon, r, c } = action;
     
     if (weapon === 'SONAR') {
         return 0; // 声纳不造成伤害
     }
     
+    // 确保伤害记录已初始化
+    if (!damageDealtGrid) {
+        damageDealtGrid = createEmptyDamageGrid();
+    }
+    
     let expectedDamage = 0;
-    const damage = weapon === 'AP' ? abilities.apDamage : 1;
+    const baseDamage = weapon === 'AP' ? abilities.apDamage : 1;
     
     if (weapon === 'AP') {
         // 单点攻击
         if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE) {
-            expectedDamage = probGrid[r][c] * damage;
+            const effectiveDamage = getEffectiveDamage(r, c, baseDamage, maxShipHp);
+            expectedDamage = probGrid[r][c] * effectiveDamage;
         }
     } else if (weapon === 'HE') {
         // X 型攻击
@@ -564,12 +668,32 @@ function calculateExpectedDamage(action, probGrid, abilities) {
             const nr = r + dr;
             const nc = c + dc;
             if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                expectedDamage += probGrid[nr][nc] * 1; // HE 每格伤害 1
+                const effectiveDamage = getEffectiveDamage(nr, nc, 1, maxShipHp);
+                expectedDamage += probGrid[nr][nc] * effectiveDamage;
             }
         }
     }
     
     return expectedDamage;
+}
+
+/**
+ * 计算单格的有效伤害
+ * 
+ * @param {number} r - 行坐标
+ * @param {number} c - 列坐标  
+ * @param {number} weaponDamage - 武器基础伤害
+ * @param {number} maxShipHp - 当前存活船只的最大血量
+ * @returns {number} 有效伤害（考虑伤害溢出后）
+ */
+function getEffectiveDamage(r, c, weaponDamage, maxShipHp) {
+    const dealtDamage = damageDealtGrid[r][c];
+    
+    // 估计剩余血量：当前存活船只的最大血量 - 已造成伤害
+    const estimatedRemainingHP = Math.max(0, maxShipHp - dealtDamage);
+    
+    // 有效伤害不超过估计剩余血量
+    return Math.min(weaponDamage, estimatedRemainingHP);
 }
 
 // ============================================================================
