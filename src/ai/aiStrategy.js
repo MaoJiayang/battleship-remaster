@@ -45,7 +45,7 @@ const CellState = {
 };
 
 /** 蒙特卡洛采样数量 */
-const SAMPLE_COUNT = 500;
+const SAMPLE_COUNT = 2000;
 
 /** 最小概率阈值，防止数值问题 */
 const MIN_PROB = 1e-10;
