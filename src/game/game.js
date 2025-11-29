@@ -2,6 +2,7 @@ import { BOARD_SIZE, CELL_SIZE as DEFAULT_CELL_SIZE, INTERACTION_TIMING } from "
 import { SHIP_TYPES } from "../data/ships";
 import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 import { makeAIDecision, calculateProbabilityGrid, resetAIState } from '../ai/aiStrategy.js';
+import { deployShips as aiDeployShips } from '../ai/aiDeployment.js';
 
 // 武器系统导入
 import { WeaponRegistry } from './weapons/WeaponRegistry.js';
@@ -1015,20 +1016,18 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
     function autoDeploy() {
         resetToDock();
         setTimeout(() => {
-            myShips.forEach(ship => {
-                let placed = false;
-                let attempts = 0;
-                while (!placed && attempts < 200) {
-                    let r = Math.floor(Math.random() * BOARD_SIZE);
-                    let c = Math.floor(Math.random() * BOARD_SIZE);
-                    let v = Math.random() > 0.5;
-                    if (isValidPos(r, c, ship.len, v, null)) {
-                        placeShip(ship, r, c, v);
-                        placed = true;
-                    }
-                    attempts++;
+            // 使用 AI 部署模块生成稀疏分布的船只配置
+            const placements = aiDeployShips(SHIP_TYPES, BOARD_SIZE);
+            
+            // 根据生成的配置放置玩家船只
+            placements.forEach(placement => {
+                // 通过 code 匹配对应的玩家船只对象
+                const ship = myShips.find(s => s.code === placement.code);
+                if (ship) {
+                    placeShip(ship, placement.r, placement.c, placement.v);
                 }
             });
+            
             checkReady();
         }, 50);
     }
@@ -1171,52 +1170,35 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
             while(cell.firstChild) cell.removeChild(cell.firstChild);
         });
 
-        // 2. 初始化数据
+        // 2. 使用 AI 部署模块生成船只配置（稀疏分布策略）
+        const placements = aiDeployShips(SHIP_TYPES, BOARD_SIZE);
+        
+        // 3. 初始化数据
         enemyShips = [];
         enemyGridMap = createEmptyGrid().map(row => row.map(c => ({hit:false, shipId:-1, segmentIndex: -1})));
-        let tempGrid = createEmptyGrid();
         
-        SHIP_TYPES.forEach((type, idx) => {
-            let placed = false;
-            let attempts = 0;
-            while (!placed && attempts < 1000) {
-                attempts++;
-                let r = Math.floor(Math.random() * BOARD_SIZE);
-                let c = Math.floor(Math.random() * BOARD_SIZE);
-                let v = Math.random() > 0.5;
-                let valid = true;
-                
-                if (v) { if (r + type.len > BOARD_SIZE) valid = false; }
-                else { if (c + type.len > BOARD_SIZE) valid = false; }
-                
-                if (valid) {
-                    for(let i=0; i<type.len; i++) {
-                        let nr = v ? r+i : r; let nc = v ? c : c+i;
-                        if (tempGrid[nr][nc] === 1) valid = false;
-                    }
-                }
-                
-                if (valid) {
-                    for(let i=0; i<type.len; i++) {
-                        let nr = v ? r+i : r; let nc = v ? c : c+i;
-                        tempGrid[nr][nc] = 1;
-                        enemyGridMap[nr][nc].shipId = idx;
-                        enemyGridMap[nr][nc].segmentIndex = i;
-                    }
-                    enemyShips.push({ 
-                        id: idx, 
-                        name: type.name, 
-                        len: type.len, 
-                        maxHp: type.maxHp,
-                        code: type.code,
-                        hp: Array(type.len).fill(type.maxHp),
-                        sunk:false, 
-                        r, c, v 
-                    });
-                    placed = true;
-                }
+        placements.forEach((placement, idx) => {
+            const { r, c, v, len, name, maxHp, code } = placement;
+            
+            // 标记网格占用
+            for (let i = 0; i < len; i++) {
+                const nr = v ? r + i : r;
+                const nc = v ? c : c + i;
+                enemyGridMap[nr][nc].shipId = idx;
+                enemyGridMap[nr][nc].segmentIndex = i;
             }
-            if (!placed) console.error("Failed to place ship:", type.name);
+            
+            // 创建船只对象
+            enemyShips.push({ 
+                id: idx, 
+                name, 
+                len, 
+                maxHp,
+                code,
+                hp: Array(len).fill(maxHp),
+                sunk: false, 
+                r, c, v 
+            });
         });
     }
 
