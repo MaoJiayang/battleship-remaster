@@ -17,10 +17,10 @@ export class SonarWeapon extends WeaponBase {
     }
     
     /**
-     * 需要 DD 存活才能使用
+     * 需要 DD 或 SS 存活才能使用
      */
     canUse(context) {
-        return context.attackerShips.some(s => s.code === 'DD' && !s.sunk);
+        return context.attackerShips.some(s => (s.code === 'DD' || s.code === 'SS') && !s.sunk);
     }
     
     /**

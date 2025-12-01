@@ -796,12 +796,12 @@ function checkAIAbilities(enemyShips) {
     const aiDD = enemyShips.some(s => s.code === 'DD' && !s.sunk);
     
     let aiAPDamage = 1;
-    if (aiBB || aiSS) aiAPDamage = 3;
-    else if (aiCL) aiAPDamage = 2;
+    if (aiBB) aiAPDamage = 3;
+    else if (aiSS || aiCL) aiAPDamage = 2;
 
     return {
         canUseAir: aiCV,
-        canUseSonar: aiDD,
+        canUseSonar: aiDD || aiSS,
         apDamage: aiAPDamage
     };
 }

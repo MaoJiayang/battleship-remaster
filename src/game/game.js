@@ -1249,9 +1249,10 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         const cvAlive = myShips.some(s => s.code === 'CV' && !s.sunk);
         const clAlive = myShips.some(s => s.code === 'CL' && !s.sunk);
         const ddAlive = myShips.some(s => s.code === 'DD' && !s.sunk);
+        const ssAlive = myShips.some(s => s.code === 'SS' && !s.sunk);
         
         const enableHE = cvAlive; // 仅航母可用空袭
-        const enableSonar = ddAlive;
+        const enableSonar = ddAlive || ssAlive;
         
         document.getElementById('btn-he').disabled = !enableHE;
         document.getElementById('btn-sonar').disabled = !enableSonar;
@@ -1269,9 +1270,8 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         const bbAlive = myShips.some(s => s.code === 'BB' && !s.sunk);
         const ssAlive = myShips.some(s => s.code === 'SS' && !s.sunk);
         const clAlive = myShips.some(s => s.code === 'CL' && !s.sunk);
-        
-        if (bbAlive || ssAlive) return 3;
-        if (clAlive) return 2; // 轻巡保底
+        if (bbAlive) return 3;
+        if (ssAlive || clAlive) return 2; // SS/CL 提供 2 点伤害
         return 1;
     }
 
@@ -1710,9 +1710,9 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
             const tdAbil = document.createElement('td');
             if (type.code === 'CV') tdAbil.innerHTML = '解锁 <b>空袭</b>';
             else if (type.code === 'DD') tdAbil.innerHTML = '解锁 <b>水听</b>';
-            else if (type.code === 'BB') tdAbil.innerHTML = '主炮伤害 3';
-            else if (type.code === 'SS') tdAbil.innerHTML = '主炮伤害 3';
-            else if (type.code === 'CL') tdAbil.innerHTML = '主炮伤害 2 (若BB/SS沉没)';
+            else if (type.code === 'BB') tdAbil.innerHTML = '主炮伤害上限 3';
+            else if (type.code === 'SS') tdAbil.innerHTML = '主炮伤害上限 2<br>解锁 <b>水听</b>';
+            else if (type.code === 'CL') tdAbil.innerHTML = '主炮伤害上限 2 ';
             else tdAbil.innerText = '-';
             tr.appendChild(tdAbil);
 

@@ -80,8 +80,8 @@ export class APWeapon extends WeaponBase {
     
     /**
      * 计算主炮伤害
-     * BB/SS 存活: 3 伤害
-     * CL 存活: 2 伤害
+     * BB 存活: 3 伤害
+     * SS/CL 存活: 2 伤害
      * 否则: 1 伤害
      */
     _calculateDamage(attackerShips) {
@@ -89,8 +89,8 @@ export class APWeapon extends WeaponBase {
         const ssAlive = attackerShips.some(s => s.code === 'SS' && !s.sunk);
         const clAlive = attackerShips.some(s => s.code === 'CL' && !s.sunk);
         
-        if (bbAlive || ssAlive) return 3;
-        if (clAlive) return 2;
+        if (bbAlive) return 3;
+        if (ssAlive || clAlive) return 2;
         return 1;
     }
 }
