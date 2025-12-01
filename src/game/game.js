@@ -158,8 +158,9 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         document.addEventListener('touchend', onGlobalTouchEnd, { passive: false });
         document.addEventListener('touchmove', onGlobalTouchMove, { passive: false });
 
-        // 监听窗口大小变化，实时调整舰船尺寸
+        // 监听窗口大小变化，实时调整棋盘和舰船尺寸
         window.addEventListener('resize', () => {
+            updateGridSize();
             myShips.forEach(ship => updateShipVisuals(ship));
             // 同时也需要更新已显示的敌舰
             document.querySelectorAll('.revealed-enemy-ship').forEach(el => {
@@ -275,7 +276,33 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         return Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
     }
 
+    /**
+     * 计算并设置动态棋盘尺寸
+     * 确保棋盘最大宽度不超过移动端断点，同时格子尺寸均匀
+     */
+    function updateGridSize() {
+        const root = document.documentElement;
+        const mobileBreakpoint = INTERACTION_TIMING.MOBILE_BREAKPOINT;
+        
+        // 计算可用宽度（考虑边框和内边距）
+        const gridBorder = 8; // 4px * 2
+        const maxGridWidth =( mobileBreakpoint - gridBorder) * 0.5; // 留出一些余量
+        
+        // 计算每个格子的最大尺寸（向下取整以确保均匀）
+        const maxCellSize = Math.floor(maxGridWidth / BOARD_SIZE); // 留出一些余量
+        
+        // 使用默认尺寸和最大尺寸中的较小值
+        const cellSize = Math.min(DEFAULT_CELL_SIZE, maxCellSize);
+        
+        // 设置 CSS 变量
+        root.style.setProperty('--board-size', BOARD_SIZE);
+        root.style.setProperty('--cell-size', `${cellSize}px`);
+    }
+
     function initGrids() {
+        // 初始化时设置棋盘尺寸
+        updateGridSize();
+        
         const pGrid = document.getElementById('player-grid');
         const eGrid = document.getElementById('enemy-grid');
         pGrid.innerHTML = ''; eGrid.innerHTML = '';
@@ -1367,11 +1394,13 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
 
         // 1. 准备决策上下文
         const viewGrid = getAiViewGrid();
+        const playerViewGrid = getPlayerViewGrid();  // 用于对称推演
         const aiDecisionContext = {
             viewGrid,
             myShips,
             enemyShips,
-            difficultyConfig: AI_PROB_CONFIG
+            difficultyConfig: AI_PROB_CONFIG,
+            playerViewGrid  // 新增：玩家视角的 AI 棋盘
         };
 
         // 2. 调用 AI 策略模块进行决策
@@ -1414,7 +1443,7 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
 
     function getAiViewGrid() {
         // 0: Unknown, 1: Miss, 2: Hit, 3: Destroyed, 4: Suspect, 5: Sunk
-        let grid = Array(10).fill(0).map(() => Array(10).fill(0));
+        let grid = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
         document.querySelectorAll('#player-grid .cell').forEach(cell => {
             const r = parseInt(cell.dataset.r);
             const c = parseInt(cell.dataset.c);
@@ -1430,11 +1459,46 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
                 for(let i=0; i<s.len; i++) {
                     let nr = s.vertical ? s.r+i : s.r;
                     let nc = s.vertical ? s.c : s.c+i;
-                    if(nr >= 0 && nr < 10 && nc >= 0 && nc < 10) grid[nr][nc] = 5;
+                    if(nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) grid[nr][nc] = 5;
                 }
             }
         });
 
+        return grid;
+    }
+
+    /**
+     * 获取玩家视角的 AI 棋盘状态
+     * （与 getAiViewGrid 对称，用于 AI 对称推演）
+     * 
+     * @returns {number[][]} BOARD_SIZE x BOARD_SIZE 数组
+     *   0=未知, 1=miss, 2=hit, 3=destroyed, 4=suspect, 5=sunk
+     */
+    function getPlayerViewGrid() {
+        const grid = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
+        
+        document.querySelectorAll('#enemy-grid .cell').forEach(cell => {
+            const r = parseInt(cell.dataset.r);
+            const c = parseInt(cell.dataset.c);
+            if (cell.classList.contains('destroyed')) grid[r][c] = 3;
+            else if (cell.classList.contains('hit')) grid[r][c] = 2;
+            else if (cell.classList.contains('miss')) grid[r][c] = 1;
+            else if (cell.classList.contains('suspect')) grid[r][c] = 4;
+        });
+        
+        // 标记已沉没的 AI 船只
+        enemyShips.forEach(s => {
+            if (s.sunk) {
+                for (let i = 0; i < s.len; i++) {
+                    const nr = s.vertical ? s.r + i : s.r;
+                    const nc = s.vertical ? s.c : s.c + i;
+                    if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                        grid[nr][nc] = 5;
+                    }
+                }
+            }
+        });
+        
         return grid;
     }
 

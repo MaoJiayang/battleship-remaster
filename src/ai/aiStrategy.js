@@ -1,11 +1,17 @@
 ﻿/**
- * AI 策略模块 v2.1 - 基于信息论的统一决策框架
+ * AI 策略模块 v2.2 - 基于信息论的统一决策框架（增强版：对称推演 + 风险感知）
  * 
- * 设计思想：信息增益最大化 (Max Information Gain)
+ * 设计思想：信息增益最大化 (Max Information Gain) + 对称推演
  * - 将所有武器（主炮/空袭/声纳）统一评估为"信息获取 + 伤害输出"的组合
  * - 用信息熵作为统一度量，消除多个启发式超参数
  * - 唯一核心参数：alpha（探索权重）控制信息收集 vs 伤害输出的平衡
  * - 伤害溢出优化：记录已造成伤害，避免重复攻击已被"打穿"的格子
+ * 
+ * v2.2 新增功能：
+ * - 对称推演：复用现有框架模拟玩家攻击行为，预测己方舰船威胁
+ * - 多步推演：向前看 k 步，累积评估各船的沉没概率
+ * - 风险感知：当关键船只（CV/DD/BB 等）受威胁时，优先使用即将丧失的能力
+ * - 新增参数：riskAwareness（风险意识，0~1）控制风险感知强度
  * 
  * ============================================================================
  * 导出接口（公开 API）
@@ -19,7 +25,8 @@
  *   - context.viewGrid: AI 视角下的棋盘状态（0=未知，1=未命中，2=命中，3=摧毁，4=疑似，5=已沉没）
  *   - context.myShips: 玩家舰船列表（AI 的攻击目标）
  *   - context.enemyShips: 敌方舰船列表（用于判断 AI 自身能力）
- *   - context.difficultyConfig: 难度配置参数
+ *   - context.difficultyConfig: 难度配置参数（含 alpha, randomness, riskAwareness）
+ *   - context.playerViewGrid: [可选] 玩家视角的 AI 棋盘（用于对称推演，提升风险感知）
  *   - 返回值: { weapon: 'AP'|'HE'|'SONAR', r: number, c: number }
  * 
  * 【调试接口】
@@ -31,6 +38,7 @@
  * - AI 模块维护内部状态（伤害记录），不再是完全无状态
  * - 每局游戏开始前必须调用 resetAIState() 重置状态
  * - makeAIDecision() 返回的决策假定一定会被执行，AI 会据此更新内部状态
+ * - 对称推演需要 playerViewGrid，若未提供则跳过风险计算（优雅降级）
  */
 
 import { BOARD_SIZE } from '../config/constants.js';
@@ -61,8 +69,14 @@ const CellState = {
     SUNK: 5         // 已沉没船只占位
 };
 
-/** 蒙特卡洛采样数量 */
-const SAMPLE_COUNT = 1000;
+/** 蒙特卡洛采样数量（默认值） */
+const SAMPLE_COUNT = 700;
+
+/** 对称推演采样数量（较小以平衡多步开销） */
+const OPPONENT_SAMPLE_COUNT = 50;
+
+/** 向前推演步数 */
+const LOOKAHEAD_STEPS = 5;
 
 /** 最小概率阈值，防止数值问题 */
 const MIN_PROB = 1e-10;
@@ -136,17 +150,19 @@ function recordDamageDealt(action, abilities) {
 // ============================================================================
 
 /**
- * AI 决策主入口
+ * AI 决策主入口（增强版：支持多步推演与风险感知）
  * 
  * @param {Object} context - 决策上下文
- * @param {Array<Array<number>>} context.viewGrid - AI 视角棋盘 (10x10)
+ * @param {Array<Array<number>>} context.viewGrid - AI 视角棋盘 (BOARD_SIZE x BOARD_SIZE)
  * @param {Array} context.myShips - 玩家舰船状态（AI 的攻击目标）
  * @param {Array} context.enemyShips - 敌方舰船状态（AI 自身的船）
  * @param {Object} context.difficultyConfig - 难度配置
+ * @param {Array<Array<number>>} [context.playerViewGrid] - 玩家视角的 AI 棋盘（用于对称推演）
  * @returns {{ weapon: string, r: number, c: number }} 攻击指令
  */
 export function makeAIDecision(context) {
-    const { viewGrid, myShips, enemyShips, difficultyConfig } = context;
+    const { viewGrid, myShips, enemyShips, difficultyConfig, playerViewGrid } = context;
+    const { alpha = 0.5, randomness = 0, riskAwareness = 0 } = difficultyConfig;
 
     // 1. 检查 AI 可用的武器能力
     const abilities = checkAIAbilities(enemyShips);
@@ -158,28 +174,46 @@ export function makeAIDecision(context) {
     }
 
     // 3. 难度控制：随机扰动
-    if (Math.random() < (difficultyConfig.randomness ?? 0)) {
+    if (Math.random() < randomness) {
         return makeRandomDecision(viewGrid, abilities);
     }
 
     // 4. 构建置信状态（蒙特卡洛采样）
     const beliefState = new BeliefState(aliveTargets, viewGrid);
     
-    // 5. 枚举所有可用行动并统一评估
-    const alpha = difficultyConfig.alpha ?? 0.5;
+    // 5. 枚举所有可用行动
     const actions = enumerateAllActions(viewGrid, abilities);
     
     if (actions.length === 0) {
         return findFallbackTarget(viewGrid);
     }
 
-    // 6. 找到最优行动
+    // 6. 【增强】多步推演：评估各船的累积威胁
+    let shipThreats = null;
+    if (riskAwareness > 0 && playerViewGrid) {
+        shipThreats = simulateMultiStepThreats(
+            playerViewGrid, 
+            enemyShips, 
+            myShips, 
+            alpha,
+            LOOKAHEAD_STEPS
+        );
+    }
+
+    // 7. 找到最优行动
     let bestAction = null;
     let bestScore = -Infinity;
     const candidates = [];
 
     for (const action of actions) {
-        const score = evaluateAction(beliefState, action, abilities, alpha);
+        // 基础评分（原有逻辑）
+        let score = evaluateAction(beliefState, action, abilities, alpha);
+        
+        // 【增强】基于多步威胁的风险调整
+        if (shipThreats && riskAwareness > 0) {
+            const riskBonus = calculateRiskBonusMultiStep(action, shipThreats, abilities, enemyShips);
+            score += riskAwareness * riskBonus;
+        }
         
         if (score > bestScore + 1e-9) {
             bestScore = score;
@@ -209,7 +243,12 @@ export function makeAIDecision(context) {
  * 核心思想：通过蒙特卡洛采样近似所有可行配置的分布
  */
 class BeliefState {
-    constructor(ships, viewGrid) {
+    /**
+     * @param {Ship[]} ships - 目标船只
+     * @param {number[][]} viewGrid - 视角网格
+     * @param {number} [sampleCount=SAMPLE_COUNT] - 采样数量
+     */
+    constructor(ships, viewGrid, sampleCount = SAMPLE_COUNT) {
         this.ships = ships;
         this.viewGrid = viewGrid;
         this.boardSize = BOARD_SIZE;
@@ -217,8 +256,8 @@ class BeliefState {
         // 预计算约束信息
         this.constraints = this._buildConstraints();
         
-        // 蒙特卡洛采样
-        this.samples = this._sampleConfigurations(SAMPLE_COUNT);
+        // 蒙特卡洛采样（使用传入的采样数）
+        this.samples = this._sampleConfigurations(sampleCount);
         
         // 缓存边缘概率分布
         this._probabilityGrid = null;
@@ -805,6 +844,314 @@ function findFallbackTarget(viewGrid) {
     }
     // 实在找不到就返回 (0,0)
     return { r: 0, c: 0, weapon: 'AP' };
+}
+
+// ============================================================================
+// 对称推演模块：多步威胁评估
+// ============================================================================
+
+/**
+ * 获取武器覆盖范围（用于多步推演）
+ * 
+ * @param {string} weapon - 武器类型 'AP' | 'HE' | 'SONAR'
+ * @param {number} r - 中心行
+ * @param {number} c - 中心列
+ * @returns {{ r: number, c: number }[]} 覆盖的格子数组
+ */
+function getWeaponCoverage(weapon, r, c) {
+    const instance = weaponInstances[weapon];
+    if (instance) {
+        return instance.previewArea({ r, c }).cells;
+    }
+    return [{ r, c }];
+}
+
+/**
+ * 获取船只占用的格子
+ * 
+ * @param {Object} ship - 船只对象
+ * @returns {{ r: number, c: number }[]} 船只占用的格子数组
+ */
+function getShipCells(ship) {
+    const cells = [];
+    const isVertical = ship.v ?? ship.vertical ?? false;
+    for (let i = 0; i < ship.len; i++) {
+        cells.push({
+            r: isVertical ? ship.r + i : ship.r,
+            c: isVertical ? ship.c : ship.c + i
+        });
+    }
+    return cells;
+}
+
+/**
+ * 多步推演：估算 k 步内各船的累积威胁
+ * 
+ * 每一步都进行完整的推演：
+ * 1. 重新构建置信状态（采样）
+ * 2. 评估所有行动
+ * 3. 选择最优行动
+ * 4. 更新模拟状态
+ * 
+ * @param {number[][]} playerViewGrid - 玩家视角的 AI 棋盘
+ * @param {Ship[]} aiShips - AI 的船只（真实位置）
+ * @param {Ship[]} playerShips - 玩家的船只（用于判断玩家能力）
+ * @param {number} alpha - 探索权重
+ * @param {number} [steps=LOOKAHEAD_STEPS] - 推演步数
+ * @returns {Map<string, { totalExpectedDamage: number, sinkProbability: number, remainingHp: number }>}
+ */
+function simulateMultiStepThreats(playerViewGrid, aiShips, playerShips, alpha, steps = LOOKAHEAD_STEPS) {
+    const playerAbilities = checkAIAbilities(playerShips);
+    const aliveTargets = aiShips.filter(s => !s.sunk);
+    if (aliveTargets.length === 0) return new Map();
+    
+    // 初始化每艘船的累积威胁
+    const threats = new Map();
+    for (const ship of aliveTargets) {
+        const currentHp = Array.isArray(ship.hp) 
+            ? ship.hp.reduce((a, b) => a + b, 0) 
+            : (ship.hp ?? ship.len);
+        threats.set(ship.id, {
+            totalExpectedDamage: 0,
+            remainingHp: currentHp
+        });
+    }
+    
+    // 模拟状态（会随推演更新）
+    let simViewGrid = playerViewGrid.map(row => [...row]);
+    
+    for (let step = 0; step < steps; step++) {
+        // 【每步都完整推演】构建玩家置信状态
+        const playerBelief = new BeliefState(aliveTargets, simViewGrid, OPPONENT_SAMPLE_COUNT);
+        const probGrid = playerBelief.getProbabilityGrid();
+        
+        // 枚举玩家可用行动
+        const actions = enumerateAllActions(simViewGrid, playerAbilities);
+        if (actions.length === 0) break;
+        
+        // 【完整评估】用原版 evaluateAction
+        let bestAction = null;
+        let bestScore = -Infinity;
+        
+        for (const action of actions) {
+            const score = evaluateAction(playerBelief, action, playerAbilities, alpha);
+            if (score > bestScore) {
+                bestScore = score;
+                bestAction = action;
+            }
+        }
+        
+        if (!bestAction) break;
+        
+        // 累积该攻击对各船的威胁
+        accumulateThreat(bestAction, probGrid, playerAbilities, aiShips, threats);
+        
+        // 更新模拟状态
+        updateSimulatedState(simViewGrid, bestAction, playerAbilities, probGrid);
+    }
+    
+    // 计算沉没概率
+    for (const [shipId, threat] of threats) {
+        const ship = aiShips.find(s => s.id === shipId);
+        if (ship) {
+            const currentHp = Array.isArray(ship.hp) 
+                ? ship.hp.reduce((a, b) => a + b, 0) 
+                : (ship.hp ?? ship.len);
+            threat.sinkProbability = Math.min(1, threat.totalExpectedDamage / Math.max(1, currentHp));
+        }
+    }
+    
+    return threats;
+}
+
+/**
+ * 累积攻击对各船的威胁
+ * 
+ * @param {Object} action - 攻击行动 { weapon, r, c }
+ * @param {number[][]} probGrid - 概率网格
+ * @param {Object} abilities - 攻击方能力
+ * @param {Ship[]} aiShips - AI 的船只
+ * @param {Map} threats - 威胁累积 Map
+ */
+function accumulateThreat(action, probGrid, abilities, aiShips, threats) {
+    const { weapon, r, c } = action;
+    
+    // 声纳不造成伤害
+    if (weapon === 'SONAR') return;
+    
+    const cells = getWeaponCoverage(weapon, r, c);
+    const dmg = weapon === 'AP' ? abilities.apDamage : 1;
+    
+    for (const cell of cells) {
+        if (cell.r < 0 || cell.r >= BOARD_SIZE || cell.c < 0 || cell.c >= BOARD_SIZE) continue;
+        
+        // 找出该格子属于哪艘船（AI 知道自己船的真实位置）
+        for (const ship of aiShips) {
+            if (ship.sunk) continue;
+            const shipCells = getShipCells(ship);
+            const isOnShip = shipCells.some(sc => sc.r === cell.r && sc.c === cell.c);
+            
+            if (isOnShip) {
+                const threat = threats.get(ship.id);
+                if (threat) {
+                    // 期望伤害 = 玩家攻击该格的概率 × 伤害
+                    threat.totalExpectedDamage += probGrid[cell.r][cell.c] * dmg;
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 更新模拟状态
+ * 根据攻击结果更新视角网格，使后续步骤的采样更准确
+ * 
+ * @param {number[][]} simViewGrid - 模拟视角网格（会被修改）
+ * @param {Object} action - 攻击行动
+ * @param {Object} abilities - 攻击方能力
+ * @param {number[][]} probGrid - 概率网格
+ */
+function updateSimulatedState(simViewGrid, action, abilities, probGrid) {
+    const { weapon, r, c } = action;
+    const cells = getWeaponCoverage(weapon, r, c);
+    
+    for (const cell of cells) {
+        if (cell.r >= 0 && cell.r < BOARD_SIZE && cell.c >= 0 && cell.c < BOARD_SIZE) {
+            // 只更新未知或疑似的格子
+            if (simViewGrid[cell.r][cell.c] === CellState.UNKNOWN || 
+                simViewGrid[cell.r][cell.c] === CellState.SUSPECT) {
+                // 根据概率决定模拟结果（简化：高概率格子视为命中）
+                if (probGrid[cell.r][cell.c] > 0.5) {
+                    simViewGrid[cell.r][cell.c] = CellState.HIT;
+                } else {
+                    simViewGrid[cell.r][cell.c] = CellState.MISS;
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// 风险感知决策模块
+// ============================================================================
+
+/**
+ * 模拟某船沉没后的能力
+ * 
+ * @param {Ship[]} ships - 当前船只列表
+ * @param {Object} lostShip - 假设沉没的船
+ * @returns {Object} 沉没后的能力
+ */
+function simulateAbilitiesAfterLoss(ships, lostShip) {
+    const remaining = ships.filter(s => s.id !== lostShip.id && !s.sunk);
+    return checkAIAbilities(remaining);
+}
+
+/**
+ * 计算能力损失的归一化影响
+ * 
+ * 将各种能力损失映射到 0~1 范围，无需手动设定权重
+ * 
+ * @param {Object} before - 损失前的能力
+ * @param {Object} after - 损失后的能力
+ * @returns {number} 0~1，1 表示丧失全部额外能力
+ */
+function calculateAbilityLoss(before, after) {
+    let loss = 0;
+    let maxPossibleLoss = 0;
+    
+    // 空袭能力：二元，丧失 = 1
+    maxPossibleLoss += 1;
+    if (before.canUseAir && !after.canUseAir) {
+        loss += 1;
+    }
+    
+    // 水听能力：二元，丧失 = 1
+    maxPossibleLoss += 1;
+    if (before.canUseSonar && !after.canUseSonar) {
+        loss += 1;
+    }
+    
+    // 主炮伤害：连续，从 3 降到 1 = 丧失 2/3 的额外伤害
+    // 额外伤害 = apDamage - 1（基础伤害为 1）
+    const beforeExtra = before.apDamage - 1;  // 0, 1, 或 2
+    const afterExtra = after.apDamage - 1;
+    const maxExtra = 2;  // 最大额外伤害
+    
+    maxPossibleLoss += 1;
+    if (beforeExtra > afterExtra) {
+        loss += (beforeExtra - afterExtra) / maxExtra;
+    }
+    
+    // 归一化到 0~1
+    return maxPossibleLoss > 0 ? loss / maxPossibleLoss : 0;
+}
+
+/**
+ * 检查当前行动是否使用了即将丧失的能力
+ * 
+ * @param {Object} action - 当前考虑的行动
+ * @param {Object} before - 当前能力
+ * @param {Object} after - 某船沉没后的能力
+ * @returns {boolean} 是否使用了濒危能力
+ */
+function checkUsesEndangeredAbility(action, before, after) {
+    // 空袭能力即将丧失，且当前使用空袭
+    if (before.canUseAir && !after.canUseAir && action.weapon === 'HE') {
+        return true;
+    }
+    
+    // 水听能力即将丧失，且当前使用水听
+    if (before.canUseSonar && !after.canUseSonar && action.weapon === 'SONAR') {
+        return true;
+    }
+    
+    // 主炮伤害即将降级，且当前使用主炮
+    if (before.apDamage > after.apDamage && action.weapon === 'AP') {
+        return true;
+    }
+    
+    return false;
+}
+
+/**
+ * 基于多步威胁计算风险调整
+ * 
+ * 设计原则：无硬编码权重
+ * - 不给 HE/SONAR/AP 定义固定系数
+ * - 风险加成 = 沉没概率 × 能力损失的「归一化影响」
+ * 
+ * @param {Object} action - AI 当前考虑的行动
+ * @param {Map} shipThreats - 各船的累积威胁 Map<shipId, {sinkProbability, ...}>
+ * @param {Object} abilities - AI 当前能力
+ * @param {Ship[]} aiShips - AI 的船只
+ * @returns {number} 风险调整加成
+ */
+function calculateRiskBonusMultiStep(action, shipThreats, abilities, aiShips) {
+    let totalBonus = 0;
+    
+    for (const ship of aiShips) {
+        if (ship.sunk) continue;
+        
+        const threat = shipThreats.get(ship.id);
+        if (!threat || threat.sinkProbability < 0.2) continue;
+        
+        // 模拟该船沉没后的能力变化
+        const afterAbilities = simulateAbilitiesAfterLoss(aiShips, ship);
+        
+        // 计算能力损失的归一化影响（0~1 范围）
+        const abilityLoss = calculateAbilityLoss(abilities, afterAbilities);
+        
+        // 如果当前行动使用了即将丧失的能力，给予加成
+        const usesEndangeredAbility = checkUsesEndangeredAbility(action, abilities, afterAbilities);
+        
+        if (usesEndangeredAbility) {
+            // 风险加成 = 沉没概率 × 能力损失影响
+            totalBonus += threat.sinkProbability * abilityLoss;
+        }
+    }
+    
+    return totalBonus;
 }
 
 // ============================================================================
