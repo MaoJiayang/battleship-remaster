@@ -266,12 +266,34 @@ class BeliefState {
         // 预计算约束信息
         this.constraints = this._buildConstraints();
         
+        // 检查是否为空盘面（第一回合）
+        this.isFirstTurn = this._checkIfFirstTurn();
+
         // 蒙特卡洛采样（使用传入的采样数）
-        this.samples = this._sampleConfigurations(sampleCount);
+        // 如果是第一回合，跳过采样以保持概率图完全平均
+        if (this.isFirstTurn) {
+            this.samples = [];
+        } else {
+            this.samples = this._sampleConfigurations(sampleCount);
+        }
         
         // 缓存边缘概率分布
         this._probabilityGrid = null;
         this._entropy = null;
+    }
+
+    /**
+     * 检查是否为第一回合（无任何探测记录）
+     */
+    _checkIfFirstTurn() {
+        for (let r = 0; r < this.boardSize; r++) {
+            for (let c = 0; c < this.boardSize; c++) {
+                if (this.viewGrid[r][c] !== CellState.UNKNOWN) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /**
@@ -456,6 +478,17 @@ class BeliefState {
             return this._probabilityGrid;
         }
         
+        // 特殊处理第一回合：返回完全平均的概率
+        if (this.isFirstTurn) {
+            const totalShipCells = this.ships.reduce((sum, s) => sum + s.len, 0);
+            const totalCells = this.boardSize * this.boardSize;
+            const avgProb = totalCells > 0 ? totalShipCells / totalCells : 0;
+            
+            const grid = Array(this.boardSize).fill(0).map(() => Array(this.boardSize).fill(avgProb));
+            this._probabilityGrid = grid;
+            return grid;
+        }
+
         const grid = Array(this.boardSize).fill(0)
             .map(() => Array(this.boardSize).fill(0));
         
