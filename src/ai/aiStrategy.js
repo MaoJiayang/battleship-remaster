@@ -1,5 +1,5 @@
 ﻿/**
- * AI 策略模块 v2.2 - 基于信息论的统一决策框架（增强版：对称推演 + 风险感知）
+ * AI 策略模块 v2.3 - 基于信息论的统一决策框架（边际效用损失版）
  * 
  * 设计思想：信息增益最大化 (Max Information Gain) + 对称推演
  * - 将所有武器（主炮/空袭/声纳）统一评估为"信息获取 + 伤害输出"的组合
@@ -7,11 +7,16 @@
  * - 唯一核心参数：alpha（探索权重）控制信息收集 vs 伤害输出的平衡
  * - 伤害溢出优化：记录已造成伤害，避免重复攻击已被"打穿"的格子
  * 
- * v2.2 新增功能：
+ * v2.3 改进（边际效用损失）：
+ * - 风险评估与信息论框架统一：用 evaluateAction 计算能力价值
+ * - 删除启发式的 calculateAbilityLoss 和 checkUsesEndangeredAbility
+ * - 风险加成公式：finalScore = baseUtility × (1 + riskAwareness × normRiskBonus)
+ * - 量纲统一：所有值归一化到 [0, 1]，乘法形式保证有界
+ * 
+ * v2.2 功能（保留）：
  * - 对称推演：复用现有框架模拟玩家攻击行为，预测己方舰船威胁
  * - 多步推演：向前看 k 步，累积评估各船的沉没概率
- * - 风险感知：当关键船只（CV/DD/BB 等）受威胁时，优先使用即将丧失的能力
- * - 新增参数：riskAwareness（风险意识，0~1）控制风险感知强度
+ * - 风险感知：当关键船只受威胁时，优先使用即将丧失的能力
  * 
  * ============================================================================
  * 导出接口（公开 API）
@@ -207,12 +212,17 @@ export function makeAIDecision(context) {
 
     for (const action of actions) {
         // 基础评分（原有逻辑）
-        let score = evaluateAction(beliefState, action, abilities, alpha);
+        const baseUtility = evaluateAction(beliefState, action, abilities, alpha);
         
-        // 【增强】基于多步威胁的风险调整
+        // 【增强】基于边际效用损失的风险调整（乘法形式）
+        // finalScore = baseUtility × (1 + riskAwareness × normRiskBonus)
+        // riskAwareness = 1 时，风险最多让效用翻倍
+        let score = baseUtility;
         if (shipThreats && riskAwareness > 0) {
-            const riskBonus = calculateRiskBonusMultiStep(action, shipThreats, abilities, enemyShips);
-            score += riskAwareness * riskBonus;
+            const normRiskBonus = calculateRiskBonusUnified(
+                action, shipThreats, beliefState, abilities, enemyShips, alpha
+            );
+            score = baseUtility * (1 + riskAwareness * normRiskBonus);
         }
         
         if (score > bestScore + 1e-9) {
@@ -1036,6 +1046,51 @@ function updateSimulatedState(simViewGrid, action, abilities, probGrid) {
 // ============================================================================
 
 /**
+ * 判断给定能力下某行动是否可用
+ * 
+ * 替代硬编码的 checkUsesEndangeredAbility，实现武器-能力映射的统一判断
+ * 
+ * @param {Object} action - 行动 { weapon, r, c }
+ * @param {Object} abilities - 能力状态
+ * @returns {boolean} 该行动是否可用
+ */
+function isActionAvailable(action, abilities) {
+    if (action.weapon === 'HE') return abilities.canUseAir;
+    if (action.weapon === 'SONAR') return abilities.canUseSonar;
+    return true; // AP 始终可用
+}
+
+/**
+ * 计算行动在能力降级后的效用损失
+ * 
+ * 简化版：只比较「当前行动」在两种能力下的效用差
+ * - 如果当前行动在能力降级后不可用，返回该行动的当前效用（完全丧失）
+ * - 如果当前行动仍可用但效用降低（如 AP 伤害降级），返回效用差（部分丧失）
+ * 
+ * @param {Object} action - 当前评估的行动
+ * @param {BeliefState} beliefState - 置信状态
+ * @param {Object} currentAbilities - 当前能力
+ * @param {Object} afterAbilities - 某船沉没后的能力
+ * @param {number} alpha - 探索权重
+ * @returns {number} 效用损失 ∈ [0, 1]
+ */
+function actionUtilityLoss(action, beliefState, currentAbilities, afterAbilities, alpha) {
+    // 检查该行动是否在降级后仍可用
+    const stillAvailable = isActionAvailable(action, afterAbilities);
+    
+    if (!stillAvailable) {
+        // 行动完全不可用，返回当前效用作为损失
+        return evaluateAction(beliefState, action, currentAbilities, alpha);
+    }
+    
+    // 行动仍可用，计算效用差（主要针对 AP 伤害降级）
+    const currentUtility = evaluateAction(beliefState, action, currentAbilities, alpha);
+    const reducedUtility = evaluateAction(beliefState, action, afterAbilities, alpha);
+    
+    return Math.max(0, currentUtility - reducedUtility);
+}
+
+/**
  * 模拟某船沉没后的能力
  * 
  * @param {Ship[]} ships - 当前船只列表
@@ -1047,88 +1102,27 @@ function simulateAbilitiesAfterLoss(ships, lostShip) {
     return checkAIAbilities(remaining);
 }
 
-/**
- * 计算能力损失的归一化影响
- * 
- * 将各种能力损失映射到 0~1 范围，无需手动设定权重
- * 
- * @param {Object} before - 损失前的能力
- * @param {Object} after - 损失后的能力
- * @returns {number} 0~1，1 表示丧失全部额外能力
- */
-function calculateAbilityLoss(before, after) {
-    let loss = 0;
-    let maxPossibleLoss = 0;
-    
-    // 空袭能力：二元，丧失 = 1
-    maxPossibleLoss += 1;
-    if (before.canUseAir && !after.canUseAir) {
-        loss += 1;
-    }
-    
-    // 水听能力：二元，丧失 = 1
-    maxPossibleLoss += 1;
-    if (before.canUseSonar && !after.canUseSonar) {
-        loss += 1;
-    }
-    
-    // 主炮伤害：连续，从 3 降到 1 = 丧失 2/3 的额外伤害
-    // 额外伤害 = apDamage - 1（基础伤害为 1）
-    const beforeExtra = before.apDamage - 1;  // 0, 1, 或 2
-    const afterExtra = after.apDamage - 1;
-    const maxExtra = 2;  // 最大额外伤害
-    
-    maxPossibleLoss += 1;
-    if (beforeExtra > afterExtra) {
-        loss += (beforeExtra - afterExtra) / maxExtra;
-    }
-    
-    // 归一化到 0~1
-    return maxPossibleLoss > 0 ? loss / maxPossibleLoss : 0;
-}
+
 
 /**
- * 检查当前行动是否使用了即将丧失的能力
+ * 计算归一化的风险加成（统一版）
  * 
- * @param {Object} action - 当前考虑的行动
- * @param {Object} before - 当前能力
- * @param {Object} after - 某船沉没后的能力
- * @returns {boolean} 是否使用了濒危能力
+ * 基于边际效用损失理论，用 evaluateAction 统一计算能力价值
+ * - 不再使用启发式的 calculateAbilityLoss
+ * - 不再需要硬编码的 checkUsesEndangeredAbility
+ * - 风险加成 = Σ(沉没概率 × 效用损失) / 高威胁船只数
+ * 
+ * @param {Object} action - 当前评估的行动
+ * @param {Map} shipThreats - 各船的威胁信息 Map<shipId, {sinkProbability, ...}>
+ * @param {BeliefState} beliefState - 置信状态
+ * @param {Object} abilities - 当前能力
+ * @param {Ship[]} aiShips - AI 船只列表
+ * @param {number} alpha - 探索权重
+ * @returns {number} 归一化风险加成 ∈ [0, 1]
  */
-function checkUsesEndangeredAbility(action, before, after) {
-    // 空袭能力即将丧失，且当前使用空袭
-    if (before.canUseAir && !after.canUseAir && action.weapon === 'HE') {
-        return true;
-    }
-    
-    // 水听能力即将丧失，且当前使用水听
-    if (before.canUseSonar && !after.canUseSonar && action.weapon === 'SONAR') {
-        return true;
-    }
-    
-    // 主炮伤害即将降级，且当前使用主炮
-    if (before.apDamage > after.apDamage && action.weapon === 'AP') {
-        return true;
-    }
-    
-    return false;
-}
-
-/**
- * 基于多步威胁计算风险调整
- * 
- * 设计原则：无硬编码权重
- * - 不给 HE/SONAR/AP 定义固定系数
- * - 风险加成 = 沉没概率 × 能力损失的「归一化影响」
- * 
- * @param {Object} action - AI 当前考虑的行动
- * @param {Map} shipThreats - 各船的累积威胁 Map<shipId, {sinkProbability, ...}>
- * @param {Object} abilities - AI 当前能力
- * @param {Ship[]} aiShips - AI 的船只
- * @returns {number} 风险调整加成
- */
-function calculateRiskBonusMultiStep(action, shipThreats, abilities, aiShips) {
+function calculateRiskBonusUnified(action, shipThreats, beliefState, abilities, aiShips, alpha) {
     let totalBonus = 0;
+    let highThreatCount = 0;
     
     for (const ship of aiShips) {
         if (ship.sunk) continue;
@@ -1136,22 +1130,20 @@ function calculateRiskBonusMultiStep(action, shipThreats, abilities, aiShips) {
         const threat = shipThreats.get(ship.id);
         if (!threat || threat.sinkProbability < 0.2) continue;
         
-        // 模拟该船沉没后的能力变化
+        highThreatCount++;
+        
+        // 模拟该船沉没后的能力
         const afterAbilities = simulateAbilitiesAfterLoss(aiShips, ship);
         
-        // 计算能力损失的归一化影响（0~1 范围）
-        const abilityLoss = calculateAbilityLoss(abilities, afterAbilities);
+        // 计算该行动在能力降级后的效用损失
+        const utilityLoss = actionUtilityLoss(action, beliefState, abilities, afterAbilities, alpha);
         
-        // 如果当前行动使用了即将丧失的能力，给予加成
-        const usesEndangeredAbility = checkUsesEndangeredAbility(action, abilities, afterAbilities);
-        
-        if (usesEndangeredAbility) {
-            // 风险加成 = 沉没概率 × 能力损失影响
-            totalBonus += threat.sinkProbability * abilityLoss;
-        }
+        // 风险加成 = 沉没概率 × 效用损失
+        totalBonus += threat.sinkProbability * utilityLoss;
     }
     
-    return totalBonus;
+    // 归一化到 [0, 1]
+    return highThreatCount > 0 ? totalBonus / highThreatCount : 0;
 }
 
 // ============================================================================
