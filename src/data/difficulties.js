@@ -23,19 +23,19 @@
 
 export const DIFFICULTY_SETTINGS = {
     EASY: {
-        alpha: 0.1,           // 偏重伤害，较少侦查
+        alpha: 0.2,           // 偏重伤害，较少侦查
         randomness: 0.6,      // 60% 概率随机决策
-        riskAwareness: 0.1    // 几乎不考虑风险
+        riskAwareness: 0.05    // 几乎不考虑风险
     },
     NORMAL: {
-        alpha: 0.4,           // 平衡探索与利用
+        alpha: 0.5,           // 平衡探索与利用
         randomness: 0.3,     // 30% 概率随机决策
-        riskAwareness: 0.2    // 轻微风险意识
+        riskAwareness: 0.1    // 轻微风险意识
     },
     HARD: {
-        alpha: 0.7,           // 偏信息收集，先侦查后集火
+        alpha: 0.86,           // 偏信息收集，先侦查后集火
         randomness: 0.0,      // 完全理性
-        riskAwareness: 0.4    // 较强风险意识
+        riskAwareness: 0.15    // 较强风险意识
     }
 };
 

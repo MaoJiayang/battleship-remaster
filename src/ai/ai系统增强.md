@@ -1,349 +1,261 @@
-# AI 系统增强方案
+# AI 系统增强：风险感知的信息论统一
 
-## 一、当前实现状态（v2.2）
+## 背景
 
-### 1.1 已实现功能
+当前 AI 决策框架：
+- **攻击评估**：`utility = α × 归一化信息增益 + (1-α) × 归一化期望伤害`
+- **风险评估**：`riskBonus = sinkProbability × abilityLoss × usesEndangeredAbility`
 
-当前 AI 采用**信息论驱动 + 对称推演**的决策模型：
+**问题**：
+1. 风险评估使用启发式公式，与信息论框架不统一
+2. 需要硬编码武器-能力映射（`checkUsesEndangeredAbility`）
+3. `abilityLoss` 的权重手工设定，难以调优
+4. 新增武器需要修改多处代码
+
+## 统一方案：边际效用损失
+
+### 核心思想
+
+**能力的价值 = 拥有该能力时的最优效用 − 失去该能力后的最优效用**
+
+这就是经济学中的「边际效用」概念，可以用同一个 `evaluateAction` 函数计算，实现理论统一。
+
+### 公式定义
+
+```
+marginalUtilityLoss(ship) = max_a∈A(current) U(a) − max_a∈A(after_loss) U(a)
+
+riskAdjustedUtility(action) = U(action) × (1 + riskAwareness × normRiskBonus)
+```
+
+其中：
+- `U(a)` = `evaluateAction(beliefState, a, abilities, α)` ∈ [0, 1]
+- `A(current)` = 当前能力下的所有可用行动
+- `A(after_loss)` = 某船沉没后的可用行动集合
+- `P_sink[ship]` = 多步推演得到的沉没概率 ∈ [0, 1]
+- `relevance(action, ship)` = 该行动是否「利用」了该船提供的能力（0 或 1）
+- `normRiskBonus` = 归一化后的风险加成 ∈ [0, 1]
+- `riskAwareness` ∈ [0, 1]，控制风险对效用的最大影响比例
+
+### 量纲分析
+
+| 量 | 范围 | 说明 |
+|---|------|------|
+| `baseUtility` | [0, 1] | α × normInfoGain + (1-α) × normDamage |
+| `sinkProbability × utilityLoss` | [0, 1] | 单艘船的风险贡献 |
+| `riskBonus`（求和） | [0, 船只数] | ⚠️ 需要归一化 |
+| `normRiskBonus` | [0, 1] | 除以高威胁船只数量 |
+| `riskAwareness` | [0, 1] | 配置参数 |
+| `finalScore` | [0, 2] | 当 riskAwareness=1 时最多翻倍 |
+
+### 关键改进：relevance 的自动推导
+
+不再硬编码 `checkUsesEndangeredAbility`，而是通过效用差自动计算：
 
 ```javascript
-// 当前评分公式
-baseScore = α × 归一化信息增益 + (1-α) × 归一化期望伤害
-finalScore = baseScore + riskAwareness × riskBonus
+// 如果 action 在 A(current) 中存在，但在 A(after_loss) 中不存在
+// 则 utilityLoss = 当前效用（完全丧失）
+// 如果 action 仍可用但效用降低（如 AP 伤害降级）
+// 则 utilityLoss = currentUtility - reducedUtility（部分丧失）
 ```
 
-**核心组件：**
-- `BeliefState`: 蒙特卡洛采样维护对玩家舰船配置的置信分布
-- `evaluateAction()`: 统一评估所有可用行动（AP/HE/SONAR）
-- `simulateMultiStepThreats()`: 多步对称推演，预测己方舰船威胁
-- `calculateRiskBonusMultiStep()`: 基于威胁计算风险加成
+### 简化版本（推荐先实现）
 
-### 1.2 难度参数
-
-| 参数 | 范围 | 说明 |
-|-----|------|------|
-| `alpha` | 0~1 | 信息 vs 伤害的平衡 |
-| `randomness` | 0~1 | 随机决策概率 |
-| `riskAwareness` | 0~1 | 风险意识强度 |
-
----
-
-## 二、待解决问题：三量度量不统一
-
-### 2.1 问题描述
-
-当前公式中存在三个量：
-
-| 量 | 当前归一化方式 | 问题 |
-|---|--------------|------|
-| **信息增益** | `infoGain / currentEntropy` | 范围 [0, 1]，语义清晰 |
-| **期望伤害** | `expectedDamage / maxWeaponDamage` | 范围 [0, 1]，但与信息增益不可比 |
-| **风险加成** | `sinkProb × abilityLoss` | 范围 [0, 1]，但直接加到 baseScore 上 |
-
-**具体问题：**
-
-1. **信息增益 vs 期望伤害**：两者虽然都归一化到 [0, 1]，但语义不同
-   - 信息增益 = 1 意味着"消除所有不确定性"
-   - 期望伤害 = 1 意味着"达到武器最大伤害"
-   - 这两者的"价值"是否相等？
-
-2. **风险加成的叠加方式**：当前直接加法叠加
-   - `finalScore = baseScore + riskAwareness × riskBonus`
-   - 但 baseScore ∈ [0, 1]，riskBonus ∈ [0, 1]
-   - 若 riskAwareness = 1，则 finalScore 可能达到 2
-   - 这破坏了评分的一致性
-
-3. **alpha 和 riskAwareness 的交互**：
-   - 两个参数独立作用，但实际上相互影响
-   - 例如：高 alpha（重信息）+ 高 riskAwareness 时，行为难以预测
-
----
-
-## 三、解决方案探索
-
-### 3.1 方案 A：统一信息论框架
-
-**核心思想**：将所有量统一到"信息价值"度量下
-
-```
-utility = 期望信息增益 + 期望能力保持信息
-```
-
-**信息增益**（攻击收益）：
-- 当前已有：攻击后减少的棋盘不确定性
-
-**能力保持信息**（风险代价）：
-- 将"能力丧失"转换为"未来可获取信息的损失"
-- 例如：CV 沉没 → 丧失 HE 武器 → 丧失 5 格/回合的信息获取能力
+如果不想每次都重新枚举行动集合，可以用近似：
 
 ```javascript
-// 概念性公式
-abilityInfoValue = 能力存活概率 × 该能力的期望信息获取率
-riskPenalty = Σ(sinkProb[ship] × abilityInfoValue[ship])
-utility = infoGain - riskPenalty  // 统一在信息度量下
-```
-
-**优点**：
-- 理论上优美，所有量都用"比特"衡量
-- 消除了 alpha 和 riskAwareness 的交互问题
-
-**缺点**：
-- "能力的信息价值"难以精确估算
-- 需要估算"未来回合数"等复杂因素
-
----
-
-### 3.2 方案 B：期望收益框架
-
-**核心思想**：将所有量统一到"游戏收益"度量下
-
-```
-utility = 期望己方收益 - 期望敌方收益
-```
-
-定义"收益"为击沉敌舰的期望价值：
-
-```javascript
-// 每回合的期望收益
-expectedGain = Σ(攻击格概率 × 格子所属船 × 击沉该船的边际收益)
-
-// 边际收益 = 船只被击沉时，敌方丧失的"战力"
-// 战力可定义为：该船存活时，敌方每回合期望造成的伤害
-```
-
-**对称推演**：
-```javascript
-// 我方收益
-myGain = evaluateAttack(我攻击敌)
-
-// 敌方收益（通过对称推演估算）
-enemyGain = evaluateAttack(敌攻击我)  // 用相同算法
-
-// 综合评估
-utility = myGain - riskAwareness × enemyGain
-```
-
-**优点**：
-- 语义直观：最大化"净收益"
-- 自然包含风险：敌方收益即我方风险
-
-**缺点**：
-- 需要定义"船只战力"，又引入了硬编码
-- 信息价值难以纳入
-
----
-
-### 3.3 方案 C：归一化 + 加权融合（渐进式改进）
-
-**核心思想**：保持当前框架，改进归一化和融合方式
-
-#### Step 1: 统一评分范围
-
-将所有评分归一化到 [0, 1]，使用**凸组合**：
-
-```javascript
-// 三个基础分量，各自 ∈ [0, 1]
-infoScore = normalize(infoGain)      // 已有
-damageScore = normalize(damage)       // 已有
-riskScore = normalize(riskBonus)      // 需改进
-
-// 凸组合（权重和为 1）
-utility = w_info × infoScore + w_damage × damageScore + w_risk × riskScore
-```
-
-#### Step 2: 参数重映射
-
-将现有参数映射到三元权重：
-
-```javascript
-// 两个用户参数
-alpha ∈ [0, 1]        // 信息 vs 伤害偏好
-riskAwareness ∈ [0, 1] // 风险意识
-
-// 映射到三元权重
-base_info = alpha
-base_damage = 1 - alpha
-
-// 风险意识"分走"一部分权重
-w_risk = riskAwareness × 0.3  // 风险最多占 30%
-remaining = 1 - w_risk
-w_info = base_info × remaining
-w_damage = base_damage × remaining
-
-// 验证：w_info + w_damage + w_risk = 1 ✓
-```
-
-#### Step 3: 风险评分归一化
-
-当前 riskBonus 的问题：只有使用濒危能力时才有加成，导致稀疏。
-
-改进方案：**将风险转换为机会成本**
-
-```javascript
-// 当前：只有使用濒危能力才加分
-riskBonus = usesEndangered ? (sinkProb × abilityLoss) : 0
-
-// 改进：所有行动都计算"能力保持价值"
-// 不使用濒危能力 = 浪费机会
-opportunityCost = 0
-for (ship of endangeredShips) {
-    if (actionUsesAbility(action, ship)) {
-        // 使用了濒危能力，获得正向收益
-        opportunityCost -= sinkProb × abilityValue
-    } else {
-        // 未使用濒危能力，存在机会成本
-        opportunityCost += sinkProb × abilityValue × (1 - 使用该能力的其他行动占比)
+/**
+ * 简化版：只比较「当前行动」在两种能力下的效用差
+ * 
+ * 如果当前行动在能力降级后不可用，返回该行动的当前效用
+ * 如果当前行动仍可用但效用降低，返回效用差
+ */
+function actionUtilityLoss(action, beliefState, currentAbilities, afterAbilities, alpha) {
+    // 检查该行动是否在降级后仍可用
+    const stillAvailable = isActionAvailable(action, afterAbilities);
+    
+    if (!stillAvailable) {
+        // 行动完全不可用，返回当前效用作为损失
+        return evaluateAction(beliefState, action, currentAbilities, alpha);
     }
-}
-riskScore = sigmoid(-opportunityCost)  // 映射到 [0, 1]
-```
-
-**优点**：
-- 渐进式改进，风险可控
-- 保持了现有参数语义
-- 评分范围统一
-
-**缺点**：
-- 权重映射是启发式的，缺乏理论基础
-- 0.3 等常数仍是硬编码
-
----
-
-### 3.4 方案 D：多目标优化视角
-
-**核心思想**：不试图将多目标合并为单一分数，而是使用帕累托最优
-
-```javascript
-// 每个行动有三个目标值
-action.objectives = {
-    info: infoGain,
-    damage: expectedDamage,
-    survival: -riskPenalty  // 负的风险 = 生存价值
+    
+    // 行动仍可用，计算效用差（主要针对 AP 伤害降级）
+    const currentUtility = evaluateAction(beliefState, action, currentAbilities, alpha);
+    const reducedUtility = evaluateAction(beliefState, action, afterAbilities, alpha);
+    
+    return Math.max(0, currentUtility - reducedUtility);
 }
 
-// 找出帕累托前沿
-paretoFront = computeParetoFront(actions)
-
-// 从前沿中选择（可用偏好参数引导）
-selectedAction = selectFromFront(paretoFront, { alpha, riskAwareness })
-```
-
-**选择策略**：
-- 简单：在前沿中随机选（保证不会选到被支配的解）
-- 偏好：用参数作为权重，选加权和最高的
-
-**优点**：
-- 理论上最"正确"：多目标问题本就不该有唯一解
-- 避免了不同度量直接比较的问题
-
-**缺点**：
-- 实现复杂度高
-- 帕累托前沿可能只有一个点（目标高度相关时）
-- 难以向玩家解释 AI 行为
-
----
-
-## 四、推荐方案
-
-### 4.1 短期：方案 C（归一化 + 加权融合）
-
-理由：
-- 改动最小，与现有代码兼容
-- 解决了评分范围不一致的问题
-- 保持了参数语义的直观性
-
-关键改动：
-1. 将 riskBonus 改为凸组合的一部分
-2. 引入权重映射函数
-3. （可选）将风险改为机会成本模式
-
-### 4.2 长期：方案 A（统一信息论框架）
-
-理由：
-- 理论上最优美
-- 与现有信息论框架一脉相承
-- 消除了多参数交互的复杂性
-
-需要的研究：
-- 如何量化"能力的信息价值"
-- 如何处理"未来回合"的折扣因子
-
----
-
-## 五、实现建议（方案 C）
-
-### 5.1 代码改动点
-
-```javascript
-// aiStrategy.js - evaluateAction 函数
-
-function evaluateActionUnified(beliefState, action, abilities, alpha, riskAwareness, shipThreats, aiShips) {
-    // 1. 计算三个基础分量
-    const infoScore = calculateInfoScore(beliefState, action);      // [0, 1]
-    const damageScore = calculateDamageScore(action, beliefState, abilities);  // [0, 1]
-    const riskScore = calculateRiskScore(action, shipThreats, abilities, aiShips);  // [0, 1]
-    
-    // 2. 计算权重（凸组合）
-    const maxRiskWeight = 0.3;
-    const riskWeight = riskAwareness * maxRiskWeight;
-    const remaining = 1 - riskWeight;
-    const infoWeight = alpha * remaining;
-    const damageWeight = (1 - alpha) * remaining;
-    
-    // 3. 加权求和
-    return infoWeight * infoScore + damageWeight * damageScore + riskWeight * riskScore;
+function isActionAvailable(action, abilities) {
+    if (action.weapon === 'HE') return abilities.canUseAir;
+    if (action.weapon === 'SONAR') return abilities.canUseSonar;
+    return true; // AP 始终可用
 }
 ```
 
-### 5.2 新增的 calculateRiskScore
+### 新的风险加成计算（含归一化）
 
 ```javascript
-function calculateRiskScore(action, shipThreats, abilities, aiShips) {
-    if (!shipThreats) return 0.5;  // 无威胁信息时返回中性值
-    
-    let score = 0.5;  // 基准分
+/**
+ * 计算归一化的风险加成
+ * 
+ * @param {Object} action - 当前评估的行动
+ * @param {Map} shipThreats - 各船的威胁信息
+ * @param {BeliefState} beliefState - 置信状态
+ * @param {Object} abilities - 当前能力
+ * @param {Ship[]} aiShips - AI 船只列表
+ * @param {number} alpha - 探索权重
+ * @returns {number} 归一化风险加成 ∈ [0, 1]
+ */
+function calculateRiskBonusUnified(action, shipThreats, beliefState, abilities, aiShips, alpha) {
+    let totalBonus = 0;
+    let highThreatCount = 0;
     
     for (const ship of aiShips) {
         if (ship.sunk) continue;
+        
         const threat = shipThreats.get(ship.id);
-        if (!threat || threat.sinkProbability < 0.1) continue;
+        if (!threat || threat.sinkProbability < 0.2) continue;
         
+        highThreatCount++;
+        
+        // 模拟该船沉没后的能力
         const afterAbilities = simulateAbilitiesAfterLoss(aiShips, ship);
-        const abilityLoss = calculateAbilityLoss(abilities, afterAbilities);
         
-        if (abilityLoss > 0) {
-            const usesIt = checkUsesEndangeredAbility(action, abilities, afterAbilities);
-            const urgency = threat.sinkProbability * abilityLoss;
-            
-            if (usesIt) {
-                score += urgency * 0.5;  // 使用濒危能力，加分
-            } else {
-                score -= urgency * 0.25;  // 未使用，轻微扣分（机会成本）
-            }
-        }
+        // 计算该行动在能力降级后的效用损失
+        const utilityLoss = actionUtilityLoss(action, beliefState, abilities, afterAbilities, alpha);
+        
+        // 风险加成 = 沉没概率 × 效用损失
+        totalBonus += threat.sinkProbability * utilityLoss;
     }
     
-    return Math.max(0, Math.min(1, score));  // 钳制到 [0, 1]
+    // 归一化到 [0, 1]
+    return highThreatCount > 0 ? totalBonus / highThreatCount : 0;
+}
+
+/**
+ * 计算最终得分
+ * 
+ * @param {number} baseUtility - 基础效用 ∈ [0, 1]
+ * @param {number} normRiskBonus - 归一化风险加成 ∈ [0, 1]
+ * @param {number} riskAwareness - 风险意识参数 ∈ [0, 1]
+ * @returns {number} 最终得分 ∈ [0, 2]
+ */
+function calculateFinalScore(baseUtility, normRiskBonus, riskAwareness) {
+    // 乘法形式：风险加成作为效用的放大系数
+    // riskAwareness = 1 时，风险最多让效用翻倍
+    return baseUtility * (1 + riskAwareness * normRiskBonus);
 }
 ```
 
----
+### riskAwareness 参数说明
 
-## 六、测试验证
+| 取值 | 含义 | 效果 |
+|------|------|------|
+| 0 | 忽略风险 | `finalScore = baseUtility` |
+| 0.5 | 中等风险意识 | 风险最多让效用提升 50% |
+| 1 | 高风险意识 | 风险最多让效用翻倍 |
 
-### 6.1 行为一致性
+**语义**：`riskAwareness` 控制「风险对决策的最大影响比例」
 
-- [ ] `riskAwareness = 0` 时，行为与 v2.1 完全一致
-- [ ] 评分范围始终在 [0, 1]
+**设计优点**：
+- 有界参数 [0, 1]，便于调参
+- 乘法形式保证：基础效用为 0 的行动不会因风险而变得有吸引力
 
-### 6.2 预期行为
+## 实现步骤
 
-- [ ] CV 高威胁时，HE 使用频率上升
-- [ ] DD 高威胁时，SONAR 使用频率上升
-- [ ] 无威胁时，行为由 alpha 主导
+1. **添加 `isActionAvailable(action, abilities)` 函数**
+   - 判断给定能力下某行动是否可用
+   - 替代硬编码的 `checkUsesEndangeredAbility`
 
-### 6.3 参数敏感性
+2. **添加 `actionUtilityLoss(action, ...)` 函数**
+   - 计算行动在能力降级后的效用损失
+   - 复用现有的 `evaluateAction` 函数
 
-- [ ] alpha 从 0 到 1 平滑过渡
-- [ ] riskAwareness 从 0 到 1 平滑过渡
-- [ ] 两参数同时变化时无异常跳变
+3. **重构 `calculateRiskBonusMultiStep` → `calculateRiskBonusUnified`**
+   - 传入 `beliefState` 和 `alpha`
+   - 添加归一化逻辑
+   - 删除 `calculateAbilityLoss` 和 `checkUsesEndangeredAbility`
+
+4. **修改 `makeAIDecision` 调用**
+   - 将 `beliefState` 和 `alpha` 传给风险计算函数
+   - 使用乘法形式计算最终得分
+
+5. **清理废弃代码**
+   - 删除 `calculateAbilityLoss`
+   - 删除 `checkUsesEndangeredAbility`
+
+## 改进对比
+
+| 方面 | 改进前 | 改进后 |
+|------|--------|--------|
+| 理论基础 | 启发式公式 | 信息论统一（边际效用） |
+| 武器扩展 | 需修改 `checkUsesEndangeredAbility` | 自动（通过 `isActionAvailable`） |
+| 归一化 | 手工设定权重 | 自然（效用本身已归一化） |
+| 能力价值 | 固定权重 | 动态（依赖游戏状态） |
+| 参数数量 | 多个隐式权重 | 单一 `riskAwareness` ∈ [0, 1] |
+| 量纲 | 不统一 | 统一到 [0, 1] |
+
+## 注意事项
+
+- **计算开销**：略有增加（需调用 `evaluateAction`），但 `beliefState` 已缓存，影响可控
+- **武器依赖**：`isActionAvailable` 仍需知道武器-能力映射，可放在武器类中声明
+- **阈值选择**：`sinkProbability < 0.2` 时跳过计算，可根据需要调整
+- **乘法语义**：`baseUtility = 0` 的行动不会因风险获得加分，这是合理的
+
+## 未来可选优化
+
+### 武器类声明能力依赖
+
+```javascript
+// 在 WeaponBase 或各武器类中
+class HEWeapon extends WeaponBase {
+    static requiredAbilities = ['canUseAir'];
+}
+
+class SonarWeapon extends WeaponBase {
+    static requiredAbilities = ['canUseSonar'];
+}
+
+// isActionAvailable 改为查询武器类
+function isActionAvailable(action, abilities) {
+    const weapon = weaponRegistry.get(action.weapon);
+    for (const ability of weapon.requiredAbilities || []) {
+        if (!abilities[ability]) return false;
+    }
+    return true;
+}
+```
+
+这样新增武器时只需在武器类中声明依赖，AI 模块无需修改。
+
+### 伤害缩放声明
+
+```javascript
+class APWeapon extends WeaponBase {
+    static requiredAbilities = [];  // 始终可用
+    static damageScalesWithAbility = 'apDamage';  // 伤害随此能力变化
+}
+```
+
+## 示例：风险如何影响决策
+
+假设当前状态：
+- CV 沉没概率 = 0.6
+- DD 沉没概率 = 0.3（低于阈值 0.2，会被计入）
+- `riskAwareness = 0.5`
+
+评估两个行动：
+
+| 行动 | baseUtility | CV 沉没后可用？ | utilityLoss | normRiskBonus | finalScore |
+|------|-------------|----------------|-------------|---------------|------------|
+| HE (3,4) | 0.7 | ❌ 不可用 | 0.7 | 0.6×0.7/1=0.42 | 0.7×(1+0.5×0.42)=0.85 |
+| AP (3,4) | 0.5 | ✓ 可用 | 0 | 0 | 0.5×(1+0)=0.50 |
+
+**结论**：HE 行动因风险加成从 0.7 提升到 0.85，更可能被选中。
+
+## 与现有系统的兼容性
+
+- **多步推演**：`simulateMultiStepThreats` 保持不变，仍然产出 `shipThreats` Map
+- **难度配置**：`riskAwareness` 可继续放在 `difficultyConfig` 中
+- **调试热力图**：不受影响，`calculateProbabilityGrid` 独立运作
