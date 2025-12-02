@@ -1,0 +1,16 @@
+{
+  "name": "battleship-grid-search",
+  "version": "1.0.0",
+  "description": "海战棋 AI 参数并行网格搜索工具（复用主项目代码）",
+  "main": "run.js",
+  "type": "module",
+  "scripts": {
+    "search": "node run.js",
+    "quick": "node run.js --preset quick",
+    "full": "node run.js --preset full",
+    "test": "node run.js --test"
+  },
+  "keywords": ["battleship", "ai", "grid-search", "parallel"],
+  "author": "",
+  "license": "MIT"
+}

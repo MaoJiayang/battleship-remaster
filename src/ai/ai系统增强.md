@@ -1,263 +1,578 @@
-# AI 系统增强：风险感知的信息论统一
+# AI 系统增强：信火一体的统一评估框架
 
-> **状态**：✅ 已实现（v2.3）
+> **状态**：📋 设计中（待实现）
+> **版本**：v3.0 设计稿
 
-## 背景
+## 背景与动机
 
-当前 AI 决策框架：
-- **攻击评估**：`utility = α × 归一化信息增益 + (1-α) × 归一化期望伤害`
-- **风险评估**：`riskBonus = sinkProbability × abilityLoss × usesEndangeredAbility`
+### 当前问题
+
+现有 AI 决策框架（v2.3）：
+```
+utility = α × 归一化信息增益 + (1-α) × 归一化期望伤害
+```
 
 **问题**：
-1. 风险评估使用启发式公式，与信息论框架不统一
-2. 需要硬编码武器-能力映射（`checkUsesEndangeredAbility`）
-3. `abilityLoss` 的权重手工设定，难以调优
-4. 新增武器需要修改多处代码
+1. **量纲不统一**：信息增益（比特）和期望伤害（HP）是不同物理量
+2. **归一化漂移**：信息增益除以「当前总熵」，导致同样的信息量在不同游戏阶段得分差异巨大
+3. **α 语义模糊**：只是一个无法解释的权衡系数
 
-## 统一方案：边际效用损失
+### 新思路：信火一体
 
-### 核心思想
+借鉴现代军事「信火一体」理念：**信息即火力，发现即命中**。
 
-**能力的价值 = 拥有该能力时的最优效用 − 失去该能力后的最优效用**
+核心思想：将侦查行动的价值转化为**未来期望伤害的提升量**，实现真正的量纲统一。
 
-这就是经济学中的「边际效用」概念，可以用同一个 `evaluateAction` 函数计算，实现理论统一。
+---
 
-### 公式定义
+## 统一评估框架
+
+### 核心公式
 
 ```
-marginalUtilityLoss(ship) = max_a∈A(current) U(a) − max_a∈A(after_loss) U(a)
-
-riskAdjustedUtility(action) = U(action) × (1 + riskAwareness × normRiskBonus)
+行动效用 = 直接伤害 + 信息的伤害转化增益
 ```
 
 其中：
-- `U(a)` = `evaluateAction(beliefState, a, abilities, α)` ∈ [0, 1]
-- `A(current)` = 当前能力下的所有可用行动
-- `A(after_loss)` = 某船沉没后的可用行动集合
-- `P_sink[ship]` = 多步推演得到的沉没概率 ∈ [0, 1]
-- `relevance(action, ship)` = 该行动是否「利用」了该船提供的能力（0 或 1）
-- `normRiskBonus` = 归一化后的风险加成 ∈ [0, 1]
-- `riskAwareness` ∈ [0, 1]，控制风险对效用的最大影响比例
+- **直接伤害**：攻击类武器的当回合期望伤害（已有实现）
+- **信息的伤害转化增益**：相比于直接攻击，该行动能为下一步攻击带来多少额外伤害
 
-### 量纲分析
+### 关键洞察：利用多步推演计算信息转化
 
-| 量 | 范围 | 说明 |
-|---|------|------|
-| `baseUtility` | [0, 1] | α × normInfoGain + (1-α) × normDamage |
-| `sinkProbability × utilityLoss` | [0, 1] | 单艘船的风险贡献 |
-| `riskBonus`（求和） | [0, 船只数] | ⚠️ 需要归一化 |
-| `normRiskBonus` | [0, 1] | 除以高威胁船只数量 |
-| `riskAwareness` | [0, 1] | 配置参数 |
-| `finalScore` | [0, 2] | 当 riskAwareness=1 时最多翻倍 |
+**核心思想**：不使用硬编码的转化率参数，而是通过**模拟推演**直接计算：
 
-### 关键改进：relevance 的自动推导
-
-不再硬编码 `checkUsesEndangeredAbility`，而是通过效用差自动计算：
-
-```javascript
-// 如果 action 在 A(current) 中存在，但在 A(after_loss) 中不存在
-// 则 utilityLoss = 当前效用（完全丧失）
-// 如果 action 仍可用但效用降低（如 AP 伤害降级）
-// 则 utilityLoss = currentUtility - reducedUtility（部分丧失）
+```
+侦查的伤害转化增益 = E[下一步最优攻击伤害 | 先侦查] - E[本回合最优攻击伤害 | 直接攻击]
 ```
 
-### 简化版本（推荐先实现）
+这个差值就是侦查相比直接攻击的**边际收益**。
 
-如果不想每次都重新枚举行动集合，可以用近似：
+---
+
+## 两类行动的评估
+
+### 类型一：攻击行动（AP / HE）
+
+攻击行动的效用 = **直接伤害** + **信息副产品的伤害转化**
 
 ```javascript
 /**
- * 简化版：只比较「当前行动」在两种能力下的效用差
+ * 评估攻击行动
  * 
- * 如果当前行动在能力降级后不可用，返回该行动的当前效用
- * 如果当前行动仍可用但效用降低，返回效用差
+ * 攻击会：
+ * 1. 造成直接伤害
+ * 2. 揭示格子状态（命中/未命中），产生信息副产品
+ * 
+ * 信息副产品的价值通过推演下一步攻击来计算
  */
-function actionUtilityLoss(action, beliefState, currentAbilities, afterAbilities, alpha) {
-    // 检查该行动是否在降级后仍可用
-    const stillAvailable = isActionAvailable(action, afterAbilities);
+function evaluateAttackAction(beliefState, action, abilities, context) {
+    const probGrid = beliefState.getProbabilityGrid();
     
-    if (!stillAvailable) {
-        // 行动完全不可用，返回当前效用作为损失
-        return evaluateAction(beliefState, action, currentAbilities, alpha);
+    // 1. 当回合直接伤害（已有实现）
+    const directDamage = calculateExpectedDamage(action, probGrid, abilities);
+    
+    // 2. 信息副产品的伤害转化增益
+    // 通过模拟攻击后的状态，计算下一步最优攻击的期望伤害提升
+    const infoBonus = calculateAttackInfoBonus(beliefState, action, abilities, context);
+    
+    return directDamage + infoBonus;
+}
+```
+
+### 类型二：侦查行动（SONAR）
+
+侦查行动的效用 = **信息的伤害转化增益**（无直接伤害）
+
+```javascript
+/**
+ * 评估侦查行动
+ * 
+ * 侦查不造成直接伤害，其价值完全来自信息转化：
+ * - 相比于本回合直接选择最优攻击
+ * - 侦查后下一步能带来多少额外伤害？
+ * 
+ * 这个差值必须为正，侦查才值得选择
+ */
+function evaluateReconAction(beliefState, action, abilities, context) {
+    // 基准：本回合直接攻击的最优期望伤害
+    const baselineAttackDamage = calculateBestAttackDamage(beliefState, abilities);
+    
+    // 侦查后下一步的期望伤害
+    const nextStepDamage = calculatePostReconExpectedDamage(
+        beliefState, action, abilities, context
+    );
+    
+    // 侦查的边际收益 = 下一步伤害 - 本回合放弃的伤害
+    // 注意：这可能是负值（侦查不划算）
+    return nextStepDamage - baselineAttackDamage;
+}
+```
+
+---
+
+## 核心算法：基于推演的信息转化计算
+
+### 侦查后的期望伤害推演
+
+```javascript
+/**
+ * 计算侦查后下一步的期望伤害
+ * 
+ * 复用已实现的多步推演框架，模拟侦查结果并计算后续最优攻击
+ * 
+ * @param {BeliefState} beliefState - 当前置信状态
+ * @param {Object} action - 侦查行动 { weapon: 'SONAR', r, c }
+ * @param {Object} abilities - 能力
+ * @param {Object} context - 上下文
+ * @returns {number} 期望伤害
+ */
+function calculatePostReconExpectedDamage(beliefState, action, abilities, context) {
+    const { r, c } = action;
+    const probGrid = beliefState.getProbabilityGrid();
+    const p = probGrid[r][c];  // 中心有船的概率
+    
+    // 情况1：声纳发现有船（概率 p）
+    // 中心标记为疑似，概率分布更新
+    const damageIfShip = simulatePostReconDamage(
+        beliefState, action, abilities, context, true  // hasShip = true
+    );
+    
+    // 情况2：声纳发现无船（概率 1-p）
+    // 3×3 区域排除，概率密度重新分配
+    const damageIfNoShip = simulatePostReconDamage(
+        beliefState, action, abilities, context, false  // hasShip = false
+    );
+    
+    // 期望伤害 = 加权平均
+    return p * damageIfShip + (1 - p) * damageIfNoShip;
+}
+
+/**
+ * 模拟侦查结果后的最优攻击伤害
+ * 
+ * @param {BeliefState} beliefState - 当前置信状态
+ * @param {Object} action - 侦查行动
+ * @param {Object} abilities - 能力
+ * @param {Object} context - 上下文
+ * @param {boolean} hasShip - 侦查结果：是否发现有船
+ * @returns {number} 该情况下的最优攻击期望伤害
+ */
+function simulatePostReconDamage(beliefState, action, abilities, context, hasShip) {
+    const { r, c } = action;
+    
+    // 1. 构建侦查后的模拟视角网格
+    const simViewGrid = beliefState.viewGrid.map(row => [...row]);
+    
+    if (hasShip) {
+        // 发现有船：中心标记为疑似
+        simViewGrid[r][c] = CellState.SUSPECT;
+    } else {
+        // 发现无船：3×3 区域可标记为安全（或保持未知但降低概率）
+        // 简化处理：中心标记为 MISS（排除）
+        simViewGrid[r][c] = CellState.MISS;
+        // 可选：周围 8 格也标记为低概率区域
     }
     
-    // 行动仍可用，计算效用差（主要针对 AP 伤害降级）
-    const currentUtility = evaluateAction(beliefState, action, currentAbilities, alpha);
-    const reducedUtility = evaluateAction(beliefState, action, afterAbilities, alpha);
+    // 2. 用更新后的视角构建新的置信状态
+    const aliveTargets = context.enemyShips.filter(s => !s.sunk);
+    const simBeliefState = new BeliefState(aliveTargets, simViewGrid);
+    const simProbGrid = simBeliefState.getProbabilityGrid();
     
-    return Math.max(0, currentUtility - reducedUtility);
+    // 3. 枚举所有攻击行动，找到最优
+    const attackActions = enumerateAttackActions(simViewGrid, abilities);
+    
+    let bestDamage = 0;
+    for (const attackAction of attackActions) {
+        const damage = calculateExpectedDamage(attackAction, simProbGrid, abilities);
+        bestDamage = Math.max(bestDamage, damage);
+    }
+    
+    return bestDamage;
 }
 
-function isActionAvailable(action, abilities) {
-    if (action.weapon === 'HE') return abilities.canUseAir;
-    if (action.weapon === 'SONAR') return abilities.canUseSonar;
-    return true; // AP 始终可用
+/**
+ * 计算当前状态下的最优攻击伤害（基准线）
+ */
+function calculateBestAttackDamage(beliefState, abilities) {
+    const probGrid = beliefState.getProbabilityGrid();
+    const attackActions = enumerateAttackActions(beliefState.viewGrid, abilities);
+    
+    let bestDamage = 0;
+    for (const action of attackActions) {
+        const damage = calculateExpectedDamage(action, probGrid, abilities);
+        bestDamage = Math.max(bestDamage, damage);
+    }
+    
+    return bestDamage;
+}
+
+/**
+ * 枚举所有攻击行动（不含侦查）
+ */
+function enumerateAttackActions(viewGrid, abilities) {
+    const actions = [];
+    
+    for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+            const state = viewGrid[r][c];
+            
+            if (state === CellState.MISS || state === CellState.SUNK) continue;
+            
+            if (state === CellState.DESTROYED) {
+                if (abilities.canUseAir) {
+                    actions.push({ weapon: 'HE', r, c });
+                }
+                continue;
+            }
+            
+            actions.push({ weapon: 'AP', r, c });
+            
+            if (abilities.canUseAir) {
+                actions.push({ weapon: 'HE', r, c });
+            }
+        }
+    }
+    
+    return actions;
 }
 ```
 
-### 新的风险加成计算（含归一化）
+---
+
+## 攻击行动的信息副产品
+
+攻击不仅造成伤害，还会揭示信息。这个信息副产品也有价值：
 
 ```javascript
 /**
- * 计算归一化的风险加成
+ * 计算攻击的信息副产品价值
  * 
- * @param {Object} action - 当前评估的行动
- * @param {Map} shipThreats - 各船的威胁信息
+ * 攻击会揭示目标格的真实状态，这个信息对后续攻击有价值
+ * 但由于攻击本身就消耗了一回合，信息副产品的价值需要折扣
+ * 
+ * 使用推演：比较攻击后下一步 vs 不攻击下一步的伤害差
+ */
+function calculateAttackInfoBonus(beliefState, action, abilities, context) {
+    const { weapon, r, c } = action;
+    const probGrid = beliefState.getProbabilityGrid();
+    
+    // 获取攻击覆盖的格子
+    const cells = getWeaponCoverage(weapon, r, c);
+    
+    // 计算攻击后各种结果的概率
+    // 简化：只考虑「至少命中一格」vs「全部未命中」
+    let hitProb = 0;
+    for (const cell of cells) {
+        if (cell.r >= 0 && cell.r < BOARD_SIZE && cell.c >= 0 && cell.c < BOARD_SIZE) {
+            hitProb = Math.max(hitProb, probGrid[cell.r][cell.c]);
+        }
+    }
+    
+    // 命中时：揭示船只位置，后续攻击更精准
+    const damageIfHit = simulatePostAttackDamage(beliefState, action, abilities, context, true);
+    
+    // 未命中时：排除这些格子，概率重新分配
+    const damageIfMiss = simulatePostAttackDamage(beliefState, action, abilities, context, false);
+    
+    // 期望的下一步伤害
+    const expectedNextDamage = hitProb * damageIfHit + (1 - hitProb) * damageIfMiss;
+    
+    // 基准：如果不进行任何行动（纯理论），下一步伤害不变
+    // 但实际上我们要比较的是：攻击带来的信息是否有额外价值
+    // 这个价值 = 期望下一步伤害 - 当前最优攻击伤害
+    const baseline = calculateBestAttackDamage(beliefState, abilities);
+    
+    // 信息副产品价值（可能为 0 或负值）
+    return Math.max(0, expectedNextDamage - baseline);
+}
+
+/**
+ * 模拟攻击后的下一步最优伤害
+ */
+function simulatePostAttackDamage(beliefState, action, abilities, context, isHit) {
+    const { weapon, r, c } = action;
+    const cells = getWeaponCoverage(weapon, r, c);
+    
+    // 构建攻击后的模拟视角
+    const simViewGrid = beliefState.viewGrid.map(row => [...row]);
+    
+    for (const cell of cells) {
+        if (cell.r >= 0 && cell.r < BOARD_SIZE && cell.c >= 0 && cell.c < BOARD_SIZE) {
+            if (simViewGrid[cell.r][cell.c] === CellState.UNKNOWN || 
+                simViewGrid[cell.r][cell.c] === CellState.SUSPECT) {
+                // 简化：命中时标记为 HIT，未命中时标记为 MISS
+                simViewGrid[cell.r][cell.c] = isHit ? CellState.HIT : CellState.MISS;
+            }
+        }
+    }
+    
+    // 用更新后的视角计算最优攻击
+    const aliveTargets = context.enemyShips.filter(s => !s.sunk);
+    const simBeliefState = new BeliefState(aliveTargets, simViewGrid);
+    
+    return calculateBestAttackDamage(simBeliefState, abilities);
+}
+```
+
+---
+
+## 统一评估函数
+
+### 完整实现
+
+```javascript
+/**
+ * 统一评估行动的效用值（信火一体版 v3.0）
+ * 
+ * 所有行动统一用「期望伤害」评估：
+ * - 攻击类：直接伤害 + 信息副产品价值
+ * - 侦查类：信息转化增益（相对于直接攻击的边际收益）
+ * 
+ * 关键特性：
+ * - 无需 α 参数，完全由推演计算
+ * - 量纲统一（全部是伤害）
+ * - 自动平衡攻击与侦查
+ * 
  * @param {BeliefState} beliefState - 置信状态
- * @param {Object} abilities - 当前能力
- * @param {Ship[]} aiShips - AI 船只列表
- * @param {number} alpha - 探索权重
- * @returns {number} 归一化风险加成 ∈ [0, 1]
+ * @param {Object} action - 行动 { weapon, r, c }
+ * @param {Object} abilities - 能力
+ * @param {Object} context - 上下文
+ * @returns {number} 期望伤害（统一量纲）
  */
-function calculateRiskBonusUnified(action, shipThreats, beliefState, abilities, aiShips, alpha) {
-    let totalBonus = 0;
-    let highThreatCount = 0;
+function evaluateActionUnified(beliefState, action, abilities, context) {
+    const { weapon } = action;
     
-    for (const ship of aiShips) {
-        if (ship.sunk) continue;
-        
-        const threat = shipThreats.get(ship.id);
-        if (!threat || threat.sinkProbability < 0.2) continue;
-        
-        highThreatCount++;
-        
-        // 模拟该船沉没后的能力
-        const afterAbilities = simulateAbilitiesAfterLoss(aiShips, ship);
-        
-        // 计算该行动在能力降级后的效用损失
-        const utilityLoss = actionUtilityLoss(action, beliefState, abilities, afterAbilities, alpha);
-        
-        // 风险加成 = 沉没概率 × 效用损失
-        totalBonus += threat.sinkProbability * utilityLoss;
+    if (weapon === 'SONAR') {
+        // 侦查行动：计算相对于直接攻击的边际收益
+        return evaluateReconAction(beliefState, action, abilities, context);
+    } else {
+        // 攻击行动：直接伤害 + 信息副产品
+        return evaluateAttackAction(beliefState, action, abilities, context);
     }
-    
-    // 归一化到 [0, 1]
-    return highThreatCount > 0 ? totalBonus / highThreatCount : 0;
 }
+```
 
+---
+
+## 与风险感知模块的整合
+
+### 利用已实现的多步推演
+
+v2.3 已实现的 `simulateMultiStepThreats` 可以复用来估算信息转化的风险：
+
+```javascript
 /**
- * 计算最终得分
+ * 计算侦查的风险调整后伤害转化
  * 
- * @param {number} baseUtility - 基础效用 ∈ [0, 1]
- * @param {number} normRiskBonus - 归一化风险加成 ∈ [0, 1]
- * @param {number} riskAwareness - 风险意识参数 ∈ [0, 1]
- * @returns {number} 最终得分 ∈ [0, 2]
+ * 考虑：在我侦查的这一回合，敌方可能击沉我的关键船只
+ * 导致下一步攻击能力下降
+ * 
+ * @param {BeliefState} beliefState - 置信状态
+ * @param {Object} action - 侦查行动
+ * @param {Object} abilities - 当前能力
+ * @param {Object} context - 上下文
+ * @returns {number} 风险调整后的伤害转化增益
  */
-function calculateFinalScore(baseUtility, normRiskBonus, riskAwareness) {
-    // 乘法形式：风险加成作为效用的放大系数
-    // riskAwareness = 1 时，风险最多让效用翻倍
-    return baseUtility * (1 + riskAwareness * normRiskBonus);
-}
-```
-
-### riskAwareness 参数说明
-
-| 取值 | 含义 | 效果 |
-|------|------|------|
-| 0 | 忽略风险 | `finalScore = baseUtility` |
-| 0.5 | 中等风险意识 | 风险最多让效用提升 50% |
-| 1 | 高风险意识 | 风险最多让效用翻倍 |
-
-**语义**：`riskAwareness` 控制「风险对决策的最大影响比例」
-
-**设计优点**：
-- 有界参数 [0, 1]，便于调参
-- 乘法形式保证：基础效用为 0 的行动不会因风险而变得有吸引力
-
-## 实现步骤
-
-1. **添加 `isActionAvailable(action, abilities)` 函数**
-   - 判断给定能力下某行动是否可用
-   - 替代硬编码的 `checkUsesEndangeredAbility`
-
-2. **添加 `actionUtilityLoss(action, ...)` 函数**
-   - 计算行动在能力降级后的效用损失
-   - 复用现有的 `evaluateAction` 函数
-
-3. **重构 `calculateRiskBonusMultiStep` → `calculateRiskBonusUnified`**
-   - 传入 `beliefState` 和 `alpha`
-   - 添加归一化逻辑
-   - 删除 `calculateAbilityLoss` 和 `checkUsesEndangeredAbility`
-
-4. **修改 `makeAIDecision` 调用**
-   - 将 `beliefState` 和 `alpha` 传给风险计算函数
-   - 使用乘法形式计算最终得分
-
-5. **清理废弃代码**
-   - 删除 `calculateAbilityLoss`
-   - 删除 `checkUsesEndangeredAbility`
-
-## 改进对比
-
-| 方面 | 改进前 | 改进后 |
-|------|--------|--------|
-| 理论基础 | 启发式公式 | 信息论统一（边际效用） |
-| 武器扩展 | 需修改 `checkUsesEndangeredAbility` | 自动（通过 `isActionAvailable`） |
-| 归一化 | 手工设定权重 | 自然（效用本身已归一化） |
-| 能力价值 | 固定权重 | 动态（依赖游戏状态） |
-| 参数数量 | 多个隐式权重 | 单一 `riskAwareness` ∈ [0, 1] |
-| 量纲 | 不统一 | 统一到 [0, 1] |
-
-## 注意事项
-
-- **计算开销**：略有增加（需调用 `evaluateAction`），但 `beliefState` 已缓存，影响可控
-- **武器依赖**：`isActionAvailable` 仍需知道武器-能力映射，可放在武器类中声明
-- **阈值选择**：`sinkProbability < 0.2` 时跳过计算，可根据需要调整
-- **乘法语义**：`baseUtility = 0` 的行动不会因风险获得加分，这是合理的
-
-## 未来可选优化
-
-### 武器类声明能力依赖
-
-```javascript
-// 在 WeaponBase 或各武器类中
-class HEWeapon extends WeaponBase {
-    static requiredAbilities = ['canUseAir'];
-}
-
-class SonarWeapon extends WeaponBase {
-    static requiredAbilities = ['canUseSonar'];
-}
-
-// isActionAvailable 改为查询武器类
-function isActionAvailable(action, abilities) {
-    const weapon = weaponRegistry.get(action.weapon);
-    for (const ability of weapon.requiredAbilities || []) {
-        if (!abilities[ability]) return false;
+function evaluateReconActionWithRisk(beliefState, action, abilities, context) {
+    const { enemyShips, myShips, playerViewGrid, difficultyConfig } = context;
+    const { riskAwareness = 0 } = difficultyConfig;
+    
+    // 1. 计算基础的侦查边际收益
+    const baseReconGain = evaluateReconAction(beliefState, action, abilities, context);
+    
+    // 2. 如果启用风险感知，计算能力降级的期望影响
+    if (riskAwareness > 0 && playerViewGrid) {
+        // 利用已实现的多步推演获取各船威胁
+        const shipThreats = simulateMultiStepThreats(
+            playerViewGrid, myShips, enemyShips, 0.5, 1  // 只推演 1 步
+        );
+        
+        // 计算期望的能力损失
+        let expectedAbilityLoss = 0;
+        for (const ship of myShips) {
+            if (ship.sunk) continue;
+            const threat = shipThreats.get(ship.id);
+            if (!threat) continue;
+            
+            // 该船沉没后的能力
+            const afterAbilities = simulateAbilitiesAfterLoss(myShips, ship);
+            
+            // 能力降级导致的伤害损失
+            const currentBestDamage = calculateBestAttackDamage(beliefState, abilities);
+            const reducedBestDamage = calculateBestAttackDamage(beliefState, afterAbilities);
+            const damageLoss = currentBestDamage - reducedBestDamage;
+            
+            // 期望损失 = 沉没概率 × 伤害损失
+            expectedAbilityLoss += threat.sinkProbability * damageLoss;
+        }
+        
+        // 侦查的风险调整收益 = 基础收益 - 期望能力损失
+        return baseReconGain - riskAwareness * expectedAbilityLoss;
     }
-    return true;
+    
+    return baseReconGain;
 }
 ```
 
-这样新增武器时只需在武器类中声明依赖，AI 模块无需修改。
+---
 
-### 伤害缩放声明
+## 参数变化
+
+### 旧框架参数
+
+| 参数 | 含义 | 问题 |
+|------|------|------|
+| alpha | 信息 vs 伤害权重 | 语义模糊，无物理意义 |
+
+### 新框架参数
+
+| 参数 | 含义 | 来源 |
+|------|------|------|
+| ~~alpha~~ | ~~信息权重~~ | ❌ **已删除**，由推演自动计算 |
+| randomness | 随机失误率 | ✅ 保留，控制难度 |
+| riskAwareness | 风险意识 | ✅ 保留，控制风险敏感度 |
+
+### 新难度配置
 
 ```javascript
-class APWeapon extends WeaponBase {
-    static requiredAbilities = [];  // 始终可用
-    static damageScalesWithAbility = 'apDamage';  // 伤害随此能力变化
+DIFFICULTY_SETTINGS = {
+    EASY: {
+        randomness: 0.6,      // 60% 随机决策
+        riskAwareness: 0.05   // 几乎不考虑风险
+    },
+    NORMAL: {
+        randomness: 0.3,      // 30% 随机决策
+        riskAwareness: 0.1    // 轻微风险意识
+    },
+    HARD: {
+        randomness: 0.0,      // 完全理性
+        riskAwareness: 0.15   // 较强风险意识
+    }
 }
 ```
 
-## 示例：风险如何影响决策
+---
 
-假设当前状态：
-- CV 沉没概率 = 0.6
-- DD 沉没概率 = 0.3（低于阈值 0.2，会被计入）
-- `riskAwareness = 0.5`
+## 算法复杂度分析
 
-评估两个行动：
+### 推演开销
 
-| 行动 | baseUtility | CV 沉没后可用？ | utilityLoss | normRiskBonus | finalScore |
-|------|-------------|----------------|-------------|---------------|------------|
-| HE (3,4) | 0.7 | ❌ 不可用 | 0.7 | 0.6×0.7/1=0.42 | 0.7×(1+0.5×0.42)=0.85 |
-| AP (3,4) | 0.5 | ✓ 可用 | 0 | 0 | 0.5×(1+0)=0.50 |
+| 操作 | 复杂度 | 优化方案 |
+|------|--------|---------|
+| 单次置信状态构建 | O(样本数 × 船只数 × 格子数) | 缓存 probGrid |
+| 侦查后推演（2 种结果） | 2 × O(置信状态) | 可并行 |
+| 攻击后推演（2 种结果） | 2 × O(置信状态) | 可并行 |
+| 枚举最优攻击 | O(格子数 × 武器数) | 可剪枝 |
 
-**结论**：HE 行动因风险加成从 0.7 提升到 0.85，更可能被选中。
+### 性能优化策略
 
-## 与现有系统的兼容性
+1. **缓存当前最优攻击**：`calculateBestAttackDamage` 的结果在同一决策周期内不变
+2. **惰性推演**：只对候选行动进行完整推演
+3. **采样数动态调整**：侦查推演可用较少样本（如 100）
+4. **提前剪枝**：如果直接伤害已经很高，跳过信息副产品计算
 
-- **多步推演**：`simulateMultiStepThreats` 保持不变，仍然产出 `shipThreats` Map
-- **难度配置**：`riskAwareness` 可继续放在 `difficultyConfig` 中
-- **调试热力图**：不受影响，`calculateProbabilityGrid` 独立运作
+```javascript
+// 性能优化版
+function evaluateActionUnified_Optimized(beliefState, action, abilities, context) {
+    const { weapon } = action;
+    const probGrid = beliefState.getProbabilityGrid();
+    
+    // 缓存基准线（只计算一次）
+    if (!context._cachedBestDamage) {
+        context._cachedBestDamage = calculateBestAttackDamage(beliefState, abilities);
+    }
+    
+    if (weapon === 'SONAR') {
+        return evaluateReconAction(beliefState, action, abilities, context);
+    } else {
+        // 快速路径：如果直接伤害已经接近最大，跳过信息副产品
+        const directDamage = calculateExpectedDamage(action, probGrid, abilities);
+        const maxPossibleDamage = weapon === 'HE' ? 5 : abilities.apDamage;
+        
+        if (directDamage > maxPossibleDamage * 0.8) {
+            return directDamage;  // 高伤害行动，信息副产品可忽略
+        }
+        
+        return evaluateAttackAction(beliefState, action, abilities, context);
+    }
+}
+```
+
+---
+
+## 实现计划
+
+### 阶段一：核心重构
+1. [ ] 实现 `evaluateAttackAction` 函数
+2. [ ] 实现 `evaluateReconAction` 函数
+3. [ ] 实现 `simulatePostReconDamage` 函数
+4. [ ] 实现 `simulatePostAttackDamage` 函数
+5. [ ] 实现 `calculateBestAttackDamage` 函数
+6. [ ] 重构 `evaluateAction` → `evaluateActionUnified`
+
+### 阶段二：风险整合
+1. [ ] 实现 `evaluateReconActionWithRisk` 函数
+2. [ ] 整合现有的 `simulateMultiStepThreats`
+3. [ ] 调整 `makeAIDecision` 主流程
+
+### 阶段三：优化与测试
+1. [ ] 实现缓存机制
+2. [ ] 性能基准测试
+3. [ ] 不同游戏阶段的行为测试
+4. [ ] 对比新旧框架的决策差异
+
+### 阶段四：难度配置
+1. [ ] 移除 alpha 参数
+2. [ ] 更新难度配置
+3. [ ] 重新平衡各难度
+
+---
+
+## 理论优势
+
+| 方面 | 旧框架（v2.3） | 新框架（v3.0） |
+|------|---------------|---------------|
+| 量纲 | 比特 + 伤害（不统一） | 纯伤害（统一） |
+| 核心参数 | α 需要手工调节 | 无，完全由推演计算 |
+| 物理意义 | 弱 | 强（信火一体） |
+| 游戏进程稳定性 | 熵归一化导致漂移 | 稳定（直接计算伤害） |
+| 可解释性 | 低 | 高（每个值都是伤害差） |
+| 扩展性 | 新武器需调 α | 新武器自动适配 |
+
+---
+
+## 附录：决策流程对比
+
+### 旧流程（v2.3）
+
+```
+1. 计算信息增益 (比特)
+2. 归一化: normInfoGain = infoGain / currentEntropy  ← 问题所在
+3. 计算期望伤害
+4. 归一化: normDamage = damage / maxDamage
+5. utility = α × normInfoGain + (1-α) × normDamage
+```
+
+### 新流程（v3.0）
+
+```
+攻击行动:
+1. 计算当回合直接伤害
+2. 推演攻击后状态，计算下一步最优伤害
+3. utility = 直接伤害 + max(0, 下一步伤害 - 当前最优伤害)
+
+侦查行动:
+1. 计算当前最优攻击伤害（基准线）
+2. 分情况推演侦查结果（有船/无船）
+3. 计算各情况下下一步最优攻击伤害
+4. utility = E[下一步伤害] - 基准线
+```
+
+### 决策语义对比
+
+| 场景 | 旧框架决策 | 新框架决策 |
+|------|-----------|-----------|
+| 游戏初期，信息稀缺 | 高 α 倾向侦查 | 推演显示侦查能显著提升下一步伤害 → 选侦查 |
+| 游戏后期，目标明确 | 低 α 倾向攻击 | 推演显示侦查边际收益为负 → 选攻击 |
+| 发现疑似点 | 取决于 α 设定 | 推演显示攻击疑似点伤害更高 → 选攻击 |
+| CV 即将沉没 | riskAwareness 调整 | 同样机制 + 更精确的伤害量化 |

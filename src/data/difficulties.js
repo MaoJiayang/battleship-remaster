@@ -89,11 +89,11 @@ export const DIFFICULTY_SETTINGS = {
     },
     HARD: {
         // alpha: 探索权重 - 偏信息收集，先侦查后集火
-        alpha: 0.75,
+        alpha: 0.85,
         // randomness: 随机决策概率 - 完全理性（从不随机）
         randomness: 0.0,
         // riskAwareness: 风险意识强度 - 较强风险意识，会抢用濒危能力
-        riskAwareness: 0.2
+        riskAwareness: 0.5
     }
 };
 
