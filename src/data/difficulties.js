@@ -85,15 +85,15 @@ export const DIFFICULTY_SETTINGS = {
         // randomness: 随机决策概率 - 30% 概率随机决策（偶有失误）
         randomness: 0.3,
         // riskAwareness: 风险意识强度 - 轻微风险意识
-        riskAwareness: 0.1
+        riskAwareness: 0.15
     },
     HARD: {
-        // alpha: 探索权重 - 偏信息收集，先侦查后集火
-        alpha: 0.85,
+        // alpha: 探索权重 - 平衡探索与利用
+        alpha: 0.50,
         // randomness: 随机决策概率 - 完全理性（从不随机）
         randomness: 0.0,
         // riskAwareness: 风险意识强度 - 较强风险意识，会抢用濒危能力
-        riskAwareness: 0.5
+        riskAwareness: 0.35
     }
 };
 
