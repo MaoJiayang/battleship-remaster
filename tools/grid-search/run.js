@@ -39,6 +39,30 @@ import { writeFileSync } from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Elo 评分参数
+const ELO_SETTINGS = {
+    baseRating: 150,
+    kFactor: 24
+};
+
+const DISPLAY_TOP_N = 10;
+// Fisher-Yates 洗牌，随机化任务顺序
+function shuffleInPlace(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+}
+
+// 更兼容的清屏（ANSI 序列）
+function clearScreen() {
+    try {
+        process.stdout.write('\x1b[2J\x1b[0f');
+    } catch (_) {
+        console.clear();
+    }
+}
+
 // ============================================================================
 // 预设配置
 // ============================================================================
@@ -63,9 +87,9 @@ const PRESETS = {
         description: '默认搜索（5x5 网格，30场/对）'
     },
     full: {
-        alphaRange: [0.5, 0.5, 0.05],
-        riskRange: [0.2, 0.4, 0.05],
-        gamesPerPair: 35,
+        alphaRange: [0.55, 0.85, 0.025],
+        riskRange: [0.7, 0.9, 0.025],
+        gamesPerPair: 6,
         description: '完整搜索'
     }
 };
@@ -181,6 +205,7 @@ class ParallelGridSearch {
         this.taskQueue = [];
         this.results = new Map();      // configKey -> stats
         this.matchResults = [];        // 所有对战结果
+        this.eloRatings = new Map();    // configKey -> rating
         this.pendingTasks = 0;
         this.completedTasks = 0;
         this.totalTasks = 0;
@@ -252,6 +277,7 @@ class ParallelGridSearch {
                 games: 0,
                 totalTurns: 0
             });
+            this.eloRatings.set(key, ELO_SETTINGS.baseRating);
         }
     }
     
@@ -363,6 +389,28 @@ class ParallelGridSearch {
         }
         
         this.matchResults.push(result);
+
+        // 更新 Elo 评分
+        this.updateEloRatings({ keyA, keyB, winsA, winsB, draws, totalGames });
+    }
+
+    /**
+     * 批量更新 Elo 评分
+     */
+    updateEloRatings({ keyA, keyB, winsA, winsB, draws, totalGames }) {
+        const ratingA = this.eloRatings.get(keyA) ?? ELO_SETTINGS.baseRating;
+        const ratingB = this.eloRatings.get(keyB) ?? ELO_SETTINGS.baseRating;
+
+        const expectedA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
+        const scoreA = winsA + 0.5 * draws;
+        const scoreB = winsB + 0.5 * draws;
+        const k = ELO_SETTINGS.kFactor;
+
+        const newRatingA = ratingA + k * (scoreA - totalGames * expectedA);
+        const newRatingB = ratingB + k * (scoreB - totalGames * (1 - expectedA));
+
+        this.eloRatings.set(keyA, newRatingA);
+        this.eloRatings.set(keyB, newRatingB);
     }
     
     /**
@@ -386,21 +434,52 @@ class ParallelGridSearch {
         const elapsed = (Date.now() - this.startTime) / 1000;
         const speed = elapsed > 0 ? this.completedTasks / elapsed : 0;
         const eta = speed > 0 ? (this.totalTasks - this.completedTasks) / speed : 0;
-        
-        // 清除当前行并打印进度
-        process.stdout.clearLine?.(0);
-        process.stdout.cursorTo?.(0);
-        
-        if (this.completedTasks === 0) {
-            // 还没有完成的任务，显示等待状态
-            process.stdout.write(
-                `⏳ 进度: 0/${this.totalTasks} (0%) | 已用: ${elapsed.toFixed(1)}s | 任务执行中...`
-            );
-        } else {
-            process.stdout.write(
-                `⏳ 进度: ${this.completedTasks}/${this.totalTasks} (${percent}%) ` +
-                `| 已用: ${elapsed.toFixed(1)}s | 预计剩余: ${eta.toFixed(0)}s | 速度: ${speed.toFixed(1)}任务/s`
-            );
+        const msg = this.completedTasks === 0
+            ? `⏳ 进度: 0/${this.totalTasks} (0%) | 已用: ${elapsed.toFixed(1)}s | 任务执行中...`
+            : `⏳ 进度: ${this.completedTasks}/${this.totalTasks} (${percent}%) | 已用: ${elapsed.toFixed(1)}s | 预计剩余: ${eta.toFixed(0)}s | 速度: ${speed.toFixed(1)}任务/s`;
+
+        // 清屏刷新，避免堆叠
+        clearScreen();
+
+        console.log(msg);
+
+        if (this.completedTasks > 0) {
+            const liveTop = Math.min(100, DISPLAY_TOP_N);
+            const winTop = this.getSortedResults().slice(0, liveTop);
+            const eloTop = this.getSortedByElo().slice(0, liveTop);
+
+            // 胜率榜
+            console.log('');
+            console.log('🏅 胜率榜');
+            console.log('排名 │ Alpha │ Risk │  胜率  │   胜   │   负   │  平  │ 对局 │ Elo');
+            console.log('─────┼───────┼──────┼────────┼────────┼────────┼──────┼──────┼──────');
+            winTop.forEach((r, i) => {
+                const rank = String(i + 1).padStart(3, ' ');
+                const alpha = r.config.alpha.toFixed(2);
+                const risk = r.config.riskAwareness.toFixed(2);
+                const winRate = (r.winRate * 100).toFixed(1).padStart(5, ' ') + '%';
+                const wins = String(r.wins).padStart(6, ' ');
+                const losses = String(r.losses).padStart(6, ' ');
+                const draws = String(r.draws).padStart(4, ' ');
+                const games = String(r.games).padStart(4, ' ');
+                const elo = (this.eloRatings.get(r.key) ?? ELO_SETTINGS.baseRating).toFixed(1).padStart(6, ' ');
+                console.log(`${rank} │ ${alpha}  │ ${risk} │ ${winRate} │ ${wins} │ ${losses} │ ${draws} │ ${games} │ ${elo}`);
+            });
+
+            // Elo 榜
+            console.log('');
+            console.log('📈 Elo 榜');
+            console.log('排名 │ Alpha │ Risk │   Elo   │  胜率  │ 对局');
+            console.log('─────┼───────┼──────┼─────────┼────────┼──────');
+            eloTop.forEach((r, i) => {
+                const rank = String(i + 1).padStart(3, ' ');
+                const alpha = r.config.alpha.toFixed(2);
+                const risk = r.config.riskAwareness.toFixed(2);
+                const elo = (this.eloRatings.get(r.key) ?? ELO_SETTINGS.baseRating).toFixed(1).padStart(7, ' ');
+                const winRate = (r.winRate * 100).toFixed(1).padStart(5, ' ') + '%';
+                const games = String(r.games).padStart(4, ' ');
+                console.log(`${rank} │ ${alpha}  │ ${risk} │ ${elo} │ ${winRate} │ ${games}`);
+            });
         }
     }
     
@@ -470,6 +549,9 @@ class ParallelGridSearch {
                 });
             }
         }
+
+        // 随机打乱任务顺序，减少批次顺序偏差
+        shuffleInPlace(this.taskQueue);
         
         this.totalTasks = this.taskQueue.length;
         
@@ -494,7 +576,7 @@ class ParallelGridSearch {
             // 定时刷新进度（每200ms），确保用户能看到更新
             this.progressInterval = setInterval(() => {
                 this.printProgress();
-            }, 200);
+            }, 1000);
             
             // 初始分配任务
             for (const worker of this.workers) {
@@ -507,13 +589,30 @@ class ParallelGridSearch {
      * 获取排序结果
      */
     getSortedResults() {
-        const results = Array.from(this.results.values()).map(stats => ({
+        const results = Array.from(this.results.entries()).map(([key, stats]) => ({
             ...stats,
+            key,
+            elo: this.eloRatings.get(key) ?? ELO_SETTINGS.baseRating,
             winRate: stats.games > 0 ? stats.wins / stats.games : 0,
             avgTurns: stats.games > 0 ? stats.totalTurns / stats.games : 0
         }));
         
         return results.sort((a, b) => b.winRate - a.winRate);
+    }
+
+    /**
+     * 按 Elo 排序
+     */
+    getSortedByElo() {
+        const results = Array.from(this.results.entries()).map(([key, stats]) => ({
+            ...stats,
+            key,
+            elo: this.eloRatings.get(key) ?? ELO_SETTINGS.baseRating,
+            winRate: stats.games > 0 ? stats.wins / stats.games : 0,
+            avgTurns: stats.games > 0 ? stats.totalTurns / stats.games : 0
+        }));
+
+        return results.sort((a, b) => b.elo - a.elo);
     }
     
     /**
@@ -521,6 +620,7 @@ class ParallelGridSearch {
      */
     printResults() {
         const sorted = this.getSortedResults();
+        const eloSorted = this.getSortedByElo();
         const elapsed = ((Date.now() - this.startTime) / 1000).toFixed(1);
         
         console.log('═══════════════════════════════════════════════════════════════════');
@@ -549,6 +649,25 @@ class ParallelGridSearch {
         }
         
         console.log('─────┴───────┴──────┴────────┴────────┴────────┴──────┴──────────');
+        console.log('');
+
+        console.log('📈 Elo 排名');
+        console.log('');
+        console.log('排名 │ Alpha │ Risk │   Elo   │  胜率  │  对局');
+        console.log('─────┼───────┼──────┼─────────┼────────┼──────');
+        const eloTopN = Math.min(20, eloSorted.length);
+        for (let i = 0; i < eloTopN; i++) {
+            const r = eloSorted[i];
+            const rank = String(i + 1).padStart(3, ' ');
+            const alpha = r.config.alpha.toFixed(2);
+            const risk = r.config.riskAwareness.toFixed(2);
+            const elo = r.elo.toFixed(1).padStart(7, ' ');
+            const winRate = (r.winRate * 100).toFixed(1).padStart(5, ' ') + '%';
+            const games = String(r.games).padStart(4, ' ');
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '  ';
+            console.log(`${medal}${rank} │ ${alpha}  │ ${risk} │ ${elo} │ ${winRate} │ ${games}`);
+        }
+        console.log('─────┴───────┴──────┴─────────┴────────┴──────');
         console.log('');
         
         // 最优参数

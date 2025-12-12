@@ -421,7 +421,7 @@ class BeliefState {
                     
                     if (valid) {
                         // 权重：命中点越多权重越高，疑似点也有加成
-                        const weight = 1 + hitCount * 10 + suspectCount * 2;
+                        const weight = 1 + hitCount * 10 + suspectCount * 5;
                         validPlacements.push({ cells, weight, shipId: ship.id });
                     }
                 }

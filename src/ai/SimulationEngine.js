@@ -34,10 +34,10 @@ const CellState = {
 };
 
 /** 最大回合数限制（防止死循环） */
-const MAX_TURNS = 200;
+const MAX_TURNS = 60;
 
 /** 蒙特卡洛采样数量（模拟时使用较小值以提高速度） */
-const SAMPLE_COUNT = 200;
+const SAMPLE_COUNT = 40;
 
 /** 最小概率阈值 */
 const MIN_PROB = 1e-10;
@@ -613,10 +613,30 @@ class SimBeliefState {
         this.boardSize = BOARD_SIZE;
         
         this.constraints = this._buildConstraints();
-        this.samples = this._sampleConfigurations(sampleCount);
+        
+        // 检查是否为空盘面（第一回合）
+        this.isFirstTurn = this._checkIfFirstTurn();
+
+        // 如果是第一回合，跳过采样
+        if (this.isFirstTurn) {
+            this.samples = [];
+        } else {
+            this.samples = this._sampleConfigurations(sampleCount);
+        }
         
         this._probabilityGrid = null;
         this._entropy = null;
+    }
+
+    _checkIfFirstTurn() {
+        for (let r = 0; r < this.boardSize; r++) {
+            for (let c = 0; c < this.boardSize; c++) {
+                if (this.viewGrid[r][c] !== CellState.UNKNOWN) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
     
     _buildConstraints() {
@@ -752,6 +772,17 @@ class SimBeliefState {
     getProbabilityGrid() {
         if (this._probabilityGrid) return this._probabilityGrid;
         
+        // 特殊处理第一回合：返回完全平均的概率
+        if (this.isFirstTurn) {
+            const totalShipCells = this.ships.reduce((sum, s) => sum + s.len, 0);
+            const totalCells = this.boardSize * this.boardSize;
+            const avgProb = totalCells > 0 ? totalShipCells / totalCells : 0;
+            
+            const grid = Array(this.boardSize).fill(0).map(() => Array(this.boardSize).fill(avgProb));
+            this._probabilityGrid = grid;
+            return grid;
+        }
+
         const grid = Array(this.boardSize).fill(0).map(() => Array(this.boardSize).fill(0));
         
         if (this.samples.length === 0) return grid;
