@@ -685,10 +685,10 @@ export function enumerateAllActions(viewGrid, abilities) {
 // ============================================================================
 
 /** 对称推演采样数量（较小以平衡多步开销） */
-const OPPONENT_SAMPLE_COUNT = 25;
+export const DEFAULT_OPPONENT_SAMPLE_COUNT = 50;
 
 /** 向前推演步数 */
-const LOOKAHEAD_STEPS = 5;
+export const DEFAULT_LOOKAHEAD_STEPS = 5;
 
 /**
  * 获取武器覆盖范围
@@ -737,11 +737,12 @@ function getShipCells(ship) {
  * @param {Ship[]} myShips - 我方船只（真实位置）
  * @param {Ship[]} opponentShips - 对手船只（用于判断对手能力）
  * @param {number} alpha - 探索权重
- * @param {number} [steps=LOOKAHEAD_STEPS] - 推演步数
+ * @param {number} [steps=DEFAULT_LOOKAHEAD_STEPS] - 推演步数
+ * @param {number} [sampleCount=DEFAULT_OPPONENT_SAMPLE_COUNT] - 对手采样数量
  * @returns {Map<string, { totalExpectedDamage: number, sinkProbability: number, remainingHp: number }>}
  * @export
  */
-export function simulateMultiStepThreats(opponentViewGrid, myShips, opponentShips, alpha, steps = LOOKAHEAD_STEPS) {
+export function simulateMultiStepThreats(opponentViewGrid, myShips, opponentShips, alpha, steps = DEFAULT_LOOKAHEAD_STEPS, sampleCount = DEFAULT_OPPONENT_SAMPLE_COUNT) {
     const opponentAbilities = checkAIAbilities(opponentShips);
     const aliveTargets = myShips.filter(s => !s.sunk);
     if (aliveTargets.length === 0) return new Map();
@@ -763,7 +764,7 @@ export function simulateMultiStepThreats(opponentViewGrid, myShips, opponentShip
     
     for (let step = 0; step < steps; step++) {
         // 【每步都完整推演】构建对手置信状态
-        const opponentBelief = new BeliefState(aliveTargets, simViewGrid, OPPONENT_SAMPLE_COUNT);
+        const opponentBelief = new BeliefState(aliveTargets, simViewGrid, sampleCount);
         const probGrid = opponentBelief.getProbabilityGrid();
         
         // 枚举对手可用行动

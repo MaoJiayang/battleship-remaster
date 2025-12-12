@@ -79,7 +79,7 @@ function runMatchup(task) {
 function runSingleGame(task) {
     const { taskId, configA, configB, keyA, keyB, isFirstHalf } = task;
     
-    const engine = new SimulationEngine(configA, configB);
+    const engine = new SimulationEngine(configA, configB,{opponentSampleCount:10,lookaheadSteps:3});
     const result = engine.run();
     
     let winA = 0, winB = 0, draw = 0;

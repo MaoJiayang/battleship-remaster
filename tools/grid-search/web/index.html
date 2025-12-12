@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+  <meta charset="UTF-8">
+  <title>海战棋AI参数网格搜索可视化</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>海战棋AI参数网格搜索可视化</h1>
+    <form id="config-form">
+      <div class="form-row">
+        <label>Alpha范围：</label>
+        <input type="number" step="0.01" id="alphaMin" value="0.5"> -
+        <input type="number" step="0.01" id="alphaMax" value="0.9">
+        步长 <input type="number" step="0.01" id="alphaStep" value="0.1">
+      </div>
+      <div class="form-row">
+        <label>Risk范围：</label>
+        <input type="number" step="0.01" id="riskMin" value="0.0"> -
+        <input type="number" step="0.01" id="riskMax" value="1.0">
+        步长 <input type="number" step="0.01" id="riskStep" value="0.1">
+      </div>
+      <div class="form-row">
+        <label>每对配置对战次数：</label>
+        <input type="number" id="gamesPerPair" value="30">
+      </div>
+      <div class="form-row">
+        <label>Worker线程数：</label>
+        <input type="number" id="workers" value="16">
+      </div>
+      <div class="form-row">
+        <label>榜单显示前N名：</label>
+        <input type="number" id="topN" value="10">
+      </div>
+      <div class="form-row">
+        <button type="submit" id="start-btn">启动搜索</button>
+        <button type="button" id="pause-btn">暂停</button>
+        <button type="button" id="resume-btn" disabled>继续</button>
+        <button type="button" id="stop-btn">完全停止</button>
+        <button type="button" id="download-btn">下载结果</button>
+      </div>
+    </form>
+    <div id="progress-area">
+      <div id="progress-bar"><div id="progress-inner"></div></div>
+      <div id="progress-text"></div>
+    </div>
+    <div class="board-area">
+      <h2>🏅 胜率榜</h2>
+      <div class="table-wrapper">
+        <table id="win-table">
+          <thead>
+            <tr>
+              <th>排名</th>
+              <th>Alpha</th>
+              <th>Risk</th>
+              <th>胜率</th>
+              <th>胜</th>
+              <th>负</th>
+              <th>平</th>
+              <th>对局</th>
+              <th>Elo</th>
+            </tr>
+          </thead>
+          <tbody id="win-tbody">
+            <tr><td colspan="9" class="no-data">暂无数据...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h2>📈 Elo 榜</h2>
+      <div class="table-wrapper">
+        <table id="elo-table">
+          <thead>
+            <tr>
+              <th>排名</th>
+              <th>Alpha</th>
+              <th>Risk</th>
+              <th>Elo</th>
+              <th>胜率</th>
+              <th>对局</th>
+            </tr>
+          </thead>
+          <tbody id="elo-tbody">
+            <tr><td colspan="6" class="no-data">暂无数据...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h3>状态信息</h3>
+      <pre id="log"></pre>
+    </div>
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>

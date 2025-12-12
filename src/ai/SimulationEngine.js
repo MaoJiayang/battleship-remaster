@@ -29,7 +29,9 @@ import {
     makeRandomDecision,
     findFallbackTarget,
     simulateMultiStepThreats,
-    calculateRiskBonus
+    calculateRiskBonus,
+    DEFAULT_OPPONENT_SAMPLE_COUNT,
+    DEFAULT_LOOKAHEAD_STEPS
 } from './aiCore.js';
 
 // ============================================================================
@@ -68,12 +70,18 @@ export class SimulationEngine {
      * @param {Object} options - 可选配置
      * @param {boolean} options.verbose - 是否输出详细日志
      * @param {number} options.maxTurns - 最大回合数
+     * @param {number} options.opponentSampleCount - 对手推演采样数量（默认 DEFAULT_OPPONENT_SAMPLE_COUNT）
+     * @param {number} options.lookaheadSteps - 向前推演步数（默认 DEFAULT_LOOKAHEAD_STEPS）
      */
     constructor(configA, configB, options = {}) {
         this.configA = { alpha: 0.5, randomness: 0, riskAwareness: 0, ...configA };
         this.configB = { alpha: 0.5, randomness: 0, riskAwareness: 0, ...configB };
         this.verbose = options.verbose || false;
         this.maxTurns = options.maxTurns || MAX_TURNS;
+        
+        // 风险评估参数（可覆盖）
+        this.opponentSampleCount = options.opponentSampleCount ?? DEFAULT_OPPONENT_SAMPLE_COUNT;
+        this.lookaheadSteps = options.lookaheadSteps ?? DEFAULT_LOOKAHEAD_STEPS;
         
         // 初始化对战状态
         this.reset();
@@ -282,7 +290,9 @@ export class SimulationEngine {
                 opponentViewGrid,
                 myShips,
                 enemyShips,
-                config.alpha
+                config.alpha,
+                this.lookaheadSteps,      // 使用配置的推演步数
+                this.opponentSampleCount  // 使用配置的采样数量
             );
         }
         

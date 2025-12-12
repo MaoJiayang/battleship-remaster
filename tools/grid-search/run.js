@@ -199,8 +199,9 @@ function printHelp() {
 // ============================================================================
 
 class ParallelGridSearch {
-    constructor(config) {
+    constructor(config, options = {}) {
         this.config = config;
+        this.silent = options.silent || false;  // 静默模式（Web API 使用）
         this.workers = [];
         this.taskQueue = [];
         this.results = new Map();      // configKey -> stats
@@ -211,6 +212,29 @@ class ParallelGridSearch {
         this.totalTasks = 0;
         this.startTime = null;
         this.readyWorkers = 0;
+        this.status = 'idle';          // idle/running/done/error
+    }
+    
+    /**
+     * 获取当前进度和榜单（供 Web API 使用）
+     */
+    getProgress() {
+        const progress = this.totalTasks > 0 ? this.completedTasks / this.totalTasks : 0;
+        const elapsed = this.startTime ? (Date.now() - this.startTime) / 1000 : 0;
+        const speed = elapsed > 0 ? this.completedTasks / elapsed : 0;
+        const eta = speed > 0 ? (this.totalTasks - this.completedTasks) / speed : 0;
+        
+        return {
+            status: this.status,
+            progress,
+            completed: this.completedTasks,
+            total: this.totalTasks,
+            elapsed,
+            eta,
+            speed,
+            winTop: this.completedTasks > 0 ? this.getSortedResults() : [],
+            eloTop: this.completedTasks > 0 ? this.getSortedByElo() : []
+        };
     }
     
     /**
@@ -438,6 +462,14 @@ class ParallelGridSearch {
             ? `⏳ 进度: 0/${this.totalTasks} (0%) | 已用: ${elapsed.toFixed(1)}s | 任务执行中...`
             : `⏳ 进度: ${this.completedTasks}/${this.totalTasks} (${percent}%) | 已用: ${elapsed.toFixed(1)}s | 预计剩余: ${eta.toFixed(0)}s | 速度: ${speed.toFixed(1)}任务/s`;
 
+        // 静默模式：只输出简化进度，不清屏不输出榜单
+        if (this.silent) {
+            process.stdout.clearLine?.(0);
+            process.stdout.cursorTo?.(0);
+            process.stdout.write(msg);
+            return;
+        }
+
         // 清屏刷新，避免堆叠
         clearScreen();
 
@@ -487,6 +519,7 @@ class ParallelGridSearch {
      * 运行网格搜索
      */
     async run() {
+        this.status = 'running';
         console.log('');
         console.log('🔍 ═══════════════════════════════════════════════════════════════');
         console.log('   海战棋 AI 参数网格搜索（并行模式）');
@@ -564,6 +597,7 @@ class ParallelGridSearch {
                 if (this.progressInterval) {
                     clearInterval(this.progressInterval);
                 }
+                this.status = 'done';
                 console.log('\n');
                 this.printResults();
                 this.terminate();
@@ -691,14 +725,52 @@ class ParallelGridSearch {
     }
     
     /**
-     * 终止所有 Worker
+     * 暂停执行
+     */
+    pause() {
+        if (this.status === 'running') {
+            this.status = 'paused';
+            if (this.progressInterval) {
+                clearInterval(this.progressInterval);
+                this.progressInterval = null;
+            }
+        }
+    }
+    
+    /**
+     * 恢复执行
+     */
+    resume() {
+        if (this.status === 'paused') {
+            this.status = 'running';
+            // 恢复进度刷新
+            this.progressInterval = setInterval(() => {
+                this.printProgress();
+            }, 1000);
+        }
+    }
+    
+    /**
+     * 完全终止所有 Worker（不可恢复）
      */
     terminate() {
+        this.status = 'terminated';
+        if (this.progressInterval) {
+            clearInterval(this.progressInterval);
+            this.progressInterval = null;
+        }
         for (const worker of this.workers) {
             worker.terminate();
         }
+        this.workers = [];
     }
 }
+
+// ============================================================================
+// 导出类供 Web 服务使用
+// ============================================================================
+
+export { ParallelGridSearch, PRESETS };
 
 // ============================================================================
 // 主入口
@@ -715,10 +787,16 @@ async function main() {
     try {
         await search.run();
     } catch (error) {
+        search.status = 'error';
         console.error('❌ 搜索失败:', error.message);
         console.error(error.stack);
         process.exit(1);
     }
 }
 
-main();
+// 仅在直接运行时执行 main（通过命令行）
+// 当被 import 时不执行
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+    main();
+}
+

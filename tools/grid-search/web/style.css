@@ -1,0 +1,24 @@
+body { font-family: 'Segoe UI', Arial, sans-serif; background: #f7f7fa; margin: 0; }
+.container { max-width: 800px; margin: 30px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 24px; }
+h1 { text-align: center; }
+form { margin-bottom: 18px; }
+.form-row { margin: 10px 0; display: flex; align-items: center; gap: 8px; }
+label { min-width: 120px; }
+input[type=number] { width: 70px; padding: 2px 6px; }
+button { padding: 6px 18px; margin-right: 8px; border: none; border-radius: 4px; background: #1976d2; color: #fff; cursor: pointer; font-size: 15px; }
+button:active { background: #1565c0; }
+#progress-area { margin: 18px 0; }
+#progress-bar { width: 100%; height: 18px; background: #e0e0e0; border-radius: 9px; overflow: hidden; }
+#progress-inner { height: 100%; width: 0; background: linear-gradient(90deg, #42a5f5, #1976d2); transition: width 0.4s; }
+#progress-text { margin-top: 6px; font-size: 15px; color: #333; }
+.board-area { margin: 18px 0; }
+pre { background: #f4f6f8; border-radius: 4px; padding: 10px; font-size: 14px; overflow-x: auto; margin: 4px 0; }
+.table-wrapper { overflow-x: auto; margin: 12px 0; border-radius: 6px; box-shadow: 0 1px 4px #0001; }
+table { width: 100%; border-collapse: collapse; background: #fff; font-size: 14px; }
+thead { background: linear-gradient(180deg, #e3f2fd, #bbdefb); }
+th { padding: 10px 8px; text-align: center; font-weight: 600; border-bottom: 2px solid #90caf9; color: #1565c0; }
+tbody tr:nth-child(even) { background: #f9fafb; }
+tbody tr:hover { background: #e1f5fe; }
+td { padding: 8px; text-align: center; border-bottom: 1px solid #e0e0e0; }
+.no-data { text-align: center; color: #999; font-style: italic; }
+.rank-medal { font-size: 16px; margin-right: 4px; }

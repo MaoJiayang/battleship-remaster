@@ -10,7 +10,16 @@
     "full": "node run.js --preset full",
     "test": "node run.js --test"
   },
-  "keywords": ["battleship", "ai", "grid-search", "parallel"],
+  "keywords": [
+    "battleship",
+    "ai",
+    "grid-search",
+    "parallel"
+  ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.2.1"
+  }
 }
