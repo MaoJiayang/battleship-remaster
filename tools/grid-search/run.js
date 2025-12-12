@@ -87,7 +87,7 @@ const PRESETS = {
         description: '默认搜索（5x5 网格，30场/对）'
     },
     full: {
-        alphaRange: [0.55, 0.85, 0.025],
+        alphaRange: [0.75, 0.75, 0.025],
         riskRange: [0.7, 0.9, 0.025],
         gamesPerPair: 6,
         description: '完整搜索'

@@ -96,6 +96,13 @@ docs/
 - 不会增加资源、经济等其他复杂策略元素
 - 不会考虑复杂资源和外部图像需求，始终保持可单文件运行
 
+### AI 模块重构历史
+- **2025-12-13**: ✅ 风险评估模块已完成解耦
+  - 将 `simulateMultiStepThreats` 和 `calculateRiskBonus` 提取到 `aiCore.js`
+  - `SimulationEngine` 现已完整支持 `riskAwareness` 参数
+  - 模拟对局与实战对局使用完全相同的决策逻辑
+  - 参数搜索中的 risk 参数现已生效
+  
 ### 可考虑的解耦方向
 任务	说明
 抽取纯函数版结算逻辑	从 HitResolver.js 等抽取不依赖 DOM 的计算核心

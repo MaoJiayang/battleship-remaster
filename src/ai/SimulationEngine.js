@@ -19,28 +19,28 @@ import { APWeapon } from '../game/weapons/APWeapon.js';
 import { HEWeapon } from '../game/weapons/HEWeapon.js';
 import { SonarWeapon } from '../game/weapons/SonarWeapon.js';
 
+// 导入共享的核心模块
+import {
+    BeliefState,
+    CellState,
+    checkAIAbilities,
+    enumerateAllActions,
+    evaluateAction,
+    makeRandomDecision,
+    findFallbackTarget,
+    simulateMultiStepThreats,
+    calculateRiskBonus
+} from './aiCore.js';
+
 // ============================================================================
 // 常量定义
 // ============================================================================
-
-/** 格子状态枚举（与 aiStrategy.js 保持一致） */
-const CellState = {
-    UNKNOWN: 0,
-    MISS: 1,
-    HIT: 2,
-    DESTROYED: 3,
-    SUSPECT: 4,
-    SUNK: 5
-};
 
 /** 最大回合数限制（防止死循环） */
 const MAX_TURNS = 60;
 
 /** 蒙特卡洛采样数量（模拟时使用较小值以提高速度） */
-const SAMPLE_COUNT = 40;
-
-/** 最小概率阈值 */
-const MIN_PROB = 1e-10;
+const SAMPLE_COUNT = 50;
 
 // ============================================================================
 // 武器实例（用于获取攻击范围）
@@ -249,7 +249,7 @@ export class SimulationEngine {
      */
     _executeTurn(config, myShips, enemyShips, enemyGrid, viewGrid, damageGrid, side) {
         // 1. 获取可用能力
-        const abilities = this._checkAbilities(myShips);
+        const abilities = checkAIAbilities(myShips);
         
         // 2. 获取存活目标
         const aliveTargets = enemyShips.filter(s => !s.sunk);
@@ -257,156 +257,76 @@ export class SimulationEngine {
         
         // 3. 随机决策检查
         if (Math.random() < config.randomness) {
-            const action = this._makeRandomDecision(viewGrid, abilities);
+            const action = makeRandomDecision(viewGrid, abilities);
             this._executeAction(action, abilities, enemyGrid, enemyShips, viewGrid, damageGrid, side);
             return;
         }
         
-        // 4. 构建置信状态
-        const beliefState = new SimBeliefState(aliveTargets, viewGrid, SAMPLE_COUNT);
+        // 4. 构建置信状态（使用共享的 BeliefState 类）
+        const beliefState = new BeliefState(aliveTargets, viewGrid, SAMPLE_COUNT);
         
-        // 5. 枚举所有行动
-        const actions = this._enumerateActions(viewGrid, abilities);
+        // 5. 枚举所有行动（使用共享函数）
+        const actions = enumerateAllActions(viewGrid, abilities);
         if (actions.length === 0) {
-            const fallback = this._findFallbackTarget(viewGrid);
+            const fallback = findFallbackTarget(viewGrid);
             this._executeAction(fallback, abilities, enemyGrid, enemyShips, viewGrid, damageGrid, side);
             return;
         }
         
-        // 6. 简化版风险计算（不做多步推演，提高速度）
-        // 完整版可选择启用，但会显著降低模拟速度
+        // 6. 【新增】风险评估：与 aiStrategy.js 保持一致
+        // 获取对手视角（模拟对局中双方视角都可用）
+        let shipThreats = null;
+        if (config.riskAwareness > 0) {
+            const opponentViewGrid = side === 'A' ? this.viewGridB : this.viewGridA;
+            shipThreats = simulateMultiStepThreats(
+                opponentViewGrid,
+                myShips,
+                enemyShips,
+                config.alpha
+            );
+        }
         
-        // 7. 评估所有行动
+        // 7. 评估所有行动（使用共享的 evaluateAction 函数）
         let bestAction = null;
         let bestScore = -Infinity;
+        const candidates = [];
         const maxShipHp = Math.max(...aliveTargets.map(s => s.maxHp ?? 1));
         
         for (const action of actions) {
-            const score = this._evaluateAction(
+            // 基础评分
+            const baseUtility = evaluateAction(
                 beliefState, action, abilities, config.alpha, damageGrid, maxShipHp
             );
             
+            // 【新增】风险调整（与 aiStrategy.js 一致）
+            let score = baseUtility;
+            if (shipThreats && config.riskAwareness > 0) {
+                const normRiskBonus = calculateRiskBonus(
+                    action, shipThreats, beliefState, abilities, myShips, config.alpha
+                );
+                score = baseUtility * (1 + config.riskAwareness * normRiskBonus);
+            }
+            
             if (score > bestScore + 1e-9) {
                 bestScore = score;
-                bestAction = action;
-            } else if (Math.abs(score - bestScore) < 1e-9 && Math.random() < 0.3) {
-                // 相同分数时有概率替换（增加随机性）
-                bestAction = action;
+                candidates.length = 0;
+                candidates.push(action);
+            } else if (Math.abs(score - bestScore) < 1e-9) {
+                candidates.push(action);
             }
         }
+        
+        // 从并列最优中随机选择
+        bestAction = candidates[Math.floor(Math.random() * candidates.length)];
         
         // 8. 执行最优行动
         this._executeAction(bestAction, abilities, enemyGrid, enemyShips, viewGrid, damageGrid, side);
     }
     
-    /**
-     * 检查 AI 可用能力
-     */
-    _checkAbilities(ships) {
-        const aiCV = ships.some(s => s.code === 'CV' && !s.sunk);
-        const aiCL = ships.some(s => s.code === 'CL' && !s.sunk);
-        const aiBB = ships.some(s => s.code === 'BB' && !s.sunk);
-        const aiSS = ships.some(s => s.code === 'SS' && !s.sunk);
-        const aiDD = ships.some(s => s.code === 'DD' && !s.sunk);
-        
-        let apDamage = 1;
-        if (aiBB) apDamage = 3;
-        else if (aiSS || aiCL) apDamage = 2;
-        
-        return {
-            canUseAir: aiCV,
-            canUseSonar: aiDD || aiSS,
-            apDamage
-        };
-    }
-    
-    /**
-     * 枚举所有可用行动
-     */
-    _enumerateActions(viewGrid, abilities) {
-        const actions = [];
-        
-        for (let r = 0; r < BOARD_SIZE; r++) {
-            for (let c = 0; c < BOARD_SIZE; c++) {
-                const state = viewGrid[r][c];
-                
-                if (state === CellState.MISS || state === CellState.SUNK) continue;
-                
-                if (state === CellState.DESTROYED) {
-                    if (abilities.canUseAir) {
-                        actions.push({ weapon: 'HE', r, c });
-                    }
-                    continue;
-                }
-                
-                actions.push({ weapon: 'AP', r, c });
-                
-                if (abilities.canUseAir) {
-                    actions.push({ weapon: 'HE', r, c });
-                }
-                
-                if (abilities.canUseSonar && 
-                    (state === CellState.UNKNOWN || state === CellState.SUSPECT)) {
-                    actions.push({ weapon: 'SONAR', r, c });
-                }
-            }
-        }
-        
-        return actions;
-    }
-    
-    /**
-     * 评估行动效用（简化版）
-     */
-    _evaluateAction(beliefState, action, abilities, alpha, damageGrid, maxShipHp) {
-        const { weapon, r, c } = action;
-        const probGrid = beliefState.getProbabilityGrid();
-        
-        // 计算信息增益
-        const currentEntropy = beliefState.getEntropy();
-        const conditionalEntropy = beliefState.getConditionalEntropy(action);
-        const infoGain = Math.max(0, currentEntropy - conditionalEntropy);
-        const normInfoGain = currentEntropy > MIN_PROB ? infoGain / currentEntropy : 0;
-        
-        // 计算期望伤害
-        const expectedDamage = this._calculateExpectedDamage(
-            action, probGrid, abilities, damageGrid, maxShipHp
-        );
-        
-        const maxDamage = weapon === 'HE' ? 5 : (weapon === 'AP' ? abilities.apDamage : 0);
-        const normDamage = maxDamage > 0 ? expectedDamage / maxDamage : 0;
-        
-        if (weapon === 'SONAR') {
-            return alpha * normInfoGain;
-        }
-        
-        return alpha * normInfoGain + (1 - alpha) * normDamage;
-    }
-    
-    /**
-     * 计算期望伤害（考虑伤害溢出）
-     */
-    _calculateExpectedDamage(action, probGrid, abilities, damageGrid, maxShipHp) {
-        const { weapon, r, c } = action;
-        
-        if (weapon === 'SONAR') return 0;
-        
-        let expectedDamage = 0;
-        const baseDamage = weapon === 'AP' ? abilities.apDamage : 1;
-        
-        const cells = this._getWeaponCoverage(weapon, r, c);
-        
-        for (const cell of cells) {
-            if (cell.r >= 0 && cell.r < BOARD_SIZE && cell.c >= 0 && cell.c < BOARD_SIZE) {
-                const dealtDamage = damageGrid[cell.r][cell.c];
-                const estimatedRemaining = Math.max(0, maxShipHp - dealtDamage);
-                const effectiveDamage = Math.min(baseDamage, estimatedRemaining);
-                expectedDamage += probGrid[cell.r][cell.c] * effectiveDamage;
-            }
-        }
-        
-        return expectedDamage;
-    }
+    // ========================================================================
+    // 注：_checkAbilities、_enumerateActions、_evaluateAction 等已移至 aiCore.js
+    // 此处直接调用共享函数，避免重复维护
+    // ========================================================================
     
     /**
      * 获取武器覆盖范围
@@ -551,43 +471,7 @@ export class SimulationEngine {
         }
     }
     
-    /**
-     * 随机决策
-     */
-    _makeRandomDecision(viewGrid, abilities) {
-        let r, c;
-        let attempts = 0;
-        
-        do {
-            r = Math.floor(Math.random() * BOARD_SIZE);
-            c = Math.floor(Math.random() * BOARD_SIZE);
-            attempts++;
-        } while ((viewGrid[r][c] === CellState.MISS || 
-                  viewGrid[r][c] === CellState.DESTROYED || 
-                  viewGrid[r][c] === CellState.SUNK) && attempts < 200);
-        
-        if (abilities.canUseAir && Math.random() < 0.1) {
-            return { r, c, weapon: 'HE' };
-        } else if (abilities.canUseSonar && Math.random() < 0.1) {
-            return { r, c, weapon: 'SONAR' };
-        }
-        return { r, c, weapon: 'AP' };
-    }
-    
-    /**
-     * 兜底目标
-     */
-    _findFallbackTarget(viewGrid) {
-        for (let r = 0; r < BOARD_SIZE; r++) {
-            for (let c = 0; c < BOARD_SIZE; c++) {
-                const state = viewGrid[r][c];
-                if (state !== CellState.MISS && state !== CellState.DESTROYED && state !== CellState.SUNK) {
-                    return { r, c, weapon: 'AP' };
-                }
-            }
-        }
-        return { r: 0, c: 0, weapon: 'AP' };
-    }
+    // _makeRandomDecision 和 _findFallbackTarget 已迁移至 aiCore.js
     
     /**
      * 检查是否全部沉没
@@ -598,305 +482,9 @@ export class SimulationEngine {
 }
 
 // ============================================================================
-// 简化版置信状态（用于模拟）
+// 注：SimBeliefState 类已移除，直接使用 aiCore.js 中的 BeliefState
+// 采样数通过构造函数参数控制（SAMPLE_COUNT = 40 用于模拟场景）
 // ============================================================================
-
-/**
- * 模拟用置信状态类
- * 
- * 与 aiStrategy.js 中的 BeliefState 类似，但针对模拟场景优化
- */
-class SimBeliefState {
-    constructor(ships, viewGrid, sampleCount = SAMPLE_COUNT) {
-        this.ships = ships;
-        this.viewGrid = viewGrid;
-        this.boardSize = BOARD_SIZE;
-        
-        this.constraints = this._buildConstraints();
-        
-        // 检查是否为空盘面（第一回合）
-        this.isFirstTurn = this._checkIfFirstTurn();
-
-        // 如果是第一回合，跳过采样
-        if (this.isFirstTurn) {
-            this.samples = [];
-        } else {
-            this.samples = this._sampleConfigurations(sampleCount);
-        }
-        
-        this._probabilityGrid = null;
-        this._entropy = null;
-    }
-
-    _checkIfFirstTurn() {
-        for (let r = 0; r < this.boardSize; r++) {
-            for (let c = 0; c < this.boardSize; c++) {
-                if (this.viewGrid[r][c] !== CellState.UNKNOWN) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-    
-    _buildConstraints() {
-        const mustHit = [];
-        const mustAvoid = [];
-        const suspect = [];
-        
-        for (let r = 0; r < this.boardSize; r++) {
-            for (let c = 0; c < this.boardSize; c++) {
-                const state = this.viewGrid[r][c];
-                if (state === CellState.HIT || state === CellState.DESTROYED) {
-                    mustHit.push({ r, c });
-                } else if (state === CellState.MISS || state === CellState.SUNK) {
-                    mustAvoid.push({ r, c });
-                } else if (state === CellState.SUSPECT) {
-                    suspect.push({ r, c });
-                }
-            }
-        }
-        
-        return { mustHit, mustAvoid, suspect };
-    }
-    
-    _sampleConfigurations(n) {
-        const samples = [];
-        let attempts = 0;
-        const maxAttempts = n * 20;
-        
-        while (samples.length < n && attempts < maxAttempts) {
-            attempts++;
-            const config = this._sampleOneConfiguration();
-            if (config) samples.push(config);
-        }
-        
-        while (samples.length < n && samples.length > 0) {
-            samples.push(samples[Math.floor(Math.random() * samples.length)]);
-        }
-        
-        return samples;
-    }
-    
-    _sampleOneConfiguration() {
-        const occupied = new Set();
-        const config = [];
-        
-        const sortedShips = [...this.ships].sort((a, b) => b.len - a.len);
-        
-        for (const ship of sortedShips) {
-            const placement = this._sampleShipPlacement(ship, occupied);
-            if (!placement) return null;
-            config.push(placement);
-            placement.cells.forEach(cell => occupied.add(`${cell.r},${cell.c}`));
-        }
-        
-        if (!this._validateMustHit(config)) return null;
-        
-        return config;
-    }
-    
-    _sampleShipPlacement(ship, occupied) {
-        const validPlacements = [];
-        
-        for (let vertical = 0; vertical <= 1; vertical++) {
-            const isVertical = vertical === 1;
-            const maxR = isVertical ? this.boardSize - ship.len : this.boardSize - 1;
-            const maxC = isVertical ? this.boardSize - 1 : this.boardSize - ship.len;
-            
-            for (let r = 0; r <= maxR; r++) {
-                for (let c = 0; c <= maxC; c++) {
-                    const cells = [];
-                    let valid = true;
-                    let hitCount = 0;
-                    let suspectCount = 0;
-                    
-                    for (let i = 0; i < ship.len; i++) {
-                        const nr = isVertical ? r + i : r;
-                        const nc = isVertical ? c : c + i;
-                        const key = `${nr},${nc}`;
-                        
-                        if (occupied.has(key)) { valid = false; break; }
-                        
-                        const state = this.viewGrid[nr][nc];
-                        if (state === CellState.MISS || state === CellState.SUNK) {
-                            valid = false; break;
-                        }
-                        
-                        cells.push({ r: nr, c: nc });
-                        
-                        if (state === CellState.HIT || state === CellState.DESTROYED) hitCount++;
-                        if (state === CellState.SUSPECT) suspectCount++;
-                    }
-                    
-                    if (valid) {
-                        const weight = 1 + hitCount * 10 + suspectCount * 2;
-                        validPlacements.push({ cells, weight, shipId: ship.id });
-                    }
-                }
-            }
-        }
-        
-        if (validPlacements.length === 0) return null;
-        
-        const totalWeight = validPlacements.reduce((sum, p) => sum + p.weight, 0);
-        let rand = Math.random() * totalWeight;
-        
-        for (const placement of validPlacements) {
-            rand -= placement.weight;
-            if (rand <= 0) return placement;
-        }
-        
-        return validPlacements[validPlacements.length - 1];
-    }
-    
-    _validateMustHit(config) {
-        const coveredHits = new Set();
-        
-        for (const placement of config) {
-            for (const cell of placement.cells) {
-                const state = this.viewGrid[cell.r][cell.c];
-                if (state === CellState.HIT || state === CellState.DESTROYED) {
-                    coveredHits.add(`${cell.r},${cell.c}`);
-                }
-            }
-        }
-        
-        for (const hit of this.constraints.mustHit) {
-            if (!coveredHits.has(`${hit.r},${hit.c}`)) return false;
-        }
-        
-        return true;
-    }
-    
-    getProbabilityGrid() {
-        if (this._probabilityGrid) return this._probabilityGrid;
-        
-        // 特殊处理第一回合：返回完全平均的概率
-        if (this.isFirstTurn) {
-            const totalShipCells = this.ships.reduce((sum, s) => sum + s.len, 0);
-            const totalCells = this.boardSize * this.boardSize;
-            const avgProb = totalCells > 0 ? totalShipCells / totalCells : 0;
-            
-            const grid = Array(this.boardSize).fill(0).map(() => Array(this.boardSize).fill(avgProb));
-            this._probabilityGrid = grid;
-            return grid;
-        }
-
-        const grid = Array(this.boardSize).fill(0).map(() => Array(this.boardSize).fill(0));
-        
-        if (this.samples.length === 0) return grid;
-        
-        for (const config of this.samples) {
-            for (const placement of config) {
-                for (const cell of placement.cells) {
-                    grid[cell.r][cell.c]++;
-                }
-            }
-        }
-        
-        const sampleCount = this.samples.length;
-        for (let r = 0; r < this.boardSize; r++) {
-            for (let c = 0; c < this.boardSize; c++) {
-                grid[r][c] /= sampleCount;
-            }
-        }
-        
-        for (let r = 0; r < this.boardSize; r++) {
-            for (let c = 0; c < this.boardSize; c++) {
-                const state = this.viewGrid[r][c];
-                if (state === CellState.HIT) grid[r][c] = 1;
-                else if (state === CellState.MISS || state === CellState.DESTROYED || state === CellState.SUNK) {
-                    grid[r][c] = 0;
-                }
-            }
-        }
-        
-        this._probabilityGrid = grid;
-        return grid;
-    }
-    
-    getEntropy() {
-        if (this._entropy !== null) return this._entropy;
-        
-        const probGrid = this.getProbabilityGrid();
-        let entropy = 0;
-        
-        for (let r = 0; r < this.boardSize; r++) {
-            for (let c = 0; c < this.boardSize; c++) {
-                const state = this.viewGrid[r][c];
-                if (state === CellState.UNKNOWN || state === CellState.SUSPECT) {
-                    const p = probGrid[r][c];
-                    if (p > MIN_PROB && p < 1 - MIN_PROB) {
-                        entropy -= p * Math.log2(p) + (1 - p) * Math.log2(1 - p);
-                    }
-                }
-            }
-        }
-        
-        this._entropy = entropy;
-        return entropy;
-    }
-    
-    getConditionalEntropy(action) {
-        const { weapon, r, c } = action;
-        const probGrid = this.getProbabilityGrid();
-        const currentEntropy = this.getEntropy();
-        
-        if (weapon === 'SONAR') {
-            const centerProb = (r >= 0 && r < this.boardSize && c >= 0 && c < this.boardSize) 
-                ? probGrid[r][c] : 0;
-            
-            let areaEntropy = 0;
-            for (let i = -1; i <= 1; i++) {
-                for (let j = -1; j <= 1; j++) {
-                    const nr = r + i, nc = c + j;
-                    if (nr >= 0 && nr < this.boardSize && nc >= 0 && nc < this.boardSize) {
-                        const state = this.viewGrid[nr][nc];
-                        if (state === CellState.UNKNOWN || state === CellState.SUSPECT) {
-                            const p = probGrid[nr][nc];
-                            if (p > MIN_PROB && p < 1 - MIN_PROB) {
-                                areaEntropy += -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
-                            }
-                        }
-                    }
-                }
-            }
-            
-            const centerEntropy = this._cellEntropy(centerProb);
-            const expectedEntropy = centerProb * (currentEntropy - centerEntropy) 
-                + (1 - centerProb) * (currentEntropy - areaEntropy);
-            
-            return Math.max(0, currentEntropy - Math.max(0, currentEntropy - expectedEntropy));
-        } else {
-            const cells = this._getWeaponCoverage(weapon, r, c);
-            let coveredEntropy = 0;
-            
-            for (const cell of cells) {
-                if (cell.r >= 0 && cell.r < this.boardSize && cell.c >= 0 && cell.c < this.boardSize) {
-                    const state = this.viewGrid[cell.r][cell.c];
-                    if (state === CellState.UNKNOWN || state === CellState.SUSPECT) {
-                        const p = probGrid[cell.r][cell.c];
-                        coveredEntropy += this._cellEntropy(p);
-                    }
-                }
-            }
-            
-            return Math.max(0, currentEntropy - coveredEntropy);
-        }
-    }
-    
-    _cellEntropy(p) {
-        if (p < MIN_PROB || p > 1 - MIN_PROB) return 0;
-        return -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
-    }
-    
-    _getWeaponCoverage(weapon, r, c) {
-        const instance = weaponInstances[weapon];
-        if (instance) return instance.previewArea({ r, c }).cells;
-        return [{ r, c }];
-    }
-}
 
 // ============================================================================
 // 便捷函数
