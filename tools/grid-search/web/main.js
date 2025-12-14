@@ -9,8 +9,118 @@ const progressText = document.getElementById('progress-text');
 const winTbody = document.getElementById('win-tbody');
 const eloTbody = document.getElementById('elo-tbody');
 const logArea = document.getElementById('log');
+const earlyStopContent = document.getElementById('early-stop-content');
 
 let polling = null;
+
+// 配置缓存键名
+const CACHE_KEY = 'grid-search-config';
+
+// 默认配置
+const DEFAULT_CONFIG = {
+  alphaMin: 0.5,
+  alphaMax: 0.9,
+  alphaStep: 0.1,
+  riskMin: 0.0,
+  riskMax: 1.0,
+  riskStep: 0.1,
+  gamesPerPair: 30,
+  workers: 16,
+  topN: 10
+};
+
+// 从缓存加载配置
+function loadConfigFromCache() {
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      const config = JSON.parse(cached);
+      // 合并缓存配置和默认配置（防止缓存中缺少新字段）
+      return { ...DEFAULT_CONFIG, ...config };
+    }
+  } catch (err) {
+    console.warn('加载缓存配置失败:', err);
+  }
+  return DEFAULT_CONFIG;
+}
+
+// 保存配置到缓存
+function saveConfigToCache(config) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(config));
+  } catch (err) {
+    console.warn('保存配置到缓存失败:', err);
+  }
+}
+
+// 应用配置到表单
+function applyConfigToForm(config) {
+  form.alphaMin.value = config.alphaMin;
+  form.alphaMax.value = config.alphaMax;
+  form.alphaStep.value = config.alphaStep;
+  form.riskMin.value = config.riskMin;
+  form.riskMax.value = config.riskMax;
+  form.riskStep.value = config.riskStep;
+  form.gamesPerPair.value = config.gamesPerPair;
+  form.workers.value = config.workers;
+  form.topN.value = config.topN;
+}
+
+// 从表单读取配置
+function getConfigFromForm() {
+  return {
+    alphaMin: parseFloat(form.alphaMin.value),
+    alphaMax: parseFloat(form.alphaMax.value),
+    alphaStep: parseFloat(form.alphaStep.value),
+    riskMin: parseFloat(form.riskMin.value),
+    riskMax: parseFloat(form.riskMax.value),
+    riskStep: parseFloat(form.riskStep.value),
+    gamesPerPair: parseInt(form.gamesPerPair.value),
+    workers: parseInt(form.workers.value),
+    topN: parseInt(form.topN.value) || 10
+  };
+}
+
+// 加载早停配置
+async function loadEarlyStopConfig() {
+  try {
+    const res = await fetch('/api/early-stop-config');
+    const config = await res.json();
+    
+    if (!config.enabled) {
+      earlyStopContent.innerHTML = '❗ <strong>未启用</strong> - 将执行完整网格搜索';
+      return;
+    }
+    
+    earlyStopContent.innerHTML = `
+      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.9em;">
+        <div>✅ <strong>已启用</strong></div>
+        <div>最少对局: <strong>${config.minGamesBeforeStop}</strong></div>
+        <div>探索期: <strong>${(config.explorationPhase * 100).toFixed(0)}%</strong></div>
+        <div>淘汰截止: <strong>${(config.eliminationPhase * 100).toFixed(0)}%</strong></div>
+        <div>ELO阈值: <strong>${config.eloThreshold}</strong></div>
+        <div>胜率下限: <strong>${(config.winRateAbsoluteFloor * 100).toFixed(0)}%</strong></div>
+        <div>最少存活: <strong>${config.minSurvivors}</strong> 个</div>
+        <div>单次淘汰限制: <strong>${(config.maxEliminatePerCheck * 100).toFixed(0)}%</strong></div>
+      </div>
+    `;
+  } catch (err) {
+    earlyStopContent.innerHTML = '加载失败: ' + err.message;
+  }
+}
+
+// 页面加载时读取配置
+loadEarlyStopConfig();
+
+// 页面加载时恢复缓存的配置
+const cachedConfig = loadConfigFromCache();
+applyConfigToForm(cachedConfig);
+
+// 监听表单输入变化，自动保存到缓存
+form.addEventListener('input', () => {
+  const config = getConfigFromForm();
+  saveConfigToCache(config);
+});
 
 form.onsubmit = async (e) => {
   e.preventDefault();
@@ -21,16 +131,10 @@ form.onsubmit = async (e) => {
   progressBar.style.width = '0%';
   progressText.textContent = '任务启动中...';
 
-  const config = {
-    alphaMin: parseFloat(form.alphaMin.value),
-    alphaMax: parseFloat(form.alphaMax.value),
-    alphaStep: parseFloat(form.alphaStep.value),
-    riskMin: parseFloat(form.riskMin.value),
-    riskMax: parseFloat(form.riskMax.value),
-    riskStep: parseFloat(form.riskStep.value),
-    gamesPerPair: parseInt(form.gamesPerPair.value),
-    workers: parseInt(form.workers.value)
-  };
+  // 从表单读取配置并保存
+  const config = getConfigFromForm();
+  saveConfigToCache(config);
+  
   fetch('/api/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -52,7 +156,10 @@ resumeBtn.onclick = async () => {
 };
 
 stopBtn.onclick = async () => {
-  if (polling) clearInterval(polling);
+  if (polling) {
+    clearInterval(polling);
+    polling = null;
+  }
   await fetch('/api/stop', { method: 'POST' });
   progressText.textContent = '已完全停止';
   pauseBtn.disabled = true;

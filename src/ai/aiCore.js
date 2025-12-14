@@ -688,7 +688,7 @@ export function enumerateAllActions(viewGrid, abilities) {
 export const DEFAULT_OPPONENT_SAMPLE_COUNT = 50;
 
 /** 向前推演步数 */
-export const DEFAULT_LOOKAHEAD_STEPS = 5;
+export const DEFAULT_LOOKAHEAD_STEPS = 3;
 
 /**
  * 获取武器覆盖范围

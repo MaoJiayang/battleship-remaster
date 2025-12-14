@@ -12,14 +12,23 @@ const workerId = workerData?.workerId ?? 0;
 parentPort.postMessage({ type: 'loading', workerId });
 
 // ⭐ 动态导入，这样可以准确测量加载时间
-const { SimulationEngine } = await import('../../src/ai/SimulationEngine.js');
-
-// 预热：运行一次模拟确保所有代码路径都已编译
-const warmupEngine = new SimulationEngine(
-    { alpha: 0.5, randomness: 0, riskAwareness: 0 },
-    { alpha: 0.5, randomness: 0, riskAwareness: 0 }
-);
-warmupEngine.run();
+let SimulationEngine;
+try {
+    const module = await import('../../src/ai/SimulationEngine.js');
+    SimulationEngine = module.SimulationEngine;
+    
+    // 移除预热步骤，避免初始化时的复杂逻辑导致 Worker 卡死
+    // Worker 会在处理第一个真实任务时自然完成所有代码路径的编译
+} catch (error) {
+    parentPort.postMessage({ 
+        type: 'error', 
+        workerId,
+        phase: 'import',
+        error: error.message,
+        stack: error.stack
+    });
+    process.exit(1);
+}
 
 /**
  * 执行一组对战任务

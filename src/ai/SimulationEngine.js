@@ -39,10 +39,10 @@ import {
 // ============================================================================
 
 /** 最大回合数限制（防止死循环） */
-const MAX_TURNS = 60;
+const MAX_TURNS = 120;
 
 /** 蒙特卡洛采样数量（模拟时使用较小值以提高速度） */
-const SAMPLE_COUNT = 50;
+const SAMPLE_COUNT = 100;
 
 // ============================================================================
 // 武器实例（用于获取攻击范围）
@@ -116,6 +116,9 @@ export class SimulationEngine {
             damageB: 0,  // B 造成的总伤害
             winner: null
         };
+        
+        // 历史记录（用于可视化回放）
+        this.history = [];
     }
     
     /**
@@ -178,6 +181,20 @@ export class SimulationEngine {
         return {
             winner: this.stats.winner,
             stats: { ...this.stats }
+        };
+    }
+    
+    /**
+     * 运行一场对战并返回详细结果（用于可视化）
+     * 
+     * @returns {Object} 详细结果 { winner, turns, history }
+     */
+    runGame() {
+        const result = this.run();
+        return {
+            winner: result.winner,
+            turns: result.stats.turns,
+            history: this.history
         };
     }
     
@@ -329,7 +346,7 @@ export class SimulationEngine {
         // 从并列最优中随机选择
         bestAction = candidates[Math.floor(Math.random() * candidates.length)];
         
-        // 8. 执行最优行动
+        // 8. 执行最优行动（传入side以记录历史）
         this._executeAction(bestAction, abilities, enemyGrid, enemyShips, viewGrid, damageGrid, side);
     }
     
@@ -355,9 +372,35 @@ export class SimulationEngine {
     _executeAction(action, abilities, enemyGrid, enemyShips, viewGrid, damageGrid, side) {
         const { weapon, r, c } = action;
         
+        // 初始化历史记录
+        const historyEntry = {
+            attacker: side,
+            weapon,
+            target: { row: r, col: c },
+            result: { hits: 0, damage: 0, detected: false },
+            affectedCells: [],
+            sunkShips: []
+        };
+        
         if (weapon === 'SONAR') {
             // 声纳扫描
-            this._executeSonar(r, c, enemyGrid, viewGrid);
+            const sonarResult = this._executeSonar(r, c, enemyGrid, viewGrid);
+            historyEntry.result.detected = sonarResult.detected;
+            
+            // 记录受影响的格子
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                        historyEntry.affectedCells.push({
+                            row: nr,
+                            col: nc,
+                            state: viewGrid[nr][nc]
+                        });
+                    }
+                }
+            }
         } else {
             // 攻击类武器
             const cells = this._getWeaponCoverage(weapon, r, c);
@@ -372,11 +415,21 @@ export class SimulationEngine {
                         viewGrid[cell.r][cell.c] = result.cellState;
                     }
                     
+                    // 记录受影响的格子
+                    historyEntry.affectedCells.push({
+                        row: cell.r,
+                        col: cell.c,
+                        state: result.cellState
+                    });
+                    
                     // 更新伤害记录
                     damageGrid[cell.r][cell.c] += damage;
                     
                     // 更新统计
                     if (result.hit) {
+                        historyEntry.result.hits++;
+                        historyEntry.result.damage += result.damage;
+                        
                         if (side === 'A') {
                             this.stats.hitsA++;
                             this.stats.damageA += result.damage;
@@ -389,10 +442,17 @@ export class SimulationEngine {
                     // 标记沉没船只
                     if (result.sunk) {
                         this._markSunkShip(result.ship, viewGrid);
+                        historyEntry.sunkShips.push({
+                            code: result.ship.code,
+                            name: result.ship.name
+                        });
                     }
                 }
             }
         }
+        
+        // 添加到历史记录
+        this.history.push(historyEntry);
     }
     
     /**
@@ -468,6 +528,8 @@ export class SimulationEngine {
                 }
             }
         }
+        
+        return { detected };
     }
     
     /**

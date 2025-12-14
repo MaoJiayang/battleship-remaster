@@ -8,6 +8,13 @@
 <body>
   <div class="container">
     <h1>海战棋AI参数网格搜索可视化</h1>
+    
+    <!-- 早停配置显示 -->
+    <div id="early-stop-info" class="info-box">
+      <h3>🔍 早停机制配置</h3>
+      <div id="early-stop-content">加载中...</div>
+    </div>
+    
     <form id="config-form">
       <div class="form-row">
         <label>Alpha范围：</label>
@@ -39,6 +46,7 @@
         <button type="button" id="resume-btn" disabled>继续</button>
         <button type="button" id="stop-btn">完全停止</button>
         <button type="button" id="download-btn">下载结果</button>
+        <button type="button" id="visualizer-btn" onclick="window.open('/visualizer', '_blank')" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">🎮 AI对战可视化</button>
       </div>
     </form>
     <div id="progress-area">

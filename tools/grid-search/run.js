@@ -46,6 +46,26 @@ const ELO_SETTINGS = {
 };
 
 const DISPLAY_TOP_N = 10;
+
+// 早停机制配置
+const EARLY_STOP_CONFIG = {
+    enabled: true,                  // 是否启用早停
+    minGamesBeforeStop: 30,         // 淘汰前最少对局数
+    checkIntervalPercent: 0.1,      // 检查频率（多少进度检查一次）
+    
+    // 阶段控制
+    explorationPhase: 0.3,          // 探索期比例（前多少不淘汰）
+    eliminationPhase: 0.9,          // 淘汰截止比例（后多少不再淘汰）
+    
+    // 淘汰阈值
+    eloThreshold: -20,              // ELO 低于基准多少时淘汰
+    confidenceLevel: 0.95,          // 置信水平（95%）
+    winRateAbsoluteFloor: 0.001,     // 胜率绝对下限（低于此值直接淘汰）
+    
+    // 安全措施
+    minSurvivors: 10,                // 至少保留 N 个配置
+    maxEliminatePerCheck: 0.618      // 每次检查最多淘汰 61.8%
+};
 // Fisher-Yates 洗牌，随机化任务顺序
 function shuffleInPlace(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -213,6 +233,15 @@ class ParallelGridSearch {
         this.startTime = null;
         this.readyWorkers = 0;
         this.status = 'idle';          // idle/running/done/error
+        
+        // 早停机制状态
+        this.eliminatedConfigs = new Set();  // 已淘汰的配置
+        this.lastCheckProgress = 0;           // 上次检查时的进度
+        this.earlyStopStats = {               // 早停统计
+            totalEliminated: 0,
+            tasksSaved: 0,
+            checksPerformed: 0
+        };
     }
     
     /**
@@ -313,23 +342,33 @@ class ParallelGridSearch {
         const workerPath = join(__dirname, 'worker.js');
         
         return new Promise((resolve, reject) => {
+            let initErrors = [];
+            
             for (let i = 0; i < workerCount; i++) {
-                const worker = new Worker(workerPath, {
-                    workerData: { workerId: i }
-                });
-                
-                worker.on('message', (msg) => this.handleWorkerMessage(worker, msg));
-                worker.on('error', (err) => {
-                    console.error(`Worker ${i} 错误:`, err);
-                });
-                worker.on('exit', (code) => {
-                    // terminate() 会导致 code=1，这是正常的
-                    if (code !== 0 && code !== 1) {
-                        console.error(`Worker ${i} 异常退出，代码: ${code}`);
-                    }
-                });
-                
-                this.workers.push(worker);
+                try {
+                    const worker = new Worker(workerPath, {
+                        workerData: { workerId: i }
+                    });
+                    
+                    worker.on('message', (msg) => this.handleWorkerMessage(worker, msg));
+                    worker.on('error', (err) => {
+                        console.error(`\n❌ Worker ${i} 错误:`, err.message);
+                        initErrors.push(`Worker ${i}: ${err.message}`);
+                    });
+                    worker.on('exit', (code) => {
+                        // terminate() 会导致 code=1，这是正常的
+                        if (code !== 0 && code !== 1 && !this.terminatingWorkers) {
+                            const msg = `Worker ${i} 异常退出，代码: ${code}`;
+                            console.error(`\n❌ ${msg}`);
+                            initErrors.push(msg);
+                        }
+                    });
+                    
+                    this.workers.push(worker);
+                } catch (err) {
+                    console.error(`\n❌ 创建 Worker ${i} 失败:`, err.message);
+                    initErrors.push(`创建 Worker ${i}: ${err.message}`);
+                }
             }
             
             // 等待所有 Worker 就绪
@@ -340,15 +379,19 @@ class ParallelGridSearch {
                 }
             }, 50);
             
-            // 超时
+            // 超时（增加到 30 秒，允许更长的模块加载时间）
             setTimeout(() => {
                 clearInterval(checkReady);
                 if (this.readyWorkers >= workerCount) {
                     resolve();
                 } else {
-                    reject(new Error('Worker 初始化超时'));
+                    const msg = `Worker 初始化超时（${this.readyWorkers}/${workerCount} 就绪）\n` +
+                                `可能原因：\n` +
+                                `1. Worker 数量过多（当前${workerCount}），尝试减少 --workers 参数\n` +
+                                `2. 模块导入失败，检查是否有语法错误或循环依赖`;
+                    reject(new Error(msg));
                 }
-            }, 10000);
+            }, 30000);
         });
     }
     
@@ -371,10 +414,16 @@ class ParallelGridSearch {
         }
         
         if (msg.type === 'error') {
-            console.error(`\n任务 ${msg.taskId} 执行错误:`, msg.error);
-            this.completedTasks++;
-            this.pendingTasks--;
-            this.tryAssignTask(worker);
+            // 区分初始化错误和任务执行错误
+            if (msg.phase) {
+                console.error(`\n❌ Worker ${msg.workerId} 初始化失败 (${msg.phase}):`, msg.error);
+                console.error(msg.stack);
+            } else {
+                console.error(`\n❌ 任务 ${msg.taskId} 执行错误:`, msg.error);
+                this.completedTasks++;
+                this.pendingTasks--;
+                this.tryAssignTask(worker);
+            }
             return;
         }
         
@@ -384,6 +433,125 @@ class ParallelGridSearch {
             this.pendingTasks--;
             this.tryAssignTask(worker);
         }
+    }
+    
+    /**
+     * 早停检查：评估并淘汰表现不佳的配置
+     */
+    checkEarlyStop() {
+        if (!EARLY_STOP_CONFIG.enabled) return;
+        
+        const progress = this.totalTasks > 0 ? this.completedTasks / this.totalTasks : 0;
+        
+        // 检查是否到达检查点
+        if (progress < this.lastCheckProgress + EARLY_STOP_CONFIG.checkIntervalPercent) {
+            return;  // 未到检查点
+        }
+        
+        // 探索期或淘汰期结束后不再淘汰
+        if (progress < EARLY_STOP_CONFIG.explorationPhase || progress > EARLY_STOP_CONFIG.eliminationPhase) {
+            this.lastCheckProgress = progress;
+            return;
+        }
+        
+        this.earlyStopStats.checksPerformed++;
+        this.lastCheckProgress = progress;
+        
+        // 收集所有存活配置的统计信息
+        const aliveConfigs = [];
+        for (const [key, stats] of this.results.entries()) {
+            if (this.eliminatedConfigs.has(key)) continue;
+            if (stats.games < EARLY_STOP_CONFIG.minGamesBeforeStop) continue;
+            
+            const elo = this.eloRatings.get(key) ?? ELO_SETTINGS.baseRating;
+            const winRate = stats.games > 0 ? stats.wins / stats.games : 0;
+            
+            aliveConfigs.push({ key, stats, elo, winRate });
+        }
+        
+        if (aliveConfigs.length <= EARLY_STOP_CONFIG.minSurvivors) {
+            return;  // 已达最少存活数，不再淘汰
+        }
+        
+        // 计算基准 ELO（中位数）
+        const sortedByElo = [...aliveConfigs].sort((a, b) => b.elo - a.elo);
+        const medianElo = sortedByElo[Math.floor(sortedByElo.length / 2)]?.elo ?? ELO_SETTINGS.baseRating;
+        
+        // 识别待淘汰配置
+        const candidates = [];
+        for (const config of aliveConfigs) {
+            let shouldEliminate = false;
+            let reason = '';
+            
+            // 条件1: ELO 远低于中位数
+            if (config.elo < medianElo + EARLY_STOP_CONFIG.eloThreshold) {
+                shouldEliminate = true;
+                reason = `ELO低于基准 (${config.elo.toFixed(1)} < ${medianElo.toFixed(1)})`;
+            }
+            
+            // 条件2: 胜率低于绝对下限
+            if (config.winRate < EARLY_STOP_CONFIG.winRateAbsoluteFloor) {
+                shouldEliminate = true;
+                reason = `胜率过低 (${(config.winRate * 100).toFixed(1)}% < ${(EARLY_STOP_CONFIG.winRateAbsoluteFloor * 100).toFixed(1)}%)`;
+            }
+            
+            // 条件3: 置信区间检验（Wilson Score）
+            if (config.stats.games >= 20) {
+                const p = config.winRate;
+                const n = config.stats.games;
+                const z = 1.96;  // 95% 置信度
+                const upperBound = (p + z*z/(2*n) + z * Math.sqrt((p*(1-p) + z*z/(4*n))/n)) / (1 + z*z/n);
+                const baselineWinRate = 0.5;  // 循环赛中期望胜率
+                
+                if (upperBound < baselineWinRate - 0.08) {  // 置信上界远低于 50%
+                    shouldEliminate = true;
+                    reason = `置信上界过低 (${(upperBound * 100).toFixed(1)}%)`;
+                }
+            }
+            
+            if (shouldEliminate) {
+                candidates.push({ ...config, reason });
+            }
+        }
+        
+        // 限制单次淘汰数量
+        const maxEliminate = Math.floor(aliveConfigs.length * EARLY_STOP_CONFIG.maxEliminatePerCheck);
+        const toEliminate = candidates
+            .sort((a, b) => a.elo - b.elo)  // 优先淘汰 ELO 最低的
+            .slice(0, maxEliminate)
+            .filter(() => aliveConfigs.length - this.eliminatedConfigs.size > EARLY_STOP_CONFIG.minSurvivors);
+        
+        // 执行淘汰
+        for (const config of toEliminate) {
+            this.eliminatedConfigs.add(config.key);
+            this.earlyStopStats.totalEliminated++;
+            
+            if (!this.silent) {
+                console.log(`\n⛔ 淘汰配置: ${config.key} | ${config.reason}`);
+            }
+        }
+        
+        // 统计节省的任务数
+        if (toEliminate.length > 0) {
+            this.calculateTasksSaved();
+        }
+    }
+    
+    /**
+     * 计算早停节省的任务数
+     */
+    calculateTasksSaved() {
+        let saved = 0;
+        const eliminatedSet = this.eliminatedConfigs;
+        
+        // 检查任务队列中有多少涉及已淘汰配置的任务
+        for (const task of this.taskQueue) {
+            if (eliminatedSet.has(task.keyA) || eliminatedSet.has(task.keyB)) {
+                saved++;
+            }
+        }
+        
+        this.earlyStopStats.tasksSaved = saved;
     }
     
     /**
@@ -416,6 +584,9 @@ class ParallelGridSearch {
 
         // 更新 Elo 评分
         this.updateEloRatings({ keyA, keyB, winsA, winsB, draws, totalGames });
+        
+        // 检查早停条件
+        this.checkEarlyStop();
     }
 
     /**
@@ -441,11 +612,26 @@ class ParallelGridSearch {
      * 尝试分配任务给 Worker
      */
     tryAssignTask(worker) {
-        if (this.taskQueue.length > 0) {
-            const task = this.taskQueue.shift();
+        // 跳过涉及已淘汰配置的任务
+        while (this.taskQueue.length > 0) {
+            const task = this.taskQueue[0];
+            
+            // 检查任务是否涉及已淘汰的配置
+            if (this.eliminatedConfigs.has(task.keyA) || this.eliminatedConfigs.has(task.keyB)) {
+                this.taskQueue.shift();  // 丢弃该任务
+                this.completedTasks++;    // 计入已完成（跳过）
+                continue;
+            }
+            
+            // 分配有效任务
+            this.taskQueue.shift();
             worker.postMessage(task);
             this.pendingTasks++;
-        } else if (this.pendingTasks === 0 && this.onComplete) {
+            return;
+        }
+        
+        // 队列为空且无待处理任务时完成
+        if (this.pendingTasks === 0 && this.onComplete) {
             this.onComplete();
         }
     }
@@ -458,9 +644,17 @@ class ParallelGridSearch {
         const elapsed = (Date.now() - this.startTime) / 1000;
         const speed = elapsed > 0 ? this.completedTasks / elapsed : 0;
         const eta = speed > 0 ? (this.totalTasks - this.completedTasks) / speed : 0;
-        const msg = this.completedTasks === 0
+        
+        // 构建进度消息，包含早停信息
+        let msg = this.completedTasks === 0
             ? `⏳ 进度: 0/${this.totalTasks} (0%) | 已用: ${elapsed.toFixed(1)}s | 任务执行中...`
             : `⏳ 进度: ${this.completedTasks}/${this.totalTasks} (${percent}%) | 已用: ${elapsed.toFixed(1)}s | 预计剩余: ${eta.toFixed(0)}s | 速度: ${speed.toFixed(1)}任务/s`;
+        
+        if (EARLY_STOP_CONFIG.enabled && this.earlyStopStats.totalEliminated > 0) {
+            const totalConfigs = this.results.size;
+            const aliveConfigs = totalConfigs - this.eliminatedConfigs.size;
+            msg += ` | 🔍 存活: ${aliveConfigs}/${totalConfigs} | 已省: ${this.earlyStopStats.tasksSaved}任务`;
+        }
 
         // 静默模式：只输出简化进度，不清屏不输出榜单
         if (this.silent) {
@@ -541,6 +735,14 @@ class ParallelGridSearch {
         console.log(`🎮 每对战场次: ${this.config.gamesPerPair}`);
         console.log(`📈 总对战场次: ${totalGames}（每场为一个并行任务）`);
         console.log(`🖥️  Worker 数量: ${this.config.workers}`);
+        
+        if (EARLY_STOP_CONFIG.enabled) {
+            console.log(`🔍 早停机制: 已启用`);
+            console.log(`   └─ 探索期: ${(EARLY_STOP_CONFIG.explorationPhase * 100).toFixed(0)}% | 淘汰期: ${(EARLY_STOP_CONFIG.explorationPhase * 100).toFixed(0)}-${(EARLY_STOP_CONFIG.eliminationPhase * 100).toFixed(0)}% | 最少对局: ${EARLY_STOP_CONFIG.minGamesBeforeStop}`);
+        } else {
+            console.log(`🔍 早停机制: 未启用`);
+        }
+        
         console.log('');
         console.log('───────────────────────────────────────────────────────────────────');
         
@@ -661,6 +863,24 @@ class ParallelGridSearch {
         console.log(`✅ 搜索完成！总耗时 ${elapsed} 秒`);
         console.log('═══════════════════════════════════════════════════════════════════');
         console.log('');
+        
+        // 显示早停统计
+        if (EARLY_STOP_CONFIG.enabled && this.earlyStopStats.totalEliminated > 0) {
+            const totalConfigs = this.results.size;
+            const aliveConfigs = totalConfigs - this.eliminatedConfigs.size;
+            const savedPercent = (this.earlyStopStats.tasksSaved / this.totalTasks * 100).toFixed(1);
+            
+            console.log('🔍 早停机制统计');
+            console.log('───────────────────────────────────────────────────────────────────');
+            console.log(`   总配置数: ${totalConfigs}`);
+            console.log(`   淘汰配置: ${this.earlyStopStats.totalEliminated}`);
+            console.log(`   存活配置: ${aliveConfigs}`);
+            console.log(`   检查次数: ${this.earlyStopStats.checksPerformed}`);
+            console.log(`   节省任务: ${this.earlyStopStats.tasksSaved} (${savedPercent}%)`);
+            console.log('───────────────────────────────────────────────────────────────────');
+            console.log('');
+        }
+        
         console.log('📊 循环赛结果排名（按综合胜率）');
         console.log('');
         console.log('排名 │ Alpha │ Risk │  胜率  │   胜   │   负   │  平  │ 平均回合');
@@ -755,6 +975,7 @@ class ParallelGridSearch {
      */
     terminate() {
         this.status = 'terminated';
+        this.terminatingWorkers = true;  // 标志避免 exit 事件误报错误
         if (this.progressInterval) {
             clearInterval(this.progressInterval);
             this.progressInterval = null;
@@ -770,7 +991,7 @@ class ParallelGridSearch {
 // 导出类供 Web 服务使用
 // ============================================================================
 
-export { ParallelGridSearch, PRESETS };
+export { ParallelGridSearch, PRESETS, EARLY_STOP_CONFIG };
 
 // ============================================================================
 // 主入口
