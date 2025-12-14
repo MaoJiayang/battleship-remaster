@@ -493,10 +493,14 @@ export class SimulationEngine {
     
     /**
      * 执行声纳扫描
+     * 逻辑：
+     * - 有信号：中心点揭示真实状态（HIT/MISS），周围8格标记SUSPECT
+     * - 无信号：全部9格标记MISS
      */
     _executeSonar(r, c, enemyGrid, viewGrid) {
         let detected = false;
         
+        // 扫描3x3区域检测是否有未暴露的船只
         for (let dr = -1; dr <= 1; dr++) {
             for (let dc = -1; dc <= 1; dc++) {
                 const nr = r + dr;
@@ -512,10 +516,33 @@ export class SimulationEngine {
             if (detected) break;
         }
         
-        if (detected && viewGrid[r][c] === CellState.UNKNOWN) {
-            viewGrid[r][c] = CellState.SUSPECT;
-        } else if (!detected) {
-            // 标记周围区域为安全
+        if (detected) {
+            // 有信号：中心点揭示真实状态，周围8格标记疑似
+            // 中心点处理
+            if (viewGrid[r][c] === CellState.UNKNOWN) {
+                if (enemyGrid[r][c].shipId !== -1) {
+                    viewGrid[r][c] = CellState.HIT;
+                } else {
+                    viewGrid[r][c] = CellState.MISS;
+                }
+            }
+            
+            // 周围8格标记疑似
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    if (dr === 0 && dc === 0) continue; // 跳过中心点
+                    
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                        if (viewGrid[nr][nc] === CellState.UNKNOWN) {
+                            viewGrid[nr][nc] = CellState.SUSPECT;
+                        }
+                    }
+                }
+            }
+        } else {
+            // 无信号：全部标记为MISS
             for (let dr = -1; dr <= 1; dr++) {
                 for (let dc = -1; dc <= 1; dc++) {
                     const nr = r + dr;
