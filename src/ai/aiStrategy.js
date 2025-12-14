@@ -84,6 +84,16 @@ const SAMPLE_COUNT = 700;
  */
 let damageDealtGrid = null;
 
+/** 
+ * 声呐历史记录：已使用的声呐中心点集合
+ * TODO: 将来应使用真正的收益式方法解决此问题，而非硬约束
+ * 理想方案应考虑：
+ * 1. 声呐重复使用的信息增益会大幅降低（已知周围8格状态）
+ * 2. 通过修改 _getSonarConditionalEntropy 计算已探测区域的边际效用
+ * 3. 让评估函数自然避免低效行为，而非直接禁止
+ */
+let sonarHistory = null;
+
 /**
  * 创建空的伤害记录网格
  */
@@ -99,6 +109,7 @@ function createEmptyDamageGrid() {
  */
 export function resetAIState() {
     damageDealtGrid = createEmptyDamageGrid();
+    sonarHistory = new Set();
 }
 
 /**
@@ -173,8 +184,20 @@ export function makeAIDecision(context) {
     // 4. 构建置信状态（蒙特卡洛采样）
     const beliefState = new BeliefState(aliveTargets, viewGrid);
     
-    // 5. 枚举所有可用行动
-    const actions = enumerateAllActions(viewGrid, abilities);
+    // 5. 枚举所有可用行动并过滤已使用的声呐点
+    let actions = enumerateAllActions(viewGrid, abilities);
+    
+    // 硬约束：移除已使用过的声呐中心点
+    // TODO: 将来应使用真正的收益式方法，让评估函数自然避免低效声呐
+    if (sonarHistory && sonarHistory.size > 0) {
+        actions = actions.filter(action => {
+            if (action.weapon === 'SONAR') {
+                const key = `${action.r},${action.c}`;
+                return !sonarHistory.has(key);
+            }
+            return true;
+        });
+    }
     
     if (actions.length === 0) {
         return findFallbackTarget(viewGrid);
@@ -233,6 +256,12 @@ export function makeAIDecision(context) {
     
     // 记录即将造成的伤害（假设决策一定会被执行）
     recordDamageDealt(bestAction, abilities);
+    
+    // 记录声呐使用
+    if (bestAction.weapon === 'SONAR' && sonarHistory) {
+        const key = `${bestAction.r},${bestAction.c}`;
+        sonarHistory.add(key);
+    }
     
     return bestAction;
 }

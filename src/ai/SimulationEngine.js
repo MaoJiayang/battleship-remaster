@@ -107,6 +107,11 @@ export class SimulationEngine {
         this.damageGridA = this._createDamageGrid();  // A 对 B 造成的伤害
         this.damageGridB = this._createDamageGrid();  // B 对 A 造成的伤害
         
+        // 声纳历史（每方独立）
+        // TODO: 将来应使用真正的收益式方法解决此问题，而非硬约束
+        this.sonarHistoryA = new Set();
+        this.sonarHistoryB = new Set();
+        
         // 对战统计
         this.stats = {
             turns: 0,
@@ -290,8 +295,22 @@ export class SimulationEngine {
         // 4. 构建置信状态（使用共享的 BeliefState 类）
         const beliefState = new BeliefState(aliveTargets, viewGrid, SAMPLE_COUNT);
         
-        // 5. 枚举所有行动（使用共享函数）
-        const actions = enumerateAllActions(viewGrid, abilities);
+        // 5. 枚举所有行动（使用共享函数）并过滤已使用的声呐点
+        let actions = enumerateAllActions(viewGrid, abilities);
+        
+        // 硬约束：移除已使用过的声呐中心点
+        // TODO: 将来应使用真正的收益式方法，让评估函数自然避免低效声呐
+        const sonarHistory = side === 'A' ? this.sonarHistoryA : this.sonarHistoryB;
+        if (sonarHistory.size > 0) {
+            actions = actions.filter(action => {
+                if (action.weapon === 'SONAR') {
+                    const key = `${action.r},${action.c}`;
+                    return !sonarHistory.has(key);
+                }
+                return true;
+            });
+        }
+        
         if (actions.length === 0) {
             const fallback = findFallbackTarget(viewGrid);
             this._executeAction(fallback, abilities, enemyGrid, enemyShips, viewGrid, damageGrid, side);
@@ -346,7 +365,13 @@ export class SimulationEngine {
         // 从并列最优中随机选择
         bestAction = candidates[Math.floor(Math.random() * candidates.length)];
         
-        // 8. 执行最优行动（传入side以记录历史）
+        // 8. 记录声呐使用
+        if (bestAction.weapon === 'SONAR') {
+            const key = `${bestAction.r},${bestAction.c}`;
+            sonarHistory.add(key);
+        }
+        
+        // 9. 执行最优行动（传入side以记录历史）
         this._executeAction(bestAction, abilities, enemyGrid, enemyShips, viewGrid, damageGrid, side);
     }
     
