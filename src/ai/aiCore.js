@@ -234,7 +234,7 @@ export class BeliefState {
                     
                     if (valid) {
                         // 权重：命中点越多权重越高，疑似点也有加成
-                        const weight = 1 + hitCount * 10 + suspectCount * 6;
+                        const weight = 1 + hitCount * 10 + suspectCount * 1.25;
                         validPlacements.push({ cells, weight, shipId: ship.id });
                     }
                 }
@@ -405,7 +405,7 @@ export class BeliefState {
                 const nc = c + j;
                 if (nr >= 0 && nr < this.boardSize && nc >= 0 && nc < this.boardSize) {
                     const state = this.viewGrid[nr][nc];
-                    if (state === CellState.UNKNOWN || state === CellState.SUSPECT) {
+                    if (state === CellState.UNKNOWN){// || state === CellState.SUSPECT) {
                         const p = probGrid[nr][nc];
                         if (p > MIN_PROB && p < 1 - MIN_PROB) {
                             areaEntropy += -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
