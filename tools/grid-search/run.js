@@ -42,7 +42,8 @@ const __dirname = dirname(__filename);
 // Elo 评分参数
 const ELO_SETTINGS = {
     baseRating: 150,
-    kFactor: 24
+    kFactor: 24,
+    drawScore: 0.5          // 平局得分（0.5=传统ELO，0=平局不加分）
 };
 
 const DISPLAY_TOP_N = 10;
@@ -597,8 +598,9 @@ class ParallelGridSearch {
         const ratingB = this.eloRatings.get(keyB) ?? ELO_SETTINGS.baseRating;
 
         const expectedA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
-        const scoreA = winsA + 0.5 * draws;
-        const scoreB = winsB + 0.5 * draws;
+        // 使用可配置的平局得分（0.5=传统ELO，0=平局不加分）
+        const scoreA = winsA + ELO_SETTINGS.drawScore * draws;
+        const scoreB = winsB + ELO_SETTINGS.drawScore * draws;
         const k = ELO_SETTINGS.kFactor;
 
         const newRatingA = ratingA + k * (scoreA - totalGames * expectedA);
