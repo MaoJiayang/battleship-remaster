@@ -1827,12 +1827,12 @@ import { getShipSvg } from './shipArt.js';
                 const svg = wrapper.querySelector('svg');
                 if (svg) {
                     svg.removeAttribute('height');
-                    svg.style.width = '100px';
+                    svg.style.width = '100%';
                     svg.style.height = 'auto';
                 }
             }
-            previewShip.style.width = '108px';
-            previewShip.style.height = '32px';
+            previewShip.style.width = '100%';
+            previewShip.style.height = '100%';
 
             divImg.appendChild(previewShip);
             tdImg.appendChild(divImg);

@@ -566,18 +566,29 @@
         }
         .close-btn:hover { color: #fc8181; }
         
-        .rules-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 14px; }
-        .rules-table th, .rules-table td { border: 1px solid #4a5568; padding: 10px; text-align: left; vertical-align: middle; }
-        .rules-table th { background-color: rgba(0,0,0,0.3); color: var(--accent); font-weight: 600; }
+        .rules-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 14px; table-layout: fixed; }
+        .rules-table th, .rules-table td { border: 0; border-bottom: 1px solid #4a5568; padding: 8px 6px; text-align: left; vertical-align: middle; overflow-wrap: break-word; }
+        .rules-table th { background-color: rgba(0,0,0,0.3); color: var(--accent); font-weight: 600; border-top: 1px solid #4a5568; }
         .rules-table tr:nth-child(even) { background-color: rgba(255,255,255,0.02); }
+        .rules-ship-table th:nth-child(1) { width: 22%; }
+        .rules-ship-table th:nth-child(2) { width: 10%; }
+        .rules-ship-table th:nth-child(3) { width: 17%; }
+        .rules-ship-table th:nth-child(4) { width: 10%; }
+        .rules-ship-table th:nth-child(5) { width: 14%; }
+        .rules-ship-table th:nth-child(6) { width: 27%; }
+        .rules-weapon-table th:nth-child(1) { width: 19%; }
+        .rules-weapon-table th:nth-child(2) { width: 25%; }
+        .rules-weapon-table th:nth-child(3) { width: 12%; }
+        .rules-weapon-table th:nth-child(4) { width: 44%; }
         .ship-preview {
             width: 108px;
+            max-width: 100%;
             height: 32px;
             margin: 0 auto;
             display: flex;
             align-items: center;
             justify-content: center;
-            overflow: visible;
+            overflow: hidden;
         }
         .ship-preview .ship-inner {
             pointer-events: none;
@@ -1405,34 +1416,6 @@
     font-size: 14px;
 }
 
-/* ---------- 阵营选择 ---------- */
-.faction-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
-}
-
-.fs-label {
-    font-size: 12px;
-    color: #a0aec0;
-    white-space: nowrap;
-}
-
-.faction-select {
-    flex: 1;
-    background: #2d3748;
-    color: var(--text);
-    border: 1px solid #4a5568;
-    border-radius: 4px;
-    padding: 6px 8px;
-    font-size: 13px;
-    cursor: pointer;
-    outline: none;
-}
-
-.faction-select:focus { border-color: #63b3ed; }
-
 /* =========================================================
    v3 视觉语言：二战海军作战室（钢 / 黄铜 / 档案纸）
    ========================================================= */
@@ -1639,20 +1622,78 @@ header .icon-btn:hover {
 }
 
 .control-group { border-top: 1px solid rgba(160, 190, 200, 0.16); padding-top: 10px; }
-.fs-label { font-size: 10px; letter-spacing: 0.12em; color: #8fa2a8; }
+
+/* ---------- 阵营 / 难度：同一套控制组标签与钢制选择框 ---------- */
+.faction-label, .diff-label {
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    color: #83969c;
+    margin-bottom: 0;
+    text-transform: uppercase;
+}
+.faction-label span, .diff-label span { color: #5e6f75; }
+
+.faction-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+.faction-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+
+.fs-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    color: #8fa2a8;
+    white-space: nowrap;
+}
+.fs-label::before {
+    content: '';
+    flex: 0 0 auto;
+    width: 5px;
+    height: 5px;
+    background: var(--signal-green);
+    border: 1px solid #0a1114;
+    box-shadow: 0 0 5px rgba(121, 192, 143, 0.45);
+}
+.faction-cell:last-child .fs-label::before {
+    border-radius: 50%;
+    background: var(--signal-red);
+    box-shadow: 0 0 5px rgba(208, 104, 83, 0.45);
+}
+
 .faction-select {
-    background: linear-gradient(180deg, #1e2a30, #131b20);
+    width: 100%;
+    min-width: 0;
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: #131b20;
+    background-image:
+        url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0h8L4 5z' fill='%23c2a24b' fill-opacity='.72'/%3E%3C/svg%3E"),
+        linear-gradient(180deg, #1e2a30, #131b20);
+    background-repeat: no-repeat, no-repeat;
+    background-position: right 8px center, center;
+    background-size: 8px 5px, 100% 100%;
     border: 1px solid #05080a;
     border-radius: 1px;
     color: #cfd8da;
     font: 11px var(--ui-font);
     letter-spacing: 0.06em;
-    padding: 6px 7px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    padding: 7px 24px 7px 8px;
+    cursor: pointer;
+    outline: none;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 0 rgba(0, 0, 0, 0.3);
+    transition: border-color 0.15s, color 0.15s;
 }
-.faction-select:focus { border-color: var(--brass); outline: none; box-shadow: 0 0 0 1px rgba(194, 162, 75, 0.3); }
-.diff-label { font-size: 9px; letter-spacing: 0.18em; color: #83969c; margin-bottom: 4px; text-transform: uppercase; }
-.diff-label span { color: #5e6f75; }
+.faction-select:hover { border-color: #2a3940; color: #e0e7e8; }
+.faction-select:focus-visible {
+    border-color: var(--brass);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 0 0 1px rgba(194, 162, 75, 0.28);
+}
+.faction-select option { background: #131b20; color: #cfd8da; }
 
 /* ---------- 按钮：冲压金属 ---------- */
 button { font-family: var(--ui-font); letter-spacing: 0.08em; border-radius: 2px; }
@@ -2029,7 +2070,21 @@ button { font-family: var(--ui-font); letter-spacing: 0.08em; border-radius: 2px
     box-shadow: 0 30px 70px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.07);
     color: #cfd7d9;
     padding: 22px;
+    width: min(680px, calc(100% - 24px));
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #5b6b72 rgba(0, 0, 0, 0.2);
 }
+.modal-content::-webkit-scrollbar { width: 8px; height: 8px; }
+.modal-content::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.18); }
+.modal-content::-webkit-scrollbar-thumb {
+    background: #4b6069;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+.modal-content::-webkit-scrollbar-thumb:hover { background: #637780; background-clip: content-box; }
+.modal-content::-webkit-scrollbar-corner { background: transparent; }
+.modal-content::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 .modal-content::before {
     content: '';
     position: absolute;
@@ -2049,6 +2104,14 @@ button { font-family: var(--ui-font); letter-spacing: 0.08em; border-radius: 2px
     box-shadow: 0 30px 70px rgba(0, 0, 0, 0.75), inset 0 0 70px rgba(120, 100, 60, 0.12);
 }
 .dossier::before { inset: 8px; border-color: rgba(70, 62, 42, 0.28); }
+.dossier { scrollbar-color: rgba(90, 80, 50, 0.55) rgba(90, 80, 50, 0.08); }
+.dossier::-webkit-scrollbar-track { background: rgba(90, 80, 50, 0.08); }
+.dossier::-webkit-scrollbar-thumb {
+    background: rgba(90, 80, 50, 0.5);
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+.dossier::-webkit-scrollbar-thumb:hover { background: rgba(70, 62, 42, 0.7); background-clip: content-box; }
 .doc-head {
     display: flex;
     align-items: center;
@@ -2131,7 +2194,7 @@ kbd {
 }
 .game-over-stats .gos-row b { color: #3f3c2e; font-size: 13px; }
 .doc-actions { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
-.dossier .rules-table th { white-space: nowrap; }
+.dossier .rules-table th { font-size: 10px; letter-spacing: 0.04em; }
 .dossier .rules-table td:first-child { text-align: center; }
 
 .menu-modal-content { max-width: 560px; padding: 20px 22px; }
@@ -2177,10 +2240,20 @@ kbd {
     #btn-sound-label { display: none; }
     .layout { height: auto; }
     #help-btn { position: static; height: auto; border-radius: 1px; }
+
+    .fs-label { font-size: 10px; }
+    .faction-select { padding: 9px 26px 9px 10px; font-size: 12px; }
     .bottom-controls { background: linear-gradient(180deg, #141d22, #0a1014); }
     .weapon-bar { background: rgba(14, 21, 25, 0.96) !important; border: 1px solid rgba(160, 190, 200, 0.16); border-radius: 1px; }
     .dock-panel { border-bottom: 1px solid #05080a; }
     .log-panel { border-top: 1px solid #05080a; }
+
+    .dossier { padding: 18px 16px; }
+    .dossier .rules-table { font-size: 10px; }
+    .dossier .rules-table th { font-size: 9px; }
+    .dossier .rules-table th, .dossier .rules-table td { padding: 6px 5px; }
+    .legend { grid-template-columns: 1fr; gap: 6px; }
+    .ship-preview { height: 28px; }
 
     .turn-indicator {
         position: relative;
