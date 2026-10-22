@@ -20,28 +20,6 @@
     overflow: visible;
 }
 
-/* ---------- 航行尾迹（船艉后一小团柔化航迹） ---------- */
-
-#player-grid .ship:not(.sunk) .hull-scale-wrapper::after,
-#enemy-grid .ship:not(.sunk) .hull-scale-wrapper::after {
-    content: '';
-    position: absolute;
-    left: 97%;
-    top: 26%;
-    width: 42%;
-    height: 48%;
-    border-radius: 50%;
-    background: radial-gradient(ellipse at left center, rgba(220, 240, 255, 0.28), rgba(220, 240, 255, 0.1) 55%, transparent 80%);
-    filter: blur(1px);
-    pointer-events: none;
-    animation: wake-pulse 3.5s ease-in-out infinite alternate;
-}
-
-@keyframes wake-pulse {
-    from { opacity: 0.55; }
-    to { opacity: 1; }
-}
-
 /* ---------- 棋盘上的船：白色泡沫描边，避免船体溶进水色 ---------- */
 
 #player-grid .ship-svg,
@@ -98,14 +76,13 @@
     gap: 10px;
     padding: 12px;
     background:
-        radial-gradient(120% 55% at 50% 0%, rgba(96, 170, 235, 0.18), transparent 70%),
         repeating-linear-gradient(180deg,
-            rgba(140, 205, 250, 0.05) 0px,
-            rgba(140, 205, 250, 0.05) 1px,
+            rgba(160, 190, 200, 0.045) 0px,
+            rgba(160, 190, 200, 0.045) 1px,
             transparent 1px,
             transparent 30px),
-        linear-gradient(180deg, #12283f 0%, #0b1929 100%);
-    border: 1px solid rgba(120, 185, 235, 0.16);
+        linear-gradient(180deg, #17252b 0%, #0b1418 100%);
+    border: 1px solid rgba(150, 178, 188, 0.14);
     box-shadow: inset 0 8px 22px rgba(0, 0, 0, 0.45);
 }
 

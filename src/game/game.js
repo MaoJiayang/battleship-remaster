@@ -143,14 +143,19 @@ import { getShipSvg } from './shipArt.js';
         if (!el) return;
         if (!state) { el.className = 'turn-indicator'; el.textContent = ''; return; }
         el.className = `turn-indicator visible t-${state}`;
-        el.textContent = state === 'player' ? '▶ 我方回合' : (state === 'ai' ? '◀ 敌方回合' : '⏹ 战斗结束');
+        el.textContent = state === 'player' ? '我方回合 · ALLIED TURN' : (state === 'ai' ? '敌方回合 · ENEMY TURN' : '战斗结束 · ACTION COMPLETE');
         void el.offsetWidth; // 重新触发 pop 动画
         el.classList.add('pop');
     }
 
     function updateSoundBtn() {
         const btn = document.getElementById('btn-sound');
-        if (btn) btn.textContent = sfx.isEnabled() ? '🔊' : '🔇';
+        if (!btn) return;
+        const on = sfx.isEnabled();
+        btn.dataset.state = on ? 'on' : 'off';
+        btn.setAttribute('aria-pressed', String(on));
+        const label = document.getElementById('btn-sound-label');
+        if (label) label.textContent = on ? 'SND ON' : 'SND OFF';
     }
 
     // 武器系统实例（模块级变量）
@@ -763,7 +768,7 @@ import { getShipSvg } from './shipArt.js';
 
     function toggleFirstTurn() {
         firstTurn = firstTurn === 'PLAYER' ? 'AI' : 'PLAYER';
-        const text = firstTurn === 'PLAYER' ? "先手：玩家 👤" : "先手：电脑 🤖";
+        const text = firstTurn === 'PLAYER' ? "先手：玩家" : "先手：电脑";
         
         const btn = document.getElementById('first-turn-toggle');
         if (btn) btn.innerText = text;
@@ -774,19 +779,18 @@ import { getShipSvg } from './shipArt.js';
 
     function toggleAiDebug() {
         showAiDebug = !showAiDebug;
-        const text = showAiDebug ? "🧠 AI 视角: 开启" : "🧠 AI 视角: 关闭";
-        const bg = showAiDebug ? "#ed8936" : "";
+        const text = showAiDebug ? "AI 视角：开启" : "AI 视角：关闭";
 
         const btn = document.getElementById('btn-debug');
         if (btn) {
             btn.innerText = text;
-            btn.style.background = bg;
+            btn.classList.toggle('is-on', showAiDebug);
         }
 
         const mBtn = document.getElementById('mobile-debug');
         if (mBtn) {
             mBtn.innerText = text;
-            mBtn.style.background = bg;
+            mBtn.classList.toggle('is-on', showAiDebug);
         }
         
         if (showAiDebug) {
@@ -1224,7 +1228,7 @@ import { getShipSvg } from './shipArt.js';
         });
 
         const btn = document.getElementById('start-btn');
-        btn.innerText = "🚀 开始战斗";
+        btn.innerText = "开始战斗";
         btn.className = "btn-orange";
         btn.disabled = true;
         
@@ -1271,7 +1275,7 @@ import { getShipSvg } from './shipArt.js';
         myShips.forEach(s => s.el.style.cursor = 'default');
         
         const btn = document.getElementById('start-btn');
-        btn.innerText = "🔄 重新开始";
+        btn.innerText = "重新开始";
         btn.className = "btn-restart";
 
         resetAIState(); // 重置 AI 内部状态（伤害记录等）
@@ -1351,9 +1355,9 @@ import { getShipSvg } from './shipArt.js';
         const mbName = document.getElementById('mb-weapon-name');
         const mbIcon = document.getElementById('mb-weapon-icon');
         if (mbName && mbIcon) {
-            if (type === 'AP') { mbName.innerText = '主炮'; mbIcon.innerText = '💥'; }
-            else if (type === 'HE') { mbName.innerText = '空袭'; mbIcon.innerText = '✈️'; }
-            else if (type === 'SONAR') { mbName.innerText = '水听'; mbIcon.innerText = '📡'; }
+            if (type === 'AP') { mbName.innerText = '主炮'; mbIcon.innerText = 'AP'; }
+            else if (type === 'HE') { mbName.innerText = '空袭'; mbIcon.innerText = 'AIR'; }
+            else if (type === 'SONAR') { mbName.innerText = '水听'; mbIcon.innerText = 'SNR'; }
         }
     }
 
@@ -1375,7 +1379,7 @@ import { getShipSvg } from './shipArt.js';
         // 更新主炮伤害显示
         const dmg = getAPDamage();
         const descEl = document.getElementById('ap-desc');
-        if (descEl) descEl.innerText = `单点 ${dmg}伤`;
+        if (descEl) descEl.innerText = `单点 · ${dmg} 伤`;
     }
 
     function getAPDamage() {
@@ -1811,11 +1815,24 @@ import { getShipSvg } from './shipArt.js';
                 inDock: false
             });
             
-            // 帮助面板里的预览需要特殊处理，因为它的父容器大小是固定的，不是基于 cellSize
-            // 我们可以强制给它一个较小的 scale，或者让它基于 30px 的格子计算
-            // 这里简单处理：手动覆盖 scale
+            // 手册预览按统一宽度归一化，避免小舰种缩成一条线、大舰种被裁切
             const wrapper = previewShip.querySelector('.hull-scale-wrapper');
-            if (wrapper) wrapper.style.transform = 'scale(0.4)';
+            if (wrapper) {
+                wrapper.style.transform = 'none';
+                wrapper.style.width = '100%';
+                wrapper.style.height = '100%';
+                wrapper.style.display = 'flex';
+                wrapper.style.alignItems = 'center';
+                wrapper.style.justifyContent = 'center';
+                const svg = wrapper.querySelector('svg');
+                if (svg) {
+                    svg.removeAttribute('height');
+                    svg.style.width = '100px';
+                    svg.style.height = 'auto';
+                }
+            }
+            previewShip.style.width = '108px';
+            previewShip.style.height = '32px';
 
             divImg.appendChild(previewShip);
             tdImg.appendChild(divImg);

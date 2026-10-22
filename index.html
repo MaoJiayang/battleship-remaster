@@ -7,20 +7,39 @@
 </head>
 <body>
   <header>
-    <button id="btn-sound" class="icon-btn sound-btn" aria-label="音效开关" title="音效开关 (M)">🔊</button>
-    <h1>指挥官：决战大洋</h1>
-    <button id="btn-menu-toggle" class="icon-btn" aria-label="菜单">⚙️</button>
+    <div class="hdr-side hdr-left">
+      <span class="stamp">RESTRICTED</span>
+      <span class="hdr-meta">ATLANTIC · 1943</span>
+    </div>
+    <div class="hdr-title">
+      <h1>指挥官：决战大洋</h1>
+      <span class="hdr-sub">NAVAL COMMAND · SURFACE ACTION</span>
+    </div>
+    <div class="hdr-side hdr-right">
+      <button id="btn-sound" class="icon-btn sound-btn" data-state="on" aria-label="音效开关" title="音效开关 (M)">
+        <span class="lamp" aria-hidden="true"></span><span id="btn-sound-label">SND ON</span>
+      </button>
+      <button id="btn-menu-toggle" class="icon-btn header-menu" aria-label="菜单" title="菜单">
+        <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
+      </button>
+    </div>
   </header>
 
   <div id="help-modal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content dossier">
+      <div class="doc-head">
+        <span>FILE HSQ-11</span>
+        <span>RULES OF ENGAGEMENT</span>
+        <span class="doc-class">RESTRICTED</span>
+      </div>
       <span class="close-btn" data-action="toggle-help">&times;</span>
-      <h2 style="color: var(--accent); text-align: center; margin-top: 0;">游戏规则说明</h2>
+      <h2 class="doc-title">作战手册</h2>
+      <p class="doc-sub">RULES OF ENGAGEMENT · 1943</p>
 
-      <h3>1. 胜利条件</h3>
-      <p>率先击沉敌方所有 5 艘舰船的一方获胜。</p>
+      <h3>01 / 胜利条件</h3>
+      <p>率先击沉敌方全部 5 艘舰船的一方获胜。</p>
 
-      <h3>2. 舰船属性</h3>
+      <h3>02 / 舰船属性</h3>
       <table class="rules-table">
         <thead>
           <tr><th>图示</th><th>代号</th><th>名称</th><th>长度</th><th>血量/格</th><th>特殊能力</th></tr>
@@ -28,83 +47,88 @@
         <tbody id="rules-ship-table-body"></tbody>
       </table>
 
-      <h3>3. 武器系统</h3>
+      <h3>03 / 武器系统</h3>
       <table class="rules-table">
         <tr><th>武器</th><th>范围</th><th>伤害</th><th>说明</th></tr>
-        <tr><td><b>主炮</b></td><td>单点</td><td>1~3</td><td>基础攻击。伤害取决于存活舰船(BB=3, CL/SS=2, 其他=1)。</td></tr>
-        <tr><td><b>空袭</b></td><td>X型 (5格)</td><td>1</td><td>需航母(CV)存活。对中心及四角造成伤害。</td></tr>
-        <tr><td><b>水听</b></td><td>3x3 区域</td><td>0</td><td>需驱逐(DD)或潜艇(SS)存活。探测区域内是否有船。若有，显示中心真实状态，并标记周围为疑似。</td></tr>
+        <tr><td><b>主炮</b></td><td>单点</td><td>1~3</td><td>基础攻击。伤害取决于存活舰船（BB=3，CL/SS=2，其他=1）。</td></tr>
+        <tr><td><b>空袭</b></td><td>X 型（5 格）</td><td>1</td><td>需航母（CV）存活。对中心及四角造成伤害。</td></tr>
+        <tr><td><b>水听</b></td><td>3×3 区域</td><td>0</td><td>需驱逐（DD）或潜艇（SS）存活。探测区域内是否有船，若有则显示中心真实状态并标记周围为疑似。</td></tr>
       </table>
 
-      <h3>4. 状态标识</h3>
-      <ul style="font-size: 14px; line-height: 1.6;">
-        <li>🌊 <b>空白</b>：未知海域。</li>
-        <li>⚪ <b>水花</b>：未命中 (Miss)。</li>
-        <li>❓ <b>问号</b>：疑似目标 (声呐扫描结果)。</li>
-        <li>💥 <b>冒烟</b>：受损 (Hit)，船还在。</li>
-        <li>☠️ <b>红叉</b>：毁坏 (Destroyed)，该格血量归零。</li>
+      <h3>04 / 状态标识</h3>
+      <ul class="legend">
+        <li><span class="lg lg-sea"></span><b>空白</b>：未知海域。</li>
+        <li><span class="lg lg-miss"></span><b>水花</b>：未命中。</li>
+        <li><span class="lg lg-detect">?</span><b>疑似</b>：水听扫描结果。</li>
+        <li><span class="lg lg-hit"></span><b>受损</b>：命中，舰体尚存。</li>
+        <li><span class="lg lg-dead"></span><b>击沉</b>：该格血量归零。</li>
       </ul>
 
-      <h3>5. 小提示</h3>
-      <ul style="font-size: 14px; line-height: 1.6;">
-        <li>桌面端快捷键：<b>1/2/3</b> 切换武器，<b>R</b> 切换部署方向，<b>H</b> 帮助，<b>M</b> 音效开关</li>
-        <li>移动端长按要攻击的格位可以预览攻击范围</li>
-        <li>连续命中可获得连击提示，命中率会计入战后战报</li>
+      <h3>05 / 指挥提示</h3>
+      <ul class="hints">
+        <li>桌面快捷键：<kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 切换武器，<kbd>R</kbd> 切换部署方向，<kbd>H</kbd> 帮助，<kbd>M</kbd> 音效。</li>
+        <li>移动端长按格位可预览攻击范围。</li>
+        <li>连续命中会记录连击，命中率计入战后战报。</li>
       </ul>
+      <div class="doc-foot">DESTROY AFTER READING · 阅后销毁</div>
     </div>
   </div>
 
   <div id="game-over-modal" class="modal">
-    <div class="modal-content game-over-content">
-      <h2 id="game-over-title" class="game-over-title"></h2>
-      <p id="game-over-msg" style="font-size: 1.2rem; margin-bottom: 20px; color: #cbd5e0;"></p>
-      <div id="game-over-stats" class="game-over-stats"></div>
-      <div style="display: flex; gap: 10px; justify-content: center; margin-top: 25px;">
-        <button class="btn-blue" data-action="view-battlefield" style="font-size: 1.2rem; padding: 12px 20px;">👀 查看战场</button>
-        <button class="btn-restart" data-action="restart-game" style="font-size: 1.2rem; padding: 12px 20px;">🔄 重新开始</button>
+    <div class="modal-content game-over-content dossier">
+      <div class="doc-head">
+        <span>AFTER ACTION REPORT</span>
+        <span class="doc-class">SECRET</span>
       </div>
+      <h2 id="game-over-title" class="game-over-title"></h2>
+      <p id="game-over-msg" class="game-over-msg"></p>
+      <div id="game-over-stats" class="game-over-stats"></div>
+      <div class="doc-actions">
+        <button class="btn-steel" data-action="view-battlefield">查看战场</button>
+        <button class="btn-brass" data-action="restart-game">重新开始</button>
+      </div>
+      <div class="doc-foot">HQ · NAVAL OPERATIONS · 1943</div>
     </div>
   </div>
 
-  <!-- 通用菜单模态框 (原设置菜单) -->
   <div id="settings-modal" class="modal">
     <div class="modal-content menu-modal-content">
+      <div class="panel-head">
+        <span class="panel-tag">CMD</span>
+        <span>作战菜单</span>
+        <span class="panel-en">COMMAND MENU</span>
+      </div>
       <span class="close-btn" data-action="toggle-settings">&times;</span>
-      <h2 style="color: var(--accent); text-align: center; margin-top: 0;">☰ 菜单</h2>
-      
+
       <div class="menu-grid">
-        <!-- 游戏控制 -->
         <div class="menu-section">
-            <div class="menu-label">游戏控制</div>
-            <div class="menu-row">
-                <button id="mobile-menu-restart" class="menu-btn btn-restart">🔄 重新开始</button>
-                <button id="mobile-menu-random" class="menu-btn btn-blue">🎲 随机部署</button>
-            </div>
-            <button id="mobile-menu-reset" class="menu-btn btn-blue" style="width:100%; margin-top:8px">↩️ 全部回港</button>
+          <div class="menu-label">游戏控制 <span>CONTROL</span></div>
+          <div class="menu-row">
+            <button id="mobile-menu-restart" class="menu-btn btn-restart">重新开始</button>
+            <button id="mobile-menu-random" class="menu-btn btn-blue">随机部署</button>
+          </div>
+          <button id="mobile-menu-reset" class="menu-btn btn-blue menu-wide">全部回港</button>
         </div>
 
-        <!-- 难度设置 -->
         <div class="menu-section">
-            <div class="menu-label">AI 难度</div>
-            <div class="difficulty-bar">
-                <button class="diff-btn" id="mobile-diff-easy" data-difficulty="EASY">新兵</button>
-                <button class="diff-btn" id="mobile-diff-normal" data-difficulty="NORMAL">舰长</button>
-                <button class="diff-btn" id="mobile-diff-hard" data-difficulty="HARD">提督</button>
-            </div>
+          <div class="menu-label">AI 难度 <span>THREAT LEVEL</span></div>
+          <div class="difficulty-bar">
+            <button class="diff-btn" id="mobile-diff-easy" data-difficulty="EASY">新兵</button>
+            <button class="diff-btn" id="mobile-diff-normal" data-difficulty="NORMAL">舰长</button>
+            <button class="diff-btn" id="mobile-diff-hard" data-difficulty="HARD">提督</button>
+          </div>
         </div>
 
-        <!-- 选项 -->
         <div class="menu-section">
-            <div class="menu-label">选项</div>
-            <div class="menu-row">
-                <button class="btn-mode" id="mobile-first-turn">先手：玩家 👤</button>
-                <button class="btn-mode" id="mobile-debug">🧠 AI 视角</button>
-            </div>
+          <div class="menu-label">选项 <span>OPTIONS</span></div>
+          <div class="menu-row">
+            <button class="btn-mode" id="mobile-first-turn">先手：玩家</button>
+            <button class="btn-mode" id="mobile-debug">AI 视角</button>
+          </div>
         </div>
-        
-        <!-- 帮助 -->
+
         <div class="menu-section">
-             <button id="mobile-menu-help" class="menu-btn btn-orange" style="width:100%">📖 游戏说明</button>
+          <button id="mobile-menu-help" class="menu-btn btn-orange menu-wide">作战手册</button>
         </div>
       </div>
     </div>
@@ -113,28 +137,32 @@
   <div class="layout">
     <div class="dock-panel">
       <div class="dock-header">
-        <span>⚓ 装备区</span>
-        <div id="help-btn" data-action="toggle-help">? 帮助</div>
+        <span class="panel-tag">DECK</span>
+        <span class="panel-title">装备区</span>
+        <div id="help-btn" data-action="toggle-help" title="作战手册">手册</div>
       </div>
 
       <div id="battle-panel" class="dock-container" style="display: none; align-items: stretch;">
         <div class="weapon-bar" id="weapon-bar">
           <button class="weapon-btn active" id="btn-ap" data-weapon="AP">
-            <span>💥 主炮</span>
-            <span id="ap-desc" style="font-size:10px; opacity:0.8">单点 3伤</span>
+            <span class="wp-top"><span class="wp-code">AP</span><span class="wp-lamp"></span></span>
+            <span class="wp-name">主炮</span>
+            <span class="wp-meta" id="ap-desc">单点 · 3 伤</span>
           </button>
           <button class="weapon-btn" id="btn-he" data-weapon="HE">
-            <span>✈️ 空袭</span>
-            <span style="font-size:10px; opacity:0.8">范围 1伤</span>
+            <span class="wp-top"><span class="wp-code">AIR</span><span class="wp-lamp"></span></span>
+            <span class="wp-name">空袭</span>
+            <span class="wp-meta">范围 · 1 伤</span>
           </button>
           <button class="weapon-btn" id="btn-sonar" data-weapon="SONAR">
-            <span>📡 水听</span>
-            <span style="font-size:10px; opacity:0.8">侦查 3x3</span>
+            <span class="wp-top"><span class="wp-code">SNR</span><span class="wp-lamp"></span></span>
+            <span class="wp-name">水听</span>
+            <span class="wp-meta">侦查 · 3×3</span>
           </button>
         </div>
 
         <div class="status-panel" id="status-panel">
-          <div style="text-align:center; color:#90cdf4; font-weight:bold; margin-bottom:5px">舰队状态</div>
+          <div class="subhead">舰队状态 <span>FLEET STATUS</span></div>
           <div id="ship-status-list"></div>
         </div>
       </div>
@@ -151,7 +179,7 @@
           <select id="faction-enemy" class="faction-select"></select>
         </div>
 
-        <div class="diff-label" style="font-size: 12px; color: #a0aec0; margin-bottom: 2px;">AI 难度</div>
+        <div class="diff-label">AI 难度 <span>THREAT</span></div>
         <div class="difficulty-bar" id="diff-bar">
           <button class="diff-btn" data-difficulty="EASY">新兵 (简单)</button>
           <button class="diff-btn" data-difficulty="NORMAL">舰长 (困难)</button>
@@ -159,8 +187,8 @@
         </div>
 
         <div class="btn-row">
-          <button class="btn-mode" id="rotate-toggle" title="切换部署方向">方向：水平 ⮕</button>
-          <button class="btn-mode" id="first-turn-toggle" title="切换先手">先手：玩家 👤</button>
+          <button class="btn-mode" id="rotate-toggle" title="切换部署方向">方向：水平</button>
+          <button class="btn-mode" id="first-turn-toggle" title="切换先手">先手：玩家</button>
         </div>
       </div>
     </div>
@@ -174,59 +202,55 @@
       <div class="scroll-view">
         <div class="battlefield">
           <div class="board-box" id="player-board-box">
-            <div class="board-title" style="color:#68d391">我方海域 (防守)</div>
+            <div class="board-title friendly">我方海域 <span>DEFENSE</span></div>
             <div id="player-grid" class="grid"></div>
           </div>
           <div class="board-box" id="enemy-board-box">
-            <div class="board-title" style="color:#fc8181">敌方海域 (进攻)</div>
+            <div class="board-title enemy">敌方海域 <span>ATTACK</span></div>
             <div id="enemy-grid" class="grid"></div>
           </div>
         </div>
       </div>
 
       <div class="bottom-controls" id="bottom-controls">
-        <!-- 移动端底部导航 (新设计) -->
         <div class="mobile-bottom-bar">
             <button class="nav-tab active" id="mb-tab-player">
-                <span class="icon">🛡️</span>
-                <span class="label">我方</span>
+                <span class="nav-sym nav-own"></span>
+                <span class="label">我方海域</span>
             </button>
-            
+
             <div class="action-center">
-                <!-- 部署阶段 -->
                 <div class="deploy-actions" id="mb-deploy-group">
                     <button id="mb-btn-start" class="action-btn primary" disabled>
-                        <span>🚀 开始</span>
+                        <span>开始战斗</span>
                     </button>
                 </div>
-                <!-- 战斗阶段 -->
                 <div class="combat-actions" id="mb-combat-group" style="display:none">
                     <button id="mb-btn-weapon" class="action-btn weapon-selector">
-                        <span id="mb-weapon-icon">💥</span>
+                        <span id="mb-weapon-icon">AP</span>
                         <span id="mb-weapon-name">主炮</span>
                     </button>
                 </div>
             </div>
 
             <button class="nav-tab" id="mb-tab-enemy">
-                <span class="icon">🎯</span>
-                <span class="label">敌方</span>
+                <span class="nav-sym nav-enemy"></span>
+                <span class="label">敌方海域</span>
             </button>
         </div>
 
-        <!-- 桌面端原有按钮 (移动端隐藏) -->
         <div class="desktop-controls">
-            <button class="btn-mode" id="btn-debug" title="AI 视角 (Debug)">🧠 AI 视角</button>
-            <button id="btn-reset" class="btn-blue" title="全部回港">🔄 全部回港</button>
-            <button id="btn-settings" class="btn-blue" style="display:none" title="设置">⚙️ 设置</button>
-            <button id="btn-random" class="btn-blue" title="随机部署">🎲 随机部署</button>
-            <button class="btn-orange" id="start-btn" disabled>🚀 开始战斗</button>
+            <button class="btn-mode" id="btn-debug" title="AI 视角 (Debug)">AI 视角</button>
+            <button id="btn-reset" class="btn-blue" title="全部回港">全部回港</button>
+            <button id="btn-settings" class="btn-blue" style="display:none" title="设置">设置</button>
+            <button id="btn-random" class="btn-blue" title="随机部署">随机部署</button>
+            <button class="btn-orange" id="start-btn" disabled>开始战斗</button>
         </div>
       </div>
     </div>
 
     <div class="log-panel">
-      <div class="log-header">⚡ 战况记录</div>
+      <div class="log-header">战况记录 <span>SIGNAL LOG</span></div>
       <div id="log" class="log-content">
         <div class="log-line c-sys">拖拽部署，绿色区域为有效。</div>
         <div class="log-line c-sys">准备就绪后点击开始。</div>
