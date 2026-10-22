@@ -106,6 +106,19 @@ export function createLogEvent(message, className) {
 }
 
 /**
+ * 创建特效事件的工厂函数
+ * @param {string} kind - 特效类型 ('AIRSTRIKE' | 'SONAR' | 'DAMAGE')
+ * @param {Object} data - 特效数据
+ * @returns {Object} 特效事件
+ */
+export function createEffectEvent(kind, data) {
+    return {
+        type: EventType.EFFECT,
+        payload: { kind, ...data }
+    };
+}
+
+/**
  * 边界检查工具
  * @param {number} r - 行坐标
  * @param {number} c - 列坐标

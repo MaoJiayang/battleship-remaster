@@ -12,6 +12,9 @@ import { APWeapon } from './weapons/APWeapon.js';
 import { HEWeapon } from './weapons/HEWeapon.js';
 import { SonarWeapon } from './weapons/SonarWeapon.js';
 import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
+import { sfx } from '../audio/sfx.js';
+import { FACTIONS } from '../data/factions.js';
+import { getShipSvg } from './shipArt.js';
 
     // === 动态尺寸获取 ===
     function getCellSize() {
@@ -40,82 +43,13 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
 
     // === 配置 ===
 
-    // 移除 SVG_SHIPS，改用 DOM 生成
-    function getShipDom(code) {
-        let html = '';
-        // 原始美术资源宽度定义 (px)
-        // BB: 240, CV: 240, CL: 170, DD: 120, SS: 60
-        
-        if (code === 'BB') {
-            html = `
-                <div class="hull-scale-wrapper" data-original-width="240">
-                    <div class="hull-bb">
-                        <div class="turret-base facing-left" style="left: 25px;"><div class="turret-bb"></div></div>
-                        <div class="turret-base facing-left" style="left: 52px; z-index: 11;"><div class="turret-bb"></div></div>
-                        <div class="bb-bridge-complex">
-                            <div class="bb-tower"></div>
-                            <div class="bb-funnel"></div>
-                        </div>
-                        <div class="turret-base facing-right" style="right: 60px; z-index: 11;"><div class="turret-bb"></div></div>
-                        <div class="bb-stern-equipment">
-                            <div class="bb-catapult-rail"></div>
-                            <div class="bb-floatplane"></div>
-                            <div class="bb-crane"></div>
-                        </div>
-                    </div>
-                </div>`;
-        } else if (code === 'CV') {
-            html = `
-                <div class="hull-scale-wrapper" data-original-width="240">
-                    <div class="hull-cv">
-                        <div class="cv-arrow"></div>
-                        <div class="cv-elevator"></div>
-                        <div class="cv-island"></div>
-                        <div class="cv-sponson"></div>
-                    </div>
-                </div>`;
-        } else if (code === 'CL') {
-            html = `
-                <div class="hull-scale-wrapper" data-original-width="170">
-                    <div class="hull-cl">
-                        <div class="turret-base facing-left" style="left: 15px;"><div class="turret-cl"></div></div>
-                        <div class="turret-base facing-left" style="left: 35px; z-index:11"><div class="turret-cl"></div></div>
-                        <div class="cl-bridge-area">
-                            <div class="cl-block"></div>
-                            <div class="cl-funnel" style="left: 25px;"></div>
-                            <div class="cl-funnel" style="left: 45px;"></div>
-                        </div>
-                        <div class="turret-base facing-right" style="right: 35px; z-index:11"><div class="turret-cl"></div></div>
-                        <div class="turret-base facing-right" style="right: 15px;"><div class="turret-cl"></div></div>
-                    </div>
-                </div>`;
-        } else if (code === 'DD') {
-            html = `
-                <div class="hull-scale-wrapper" data-original-width="120">
-                    <div class="hull-dd">
-                        <div class="turret-base facing-left" style="left: 10px;"><div class="turret-dd"></div></div>
-                        <div class="turret-base facing-left" style="left: 24px; z-index:11"><div class="turret-dd"></div></div>
-                        <div class="dd-mid">
-                            <div class="dd-structure" style="left: 0px;"></div>
-                            <div class="dd-torpedo" style="left: 12px;"></div>
-                            <div class="dd-structure" style="left: 28px;"></div>
-                            <div class="dd-torpedo" style="left: 40px;"></div>
-                        </div>
-                        <div class="turret-base facing-right" style="right: 10px;"><div class="turret-dd"></div></div>
-                    </div>
-                </div>`;
-        } else if (code === 'SS') {
-            html = `
-                <div class="hull-scale-wrapper" data-original-width="60">
-                    <div class="hull-ss">
-                        <div class="ss-tower">
-                            <div class="ss-periscope"></div>
-                        </div>
-                    </div>
-                </div>`;
-        }
-        return html;
+    // 舰船 DOM 生成器（内联 SVG 建模，见 shipArt.js）
+    function getShipDom(code, factionId = 'us') {
+        const w = SHIP_ORIGINAL_WIDTH[code];
+        return `<div class="hull-scale-wrapper" data-original-width="${w}">${getShipSvg(code, factionId)}</div>`;
     }
+
+    const SHIP_ORIGINAL_WIDTH = { BB: 240, CV: 240, CL: 170, DD: 120, SS: 60 };
 
     // 根据表二：船只属性定义表（外部配置）
 
@@ -132,6 +66,92 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
     let showAiDebug = false;
     let currentWinner = null;
     let aiTurnTimeout = null;
+
+    // 战斗统计与连击
+    let battleStats = null;
+    let playerStreak = 0;
+
+    // 阵营选择
+    let playerFaction = localStorage.getItem('playerFaction') || 'us';
+    let enemyFaction = localStorage.getItem('enemyFaction') || 'ijn';
+
+    function resetBattleStats() {
+        battleStats = {
+            turns: 0,
+            maxStreak: 0,
+            player: { shots: 0, hits: 0 },
+            ai: { shots: 0, hits: 0 }
+        };
+        playerStreak = 0;
+    }
+
+    /**
+     * 从武器事件中统计射击数与命中数
+     */
+    function countShots(events) {
+        let shots = 0, hits = 0;
+        for (const ev of events || []) {
+            if (ev.type === 'CELL_UPDATE') {
+                const s = ev.payload.state;
+                if (s === 'HIT' || s === 'DESTROYED' || s === 'MISS') {
+                    shots++;
+                    if (s !== 'MISS') hits++;
+                }
+            }
+        }
+        return { shots, hits };
+    }
+
+    /**
+     * 记录战斗统计并处理玩家连击
+     */
+    function recordStats(events, isPlayer) {
+        if (!battleStats) return;
+        const { shots, hits } = countShots(events);
+        const side = isPlayer ? 'player' : 'ai';
+        battleStats[side].shots += shots;
+        battleStats[side].hits += hits;
+
+        if (isPlayer) {
+            battleStats.turns++;
+            if (hits > 0) {
+                playerStreak++;
+                battleStats.maxStreak = Math.max(battleStats.maxStreak, playerStreak);
+                if (playerStreak >= 2) {
+                    const hitEv = (events || []).find(
+                        e => e.type === 'CELL_UPDATE' && e.payload.state !== 'MISS'
+                    );
+                    const eGrid = document.getElementById('enemy-grid');
+                    if (battleRenderer && hitEv && eGrid) {
+                        battleRenderer.spawnFloat(
+                            eGrid, hitEv.payload.r, hitEv.payload.c,
+                            `连击 x${playerStreak}!`, 'fx-float fx-combo'
+                        );
+                    }
+                }
+            } else {
+                playerStreak = 0;
+            }
+        }
+    }
+
+    /**
+     * 回合指示器：'player' | 'ai' | 'end' | null
+     */
+    function setTurnIndicator(state) {
+        const el = document.getElementById('turn-indicator');
+        if (!el) return;
+        if (!state) { el.className = 'turn-indicator'; el.textContent = ''; return; }
+        el.className = `turn-indicator visible t-${state}`;
+        el.textContent = state === 'player' ? '▶ 我方回合' : (state === 'ai' ? '◀ 敌方回合' : '⏹ 战斗结束');
+        void el.offsetWidth; // 重新触发 pop 动画
+        el.classList.add('pop');
+    }
+
+    function updateSoundBtn() {
+        const btn = document.getElementById('btn-sound');
+        if (btn) btn.textContent = sfx.isEnabled() ? '🔊' : '🔇';
+    }
 
     // 武器系统实例（模块级变量）
     let weaponRegistry = null;
@@ -299,6 +319,19 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         root.style.setProperty('--cell-size', `${cellSize}px`);
     }
 
+    function addCoordLabels(gridEl) {
+        const xs = Array.from({ length: BOARD_SIZE }, (_, i) => `<span>${i + 1}</span>`).join('');
+        const ys = Array.from({ length: BOARD_SIZE }, (_, i) => `<span>${String.fromCharCode(65 + i)}</span>`).join('');
+        const xEl = document.createElement('div');
+        xEl.className = 'coord coord-x';
+        xEl.innerHTML = xs;
+        const yEl = document.createElement('div');
+        yEl.className = 'coord coord-y';
+        yEl.innerHTML = ys;
+        gridEl.appendChild(xEl);
+        gridEl.appendChild(yEl);
+    }
+
     function initGrids() {
         // 初始化时设置棋盘尺寸
         updateGridSize();
@@ -324,6 +357,9 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
                 eGrid.appendChild(div2);
             }
         }
+
+        addCoordLabels(pGrid);
+        addCoordLabels(eGrid);
     }
 
     function bindUiEvents() {
@@ -380,6 +416,37 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         document.querySelectorAll('[data-difficulty]').forEach(btn => {
             btn.addEventListener('click', () => setDifficulty(btn.dataset.difficulty));
         });
+
+        // 阵营选择
+        const fpSelect = document.getElementById('faction-player');
+        const feSelect = document.getElementById('faction-enemy');
+        if (fpSelect && feSelect) {
+            const options = Object.entries(FACTIONS)
+                .map(([id, f]) => `<option value="${id}">${f.name}</option>`).join('');
+            fpSelect.innerHTML = options;
+            feSelect.innerHTML = options;
+            fpSelect.value = playerFaction;
+            feSelect.value = enemyFaction;
+
+            fpSelect.addEventListener('change', () => {
+                playerFaction = fpSelect.value;
+                localStorage.setItem('playerFaction', playerFaction);
+                sfx.play('click');
+                if (gameState === 'SETUP') {
+                    myGridMap = createEmptyGrid();
+                    initShips();
+                    checkReady();
+                    log(`我方阵营更换为「${FACTIONS[playerFaction].name}」，请重新部署。`, "c-sys");
+                }
+            });
+
+            feSelect.addEventListener('change', () => {
+                enemyFaction = feSelect.value;
+                localStorage.setItem('enemyFaction', enemyFaction);
+                sfx.play('click');
+                log(`敌方阵营更换为「${FACTIONS[enemyFaction].name}」。`, "c-sys");
+            });
+        }
 
         const rotateBtn = document.getElementById('rotate-toggle');
         if (rotateBtn) rotateBtn.addEventListener('click', toggleDeployMode);
@@ -494,6 +561,29 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
             const bar = document.getElementById('weapon-bar');
             bar.classList.toggle('show');
         });
+
+        // 音效开关
+        const soundBtn = document.getElementById('btn-sound');
+        if (soundBtn) {
+            soundBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                sfx.toggle();
+                updateSoundBtn();
+            });
+            updateSoundBtn();
+        }
+
+        // 键盘快捷键：1/2/3 切换武器，R 旋转，H 帮助，M 音效
+        document.addEventListener('keydown', (e) => {
+            if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+            const k = e.key.toLowerCase();
+            if (k === '1') selectWeapon('AP');
+            else if (k === '2' && !document.getElementById('btn-he').disabled) selectWeapon('HE');
+            else if (k === '3' && !document.getElementById('btn-sonar').disabled) selectWeapon('SONAR');
+            else if (k === 'r' && gameState === 'SETUP') toggleDeployMode();
+            else if (k === 'h') toggleHelp();
+            else if (k === 'm') { sfx.toggle(); updateSoundBtn(); }
+        });
     }
 
     // === 移动端视图切换逻辑 ===
@@ -564,14 +654,14 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         dock.innerHTML = '';
 
         SHIP_TYPES.forEach((type, i) => {
-            const shipEl = document.createElement('div');
-            shipEl.className = 'ship ship-visuals-root'; // 添加 visuals root 类
+        const shipEl = document.createElement('div');
+        shipEl.className = `ship ship-visuals-root f-${playerFaction}`;
             shipEl.title = `${type.name} (长度:${type.len})`;
             shipEl.style.position = 'relative'; 
             
             const inner = document.createElement('div');
             inner.className = 'ship-inner';
-            inner.innerHTML = getShipDom(type.code); // 使用新 DOM
+            inner.innerHTML = getShipDom(type.code, playerFaction); // 使用新 DOM
             shipEl.appendChild(inner);
 
             const shipObj = {
@@ -1035,6 +1125,7 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
 
     // === 按钮功能 ===
     function resetToDock() {
+        closeGameOverModal();
         myGridMap = createEmptyGrid();
         myShips.forEach(s => returnToDock(s));
         checkReady();
@@ -1088,10 +1179,13 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
     }
 
     function resetGameFull() {
+        closeGameOverModal();
         document.body.classList.remove('game-playing'); // 移除战斗状态类
         clearAiTurnTimeout();
         currentWinner = null;
         gameState = 'SETUP';
+        resetBattleStats();
+        setTurnIndicator(null);
         document.getElementById('dock').style.display = 'flex';
         document.getElementById('battle-panel').style.display = 'none';
         
@@ -1168,9 +1262,13 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
 
         resetAIState(); // 重置 AI 内部状态（伤害记录等）
         initEnemy();
+        resetBattleStats();
         updateStatus();
         selectWeapon('AP');
-        aiStack = []; 
+        aiStack = [];
+        sfx.play('click');
+        setTurnIndicator(firstTurn === 'PLAYER' ? 'player' : 'ai');
+        log(`「${FACTIONS[playerFaction].name}」对阵「${FACTIONS[enemyFaction].name}」！`, 'c-sys');
 
         if (firstTurn === 'PLAYER') {
             log("战斗开始！玩家先手，点击敌方海域开火。", "c-warn");
@@ -1319,7 +1417,9 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
             const result = weaponService.executePlayerAction({ r, c }, context);
             
             if (!result.success) return;
-            
+
+            recordStats(result.events, true);
+
             // 检查胜负（仅对攻击类武器，声纳不会击沉船只）
             if (currentWeapon !== 'SONAR' && result.shipsSunk && result.shipsSunk.length > 0) {
                 checkWin("玩家");
@@ -1329,6 +1429,7 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         updateStatus();
         document.getElementById('enemy-grid').style.pointerEvents = 'none';
         if (gameState === 'PLAYING') {
+            setTurnIndicator('ai');
             const timing = getTiming();
             // 玩家回合结束，根据配置延迟切换视角
             if (timing.VIEW_SWITCH_DELAY > 0) {
@@ -1410,7 +1511,9 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         if (weaponService) {
             const context = buildAIWeaponContext();
             const result = weaponService.executeAIAction(decision, context);
-            
+
+            recordStats(result.events, false);
+
             // 4. 检查胜负（仅对攻击类武器）
             if (decision.weapon !== 'SONAR' && result.shipsSunk && result.shipsSunk.length > 0) {
                 // AI 击沉玩家船只时，需要给对应的船添加 sunk 类
@@ -1428,6 +1531,7 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         if (showAiDebug) updateAiHeatmapVisuals(); // 实时更新热力图
         const enemyGridEl = document.getElementById('enemy-grid');
         if (gameState === 'PLAYING') {
+            setTurnIndicator('player');
             enemyGridEl.style.pointerEvents = 'auto';
             // AI 回合结束，根据配置切回敌方视角
             const timing = getTiming();
@@ -1527,9 +1631,26 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
             title.className = "game-over-title lose-text";
             msg.innerText = "很遗憾，我方舰队已全军覆没...";
         }
-        
+
+        setTurnIndicator('end');
+        sfx.play(who === '玩家' ? 'win' : 'lose');
+
+        // 结算战报
+        const statsEl = document.getElementById('game-over-stats');
+        if (statsEl && battleStats) {
+            const pct = (n, d) => d > 0 ? Math.round((n / d) * 100) + '%' : '-';
+            const sunkByMe = enemyShips.filter(s => s.sunk).length;
+            const sunkByAi = myShips.filter(s => s.sunk).length;
+            statsEl.innerHTML = `
+                <div class="gos-row"><span>我方命中率</span><b>${pct(battleStats.player.hits, battleStats.player.shots)}</b></div>
+                <div class="gos-row"><span>敌方命中率</span><b>${pct(battleStats.ai.hits, battleStats.ai.shots)}</b></div>
+                <div class="gos-row"><span>击沉战果</span><b>${sunkByMe} / ${enemyShips.length}</b></div>
+                <div class="gos-row"><span>最大连击</span><b>x${battleStats.maxStreak}</b></div>
+                <div class="gos-row"><span>战斗回合</span><b>${battleStats.turns}</b></div>`;
+        }
+
         setTimeout(() => {
-            modal.style.display = 'block';
+            if (gameState === 'END') modal.style.display = 'block';
         }, 500);
     }
 
@@ -1546,7 +1667,7 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         if (eGrid.querySelector(`.revealed-enemy-ship[data-id="${ship.id}"]`)) return;
 
         const shipEl = document.createElement('div');
-        shipEl.className = 'ship revealed-enemy-ship ship-visuals-root'; 
+        shipEl.className = `ship revealed-enemy-ship ship-visuals-root f-${enemyFaction}`;
         shipEl.dataset.id = ship.id;
         shipEl.style.position = 'absolute';
         shipEl.style.left = (ship.c * cellSize) + 'px';
@@ -1556,7 +1677,7 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
         
         const inner = document.createElement('div');
         inner.className = 'ship-inner';
-        inner.innerHTML = getShipDom(ship.code);
+        inner.innerHTML = getShipDom(ship.code, enemyFaction);
         shipEl.appendChild(inner);
 
         const widthPx = (ship.len * cellSize) + 'px';
@@ -1663,10 +1784,10 @@ import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
             const divImg = document.createElement('div');
             divImg.className = 'ship-preview';
             const previewShip = document.createElement('div');
-            previewShip.className = 'ship ship-visuals-root';
+            previewShip.className = `ship ship-visuals-root f-${playerFaction}`;
             const inner = document.createElement('div');
             inner.className = 'ship-inner';
-            inner.innerHTML = getShipDom(type.code);
+            inner.innerHTML = getShipDom(type.code, playerFaction);
             previewShip.appendChild(inner);
 
             updateShipVisuals({

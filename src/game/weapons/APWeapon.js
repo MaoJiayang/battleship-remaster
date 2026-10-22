@@ -3,7 +3,8 @@
 
 import { WeaponBase } from './WeaponBase.js';
 import { resolveHit } from '../battle/HitResolver.js';
-import { createLogEvent } from './WeaponTypes.js';
+import { createLogEvent, createEffectEvent } from './WeaponTypes.js';
+import { sfx } from '../../audio/sfx.js';
 
 /**
  * 主炮武器
@@ -56,6 +57,8 @@ export class APWeapon extends WeaponBase {
         const { r, c } = target;
         const damage = this._calculateDamage(context.attackerShips);
         
+        sfx.play('fire');
+        
         // 调用结算器
         const result = resolveHit(
             r, c, damage,
@@ -71,6 +74,11 @@ export class APWeapon extends WeaponBase {
             `${prefix}主炮攻击 (${r + 1},${c + 1})，伤害: ${damage}`,
             logClass
         ));
+        
+        // 命中时显示浮动伤害数字
+        if (result.hitShip && result.events.length > 0) {
+            result.events.push(createEffectEvent('DAMAGE', { r, c, amount: damage }));
+        }
         
         // 收集沉没的船只ID
         const shipsSunk = result.sunk ? [result.hitShip.id] : [];

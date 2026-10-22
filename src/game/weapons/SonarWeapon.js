@@ -3,7 +3,7 @@
 
 import { WeaponBase } from './WeaponBase.js';
 import { resolveSonar } from '../battle/SonarResolver.js';
-import { isInBounds } from './WeaponTypes.js';
+import { createEffectEvent, isInBounds } from './WeaponTypes.js';
 
 /**
  * 水听武器
@@ -54,13 +54,16 @@ export class SonarWeapon extends WeaponBase {
     resolve(target, context) {
         const { r, c } = target;
         
-        // 调用声纳结算器
+        // 声纳结算器
         const result = resolveSonar(
             r, c,
             context.defenderGrid,
             context.defenderShips,
             context.isPlayer
         );
+        
+        // 特效：扫描圈扩散
+        result.events.push(createEffectEvent('SONAR', { r, c, hasSignal: result.hasSignal }));
         
         // 声纳不造成伤害，不会击沉船只
         return { events: result.events, shipsSunk: [] };

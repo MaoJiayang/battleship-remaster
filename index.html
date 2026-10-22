@@ -7,6 +7,7 @@
 </head>
 <body>
   <header>
+    <button id="btn-sound" class="icon-btn sound-btn" aria-label="音效开关" title="音效开关 (M)">🔊</button>
     <h1>指挥官：决战大洋</h1>
     <button id="btn-menu-toggle" class="icon-btn" aria-label="菜单">⚙️</button>
   </header>
@@ -46,8 +47,9 @@
 
       <h3>5. 小提示</h3>
       <ul style="font-size: 14px; line-height: 1.6;">
+        <li>桌面端快捷键：<b>1/2/3</b> 切换武器，<b>R</b> 切换部署方向，<b>H</b> 帮助，<b>M</b> 音效开关</li>
         <li>移动端长按要攻击的格位可以预览攻击范围</li>
-        <li>更改部署方向首先需要将舰船拖回港口（在修了在修了）</li>
+        <li>连续命中可获得连击提示，命中率会计入战后战报</li>
       </ul>
     </div>
   </div>
@@ -55,8 +57,9 @@
   <div id="game-over-modal" class="modal">
     <div class="modal-content game-over-content">
       <h2 id="game-over-title" class="game-over-title"></h2>
-      <p id="game-over-msg" style="font-size: 1.2rem; margin-bottom: 30px; color: #cbd5e0;"></p>
-      <div style="display: flex; gap: 10px; justify-content: center;">
+      <p id="game-over-msg" style="font-size: 1.2rem; margin-bottom: 20px; color: #cbd5e0;"></p>
+      <div id="game-over-stats" class="game-over-stats"></div>
+      <div style="display: flex; gap: 10px; justify-content: center; margin-top: 25px;">
         <button class="btn-blue" data-action="view-battlefield" style="font-size: 1.2rem; padding: 12px 20px;">👀 查看战场</button>
         <button class="btn-restart" data-action="restart-game" style="font-size: 1.2rem; padding: 12px 20px;">🔄 重新开始</button>
       </div>
@@ -139,7 +142,16 @@
       <div class="dock-container" id="dock"></div>
 
       <div class="control-group">
-        <div style="font-size: 12px; color: #a0aec0; margin-bottom: 2px;">AI 难度</div>
+        <div class="faction-row">
+          <label class="fs-label" for="faction-player">我方阵营</label>
+          <select id="faction-player" class="faction-select"></select>
+        </div>
+        <div class="faction-row">
+          <label class="fs-label" for="faction-enemy">敌方阵营</label>
+          <select id="faction-enemy" class="faction-select"></select>
+        </div>
+
+        <div class="diff-label" style="font-size: 12px; color: #a0aec0; margin-bottom: 2px;">AI 难度</div>
         <div class="difficulty-bar" id="diff-bar">
           <button class="diff-btn" data-difficulty="EASY">新兵 (简单)</button>
           <button class="diff-btn" data-difficulty="NORMAL">舰长 (困难)</button>
@@ -156,6 +168,8 @@
     <div class="center-area">
       <div class="toggle-btn toggle-left" data-panel-toggle="left" title="切换装备区">◀</div>
       <div class="toggle-btn toggle-right" data-panel-toggle="right" title="切换日志区">▶</div>
+
+      <div id="turn-indicator" class="turn-indicator"></div>
 
       <div class="scroll-view">
         <div class="battlefield">

@@ -2,8 +2,8 @@
 // 空袭武器实现
 
 import { WeaponBase } from './WeaponBase.js';
-import { resolveMultiHit } from '../battle/HitResolver.js';
-import { createLogEvent, isInBounds } from './WeaponTypes.js';
+import { resolveHit } from '../battle/HitResolver.js';
+import { createLogEvent, createEffectEvent, isInBounds } from './WeaponTypes.js';
 
 /**
  * 空袭武器
@@ -62,23 +62,41 @@ export class HEWeapon extends WeaponBase {
             return true;
         });
         
-        // 批量结算
-        const result = resolveMultiHit(
-            validCells,
-            1,  // 空袭每格伤害 1
-            context.defenderGrid,
-            context.defenderShips,
-            context.isPlayer
-        );
+        // 逐格结算（便于为每个命中点生成特效事件）
+        const events = [];
+        const shipsSunk = [];
+        const damagePoints = [];
+        
+        for (const cell of validCells) {
+            const result = resolveHit(
+                cell.r, cell.c, 1,
+                context.defenderGrid,
+                context.defenderShips,
+                context.isPlayer
+            );
+            events.push(...result.events);
+            if (result.sunk) {
+                shipsSunk.push(result.hitShip.id);
+            }
+            if (result.hitShip && result.events.length > 0) {
+                damagePoints.push({ r: cell.r, c: cell.c, amount: 1 });
+            }
+        }
         
         // 添加攻击日志
         const logClass = context.isPlayer ? 'c-p' : 'c-e';
         const prefix = context.isPlayer ? '呼叫' : '敌方发动';
-        result.events.unshift(createLogEvent(
+        events.unshift(createLogEvent(
             `${prefix}空袭覆盖 (${r + 1},${c + 1}) 周边，打击点数: ${validCells.length}`,
             logClass
         ));
         
-        return { events: result.events, shipsSunk: result.shipsSunk };
+        // 特效：机群掠过 + 每个命中点的伤害数字
+        events.splice(1, 0, createEffectEvent('AIRSTRIKE', { r, c }));
+        for (const p of damagePoints) {
+            events.push(createEffectEvent('DAMAGE', p));
+        }
+        
+        return { events, shipsSunk };
     }
 }

@@ -14,10 +14,10 @@ export const INTERACTION_TIMING = {
         TURN_BACK_DELAY: 1000     // AI 操作后，切换回敌方视角的延迟
     },
     
-    // 桌面端延迟设置 (无需视角切换，节奏更快)
+    // 桌面端延迟设置 (无视角切换，但保留攻击动画的展示时间)
     DESKTOP: {
         VIEW_SWITCH_DELAY: 0,     // 桌面端无视角切换，设为0
-        AI_ACTION_DELAY: 0,     // AI 延迟
+        AI_ACTION_DELAY: 700,    // 留出爆炸/沉船动画时间再让 AI 行动
         TURN_BACK_DELAY: 0        // 桌面端无视角切换
     }
 };
