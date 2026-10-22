@@ -42,27 +42,40 @@ const LAYOUTS = {
     BB: {
         us: { beam: 44, turrets: [[42, 3, 'l'], [70, 3, 'l', 1], [178, 3, 'r']],
               bridge: { x: 86, w: 40, style: 'tower' }, funnels: [[136, 15, 10], [150, 12, 8]],
-              aa: [112, 160], catapult: 1, plane: 1 },
+              aa: [112, 160], aa40: [95, 120, 166], rafts: [34, 106, 120, 168],
+              boats: [[130, -1, 15], [130, 1, 15], [151, -1, 11], [151, 1, 11]],
+              catapult: 1, plane: 1 },
         ijn: { beam: 48, turrets: [[42, 3, 'l'], [70, 3, 'l', 1], [178, 3, 'r']],
               bridge: { x: 86, w: 42, style: 'pagoda' }, funnels: [[142, 22, 15, 1]],
-              aa: [110], catapult: 2, plane: 2 },
+              aa: [110], aa40: [98, 120, 166], rafts: [34, 92, 120, 166],
+              boats: [[132, -1, 14], [132, 1, 14], [154, -1, 11], [154, 1, 11]],
+              catapult: 2, plane: 2 },
         rn: { beam: 44, turrets: [[42, 4, 'l'], [70, 4, 'l', 1], [184, 2, 'r']],
               bridge: { x: 92, w: 44, style: 'tower' }, funnels: [[150, 15, 10], [164, 12, 8]],
-              aa: [144, 176], catapult: 1, plane: 1 },
+              aa: [144, 176], aa40: [104, 138, 186], rafts: [34, 110, 168],
+              boats: [[126, -1, 14], [126, 1, 14], [158, -1, 14], [158, 1, 14]],
+              catapult: 1, plane: 1 },
         km: { beam: 44, turrets: [[42, 2, 'l'], [70, 2, 'l', 1], [172, 2, 'r', 1], [200, 2, 'r']],
               bridge: { x: 86, w: 42, style: 'flat' }, funnels: [[140, 21, 14]],
-              aa: [118, 156] },
+              aa: [118, 156], aa40: [104, 170, 184], rafts: [34, 108, 138, 178],
+              boats: [[130, -1, 14], [130, 1, 14], [146, -1, 11], [146, 1, 11]] },
         // 黎塞留：两座四联装全前置；后部上层建筑三座三联 152 副炮（艏向一座 + 艉向叠炮两座）
         fn: { beam: 44, turrets: [[44, 4, 'l'], [84, 4, 'l', 1]],
               sec: [[170, 3, 'l'], [200, 3, 'r'], [186, 3, 'r', 1]],
               bridge: { x: 104, w: 38, style: 'tower' }, funnels: [[148, 15, 12]],
-              aa: [150, 194], plane: 1 },
+              aa: [150, 194], aa40: [112, 128, 184], rafts: [34, 120, 176],
+              boats: [[138, -1, 12], [138, 1, 12], [160, -1, 10], [160, 1, 10]],
+              plane: 1 },
         rm: { beam: 44, turrets: [[42, 3, 'l'], [70, 3, 'l', 1], [180, 3, 'r']],
               bridge: { x: 88, w: 40, style: 'tower' }, funnels: [[142, 14, 9, 1], [155, 11, 8, 1]],
-              aa: [136, 166], catapult: 1, plane: 1 },
+              aa: [136, 166], aa40: [110, 146, 176], rafts: [34, 118, 188],
+              boats: [[124, -1, 14], [124, 1, 14], [156, -1, 11], [156, 1, 11]],
+              catapult: 1, plane: 1 },
         sn: { beam: 48, turrets: [[42, 3, 'l'], [70, 3, 'l', 1], [180, 3, 'r']],
               bridge: { x: 86, w: 36, style: 'tower' }, funnels: [[132, 19, 12], [151, 13, 9]],
-              aa: [112, 160], badge: 1, catapult: 1 }
+              aa: [112, 160], aa40: [102, 124, 170], rafts: [34, 106, 186],
+              boats: [[134, -1, 14], [134, 1, 14], [148, -1, 11], [148, 1, 11]],
+              badge: 1, catapult: 1 }
     },
     CV: {
         // deck 按各国实舰俯视平面：hw=甲板半宽, nose=艏端半宽, stern=艉部圆弧深度
@@ -108,30 +121,44 @@ const LAYOUTS = {
     CL: {
         // 克利夫兰级：4 座三联装；巴尔的摩式重巡也归入本类
         us: { turrets: [[28, 3, 'l'], [50, 3, 'l', 1], [120, 3, 'r', 1], [140, 3, 'r']],
-              bridge: { x: 68, w: 22, style: 'tower' }, funnels: [[96, 10, 6], [107, 10, 6]], aa: [58] },
+              bridge: { x: 68, w: 22, style: 'tower' }, funnels: [[96, 10, 6], [107, 10, 6]],
+              aa: [58], aa40: [78, 116, 136], rafts: [84, 130, 152],
+              boats: [[94, -1, 9], [94, 1, 9], [106, -1, 7], [106, 1, 7]] },
         // 最上级（建造时）：5 座三联装，艏部两座叠炮、烟囱后一座前向、艉部两座
         ijn: { turrets: [[26, 3, 'l'], [44, 3, 'l', 1], [127, 3, 'l'], [141, 3, 'r', 1], [156, 3, 'r']],
               bridge: { x: 72, w: 24, style: 'pagoda' }, funnels: [[96, 12, 8, 1], [108, 10, 8, 1]],
-              aa: [94], torp: [[134, 3, -1, 7], [134, 3, 1, 7]] },
+              aa: [94], aa40: [82, 128, 146], rafts: [64, 86, 152],
+              boats: [[104, -1, 9], [104, 1, 9], [118, -1, 7], [118, 1, 7]],
+              torp: [[134, 3, -1, 7], [134, 3, 1, 7]] },
         // 城级：4 座三联装，两舷各一具三联鱼雷发射管
         rn: { turrets: [[30, 3, 'l'], [54, 3, 'l', 1], [127, 3, 'r', 1], [147, 3, 'r']],
-              bridge: { x: 74, w: 22, style: 'tower' }, funnels: [[103, 10, 8], [113, 10, 8]], aa: [66],
+              bridge: { x: 74, w: 22, style: 'tower' }, funnels: [[103, 10, 8], [113, 10, 8]],
+              aa: [66], aa40: [82, 130, 144], rafts: [54, 88, 154],
+              boats: [[100, -1, 9], [100, 1, 9], [112, -1, 7], [112, 1, 7]],
               torp: [[121, 3, -1, 7], [121, 3, 1, 7]] },
         // 希佩尔级：4 座双联装，两舷各两具三联鱼雷发射管
         km: { turrets: [[30, 2, 'l'], [54, 2, 'l', 1], [130, 2, 'r', 1], [148, 2, 'r']],
-              bridge: { x: 78, w: 26, style: 'tower' }, funnels: [[112, 16, 9, 1]], aa: [70],
+              bridge: { x: 78, w: 26, style: 'tower' }, funnels: [[112, 16, 9, 1]],
+              aa: [70], aa40: [80, 110, 142], rafts: [60, 96, 156],
+              boats: [[122, -1, 9], [122, 1, 9], [136, -1, 7], [136, 1, 7]],
               torp: [[90, 3, -1, 6.5], [99, 3, -1, 6.5], [90, 3, 1, 6.5], [99, 3, 1, 6.5]] },
         // 拉加利索尼埃级：3 座三联装（前二后一），两舷各一具三联鱼雷发射管
         fn: { turrets: [[28, 3, 'l'], [52, 3, 'l', 1], [142, 3, 'r']],
-              bridge: { x: 70, w: 22, style: 'tower' }, funnels: [[100, 11, 9, 1], [111, 10, 8, 1]], aa: [66],
+              bridge: { x: 70, w: 22, style: 'tower' }, funnels: [[100, 11, 9, 1], [111, 10, 8, 1]],
+              aa: [66], aa40: [80, 128, 142], rafts: [60, 88, 152],
+              boats: [[96, -1, 9], [96, 1, 9], [108, -1, 7], [108, 1, 7]],
               torp: [[122, 3, -1, 7], [122, 3, 1, 7]] },
         // 扎拉级：4 座双联装，无鱼雷管
         rm: { turrets: [[30, 2, 'l'], [54, 2, 'l', 1], [127, 2, 'r', 1], [147, 2, 'r']],
-              bridge: { x: 76, w: 20, style: 'tower' }, funnels: [[102, 12, 8, 1], [113, 10, 7, 1]], aa: [64] },
+              bridge: { x: 76, w: 20, style: 'tower' }, funnels: [[102, 12, 8, 1], [113, 10, 7, 1]],
+              aa: [64], aa40: [84, 122, 140], rafts: [60, 88, 152],
+              boats: [[98, -1, 9], [98, 1, 9], [112, -1, 7], [112, 1, 7]] },
         // 基洛夫级：3 座三联装，两舷各一具三联鱼雷发射管
         sn: { turrets: [[30, 3, 'l'], [58, 3, 'l', 1], [140, 3, 'r']],
               bridge: { x: 74, w: 24, style: 'tower' }, funnels: [[104, 12, 8], [116, 12, 8]],
-              aa: [66], torp: [[120, 3, -1, 6.5], [120, 3, 1, 6.5]], badge: 1 }
+              aa: [66], aa40: [84, 126, 142], rafts: [62, 88, 156],
+              boats: [[100, -1, 9], [100, 1, 9], [112, -1, 7], [112, 1, 7]],
+              torp: [[120, 3, -1, 6.5], [120, 3, 1, 6.5]], badge: 1 }
     },
     DD: {
         // 弗莱彻级：5 座单装（前二后三），两具五联装鱼雷
@@ -352,16 +379,28 @@ function superstructure(x, w, cy, beam, style, P, id) {
     const f = (v) => (+v).toFixed(1);
     const h = beam * (style === 'flat' ? 0.46 : 0.5);
     const top = cy - h / 2;
-    const ch = Math.min(2.2, w * 0.08);
     const cham = (bx, by, bw, bh, c = 1.4) =>
         `M ${f(bx + c)} ${f(by)} L ${f(bx + bw - c)} ${f(by)} L ${f(bx + bw)} ${f(by + c)} L ${f(bx + bw)} ${f(by + bh - c)} L ${f(bx + bw - c)} ${f(by + bh)} L ${f(bx + c)} ${f(by + bh)} L ${f(bx)} ${f(by + bh - c)} L ${f(bx)} ${f(by + c)} Z`;
-    const taper = h * 0.12;
-    const houseD = `M ${f(x + ch)} ${f(top + taper)} L ${f(x + w - ch)} ${f(top)} L ${f(x + w)} ${f(top + ch)} L ${f(x + w)} ${f(top + h - ch)} L ${f(x + w - ch)} ${f(top + h)} L ${f(x + ch)} ${f(top + h - taper)} L ${f(x)} ${f(top + h - ch - taper)} L ${f(x)} ${f(top + ch + taper)} Z`;
     // 全部细节按俯视屋顶绘制：只做浅投影，不画立面窗带
-    const roof = (bx, by, bw, bh, c = 1.3) => {
-        let q = `<path d="${cham(bx + 1.0, by + 1.3, bw, bh, c)}" fill="${P.outline}" opacity="0.32"/>`;
-        q += `<path d="${cham(bx, by, bw, bh, c)}" fill="url(#${id}-gSup)" stroke="${P.outline}" stroke-width="0.5"/>`;
-        q += `<path d="${cham(bx + 0.8, by + 0.8, bw - 1.6, bh - 1.6, Math.max(0.5, c - 0.4))}" fill="none" stroke="${P.sup}" stroke-width="0.32" opacity="0.4"/>`;
+    const block = (bx, by, bw, bh, c, fill, opt = {}) => {
+        let q = `<path d="${cham(bx + 1.0, by + 1.3, bw, bh, c)}" fill="${P.outline}" opacity="${opt.shadow ?? 0.36}"/>`;
+        q += `<path d="${cham(bx, by, bw, bh, c)}" fill="${fill}" stroke="${P.outline}" stroke-width="${opt.sw ?? 0.55}"/>`;
+        q += `<path d="${cham(bx + 0.85, by + 0.85, bw - 1.7, bh - 1.7, Math.max(0.4, c - 0.35))}" fill="none" stroke="${opt.rim || P.sup}" stroke-width="0.24" opacity="${opt.rimOp ?? 0.34}"/>`;
+        if (opt.rail) {
+            q += `<path d="${cham(bx + 1.8, by + 1.8, bw - 3.6, bh - 3.6, Math.max(0.35, c - 0.6))}" fill="none" stroke="${mixHex(P.sup, '#ffffff', 0.25)}" stroke-width="0.28" stroke-dasharray="1.6 1.9" opacity="0.24"/>`;
+        }
+        return q;
+    };
+    // 两舷舰桥翼台：敞开式平台，颜色压深以区别于舰桥顶面
+    const wings = (bx, by, bw, bh) => {
+        let q = '';
+        for (const sy of [-1, 1]) {
+            const wy = sy < 0 ? by - 1.9 : by + bh;
+            const wingFill = mixHex(P.supLo, P.outline, 0.2);
+            q += `<rect x="${f(bx + 2.2)}" y="${f(wy)}" width="${f(bw - 4.4)}" height="1.9" rx="0.35" fill="${wingFill}" stroke="${P.outline}" stroke-width="0.3"/>`;
+            q += `<line x1="${f(bx + 3.0)}" y1="${f(wy + 0.62)}" x2="${f(bx + bw - 3.0)}" y2="${f(wy + 0.62)}" stroke="${P.sup}" stroke-width="0.2" opacity="0.4"/>`;
+            q += `<line x1="${f(bx + 3.0)}" y1="${f(wy + (sy < 0 ? 0.16 : 1.74))}" x2="${f(bx + bw - 3.0)}" y2="${f(wy + (sy < 0 ? 0.16 : 1.74))}" stroke="${P.sup}" stroke-width="0.24" stroke-dasharray="1.1 1.3" opacity="0.5"/>`;
+        }
         return q;
     };
     const hatch = (hx, hy, hw = 2.4, hh = 1.5) => {
@@ -382,14 +421,6 @@ function superstructure(x, w, cy, beam, style, P, id) {
         q += `<line x1="${f(cx - r * 0.55)}" y1="${f(cy0)}" x2="${f(cx + r * 0.55)}" y2="${f(cy0)}" stroke="${P.outline}" stroke-width="0.3" opacity="0.55"/>`;
         return q;
     };
-    const wings = (bx, by, bw) => {
-        let q = `<rect x="${f(bx - 1.9)}" y="${f(by)}" width="${f(bw + 3.8)}" height="1.4" rx="0.4" fill="${mixHex(P.sup, P.supLo, 0.42)}" stroke="${P.outline}" stroke-width="0.3"/>`;
-        q += `<line x1="${f(bx - 1.5)}" y1="${f(by + 0.42)}" x2="${f(bx + bw + 1.5)}" y2="${f(by + 0.42)}" stroke="${P.sup}" stroke-width="0.3" opacity="0.65"/>`;
-        for (const sx of [bx - 1.3, bx + bw + 0.9]) {
-            q += `<circle cx="${f(sx)}" cy="${f(by + 0.72)}" r="0.42" fill="${P.accent}" opacity="0.9"/>`;
-        }
-        return q;
-    };
     const mastBase = (mx, my) => {
         let q = `<circle cx="${f(mx + 0.6)}" cy="${f(my + 0.9)}" r="1.4" fill="${P.outline}" opacity="0.3"/>`;
         q += `<circle cx="${f(mx)}" cy="${f(my)}" r="1.25" fill="${P.supLo}" stroke="${P.outline}" stroke-width="0.35"/>`;
@@ -398,56 +429,85 @@ function superstructure(x, w, cy, beam, style, P, id) {
         return q;
     };
 
-    let s = `<path d="${houseD}" transform="translate(1.2,2.2)" fill="${P.outline}" opacity="0.4"/>`;
-    s += `<path d="${houseD}" fill="url(#${id}-gSup)" stroke="${P.outline}" stroke-width="0.75" filter="url(#${id}-fPart)"/>`;
-    // 屋顶铺板缝与天窗/通风口（俯视可见物）
-    for (let sx = x + ch + 6; sx < x + w - ch - 5; sx += 7.5) {
-        s += `<line x1="${f(sx)}" y1="${f(top + 2.2)}" x2="${f(sx)}" y2="${f(top + h - 2.2)}" stroke="${P.outline}" stroke-width="0.2" opacity="0.1"/>`;
+    // 底层深色甲板室：大块压底，上部再叠浅色阶梯，避免整块亮色屋顶
+    let s = block(x + 0.6, top + 1.1, w - 1.2, h - 2.2, 1.7, `url(#${id}-gSupBase)`,
+        { sw: 0.85, shadow: 0.44, rim: P.hullHi, rimOp: 0.2, rail: true });
+    for (let sx = x + 5.5; sx < x + w - 4.5; sx += 6.4) {
+        s += `<line x1="${f(sx)}" y1="${f(top + 3)}" x2="${f(sx)}" y2="${f(top + h - 3)}" stroke="${P.outline}" stroke-width="0.2" opacity="0.16"/>`;
     }
-    s += hatch(x + 4.2, top + h - 4.2, Math.min(3.8, w * 0.13), 1.5);
-    s += fan(x + w - 4.6, top + h - 3.4, 0.8);
+    for (const ty of [0.33, 0.67]) {
+        s += `<line x1="${f(x + 2.2)}" y1="${f(top + h * ty)}" x2="${f(x + w - 2.2)}" y2="${f(top + h * ty)}" stroke="${P.outline}" stroke-width="0.24" opacity="0.12"/>`;
+    }
+    s += hatch(x + w * 0.035, top + h * 0.46, 2.2, 1.4);
+    s += fan(x + w * 0.035, top + h * 0.68, 0.75);
 
     if (style === 'pagoda') {
-        // 日系塔式舰桥：逐层收窄的屋顶平台 + 顶部测距仪
-        const t1 = [x + w * 0.12, top + h * 0.05, w * 0.64, h * 0.56];
-        const t2 = [x + w * 0.24, top + h * 0.14, w * 0.4, h * 0.36];
-        const t3 = [x + w * 0.34, top + h * 0.22, w * 0.22, h * 0.2];
-        s += roof(t1[0], t1[1], t1[2], t1[3], 1.3);
-        s += wings(t1[0] + 1, t1[1] + t1[3] * 0.8, t1[2] - 2);
-        s += roof(t2[0], t2[1], t2[2], t2[3], 1.1);
-        s += roof(t3[0], t3[1], t3[2], t3[3], 0.9);
-        s += director(t3[0] + t3[2] * 0.5, t3[1] + t3[3] * 0.56, Math.min(1.7, t3[2] * 0.3));
-        s += mastBase(t1[0] + t1[2] * 0.76, t1[1] + t1[3] * 0.38);
+        // 日系塔式舰桥：深色基座 + 逐层收窄的浅色屋顶平台
+        const t1 = [x + w * 0.10, top + h * 0.20, w * 0.62, h * 0.60];
+        s += block(t1[0], t1[1], t1[2], t1[3], 1.4, mixHex(P.sup, P.supLo, 0.48), { rail: true, shadow: 0.4, sw: 0.6 });
+        s += `<line x1="${f(t1[0] + 1.2)}" y1="${f(t1[1] + t1[3] * 0.22)}" x2="${f(t1[0] + 1.2)}" y2="${f(t1[1] + t1[3] * 0.78)}" stroke="${P.outline}" stroke-width="1.05" opacity="0.5"/>`;
+        s += wings(t1[0], t1[1], t1[2], t1[3]);
+        const t2 = [t1[0] + w * 0.10, t1[1] + h * 0.10, t1[2] * 0.58, t1[3] * 0.6];
+        s += block(t2[0], t2[1], t2[2], t2[3], 1.1, mixHex(P.sup, P.supLo, 0.18), { shadow: 0.34, sw: 0.45, rail: true, rim: P.sup, rimOp: 0.22 });
+        const t3 = [t2[0] + t2[2] * 0.16, t2[1] + t2[3] * 0.25, t2[2] * 0.52, t2[3] * 0.5];
+        s += block(t3[0], t3[1], t3[2], t3[3], 0.8, mixHex(P.sup, '#ffffff', 0.03), { shadow: 0.26, sw: 0.4 });
+        s += director(t3[0] + t3[2] * 0.5, t3[1] + t3[3] * 0.56, Math.min(1.5, t3[2] * 0.3));
+        s += mastBase(t2[0] + t2[2] * 0.78, t2[1] + t2[3] * 0.36);
+        const af = [x + w * 0.76, top + h * 0.3, w * 0.19, h * 0.4];
+        s += block(af[0], af[1], af[2], af[3], 0.9, mixHex(P.supLo, P.sup, 0.35), { shadow: 0.28, sw: 0.4 });
+        s += hatch(af[0] + af[2] * 0.24, af[1] + af[3] * 0.5, 1.8, 1.2);
     } else if (style === 'flat') {
         // 德系：方正装甲舰桥 + 圆形装甲指挥塔
-        const bw = w * 0.46, bx = x + w * 0.24, by = top + h * 0.06, bh = h * 0.6;
-        s += roof(bx, by, bw, bh, 1.1);
-        const cxx = bx + bw * 0.24, cyy = by + bh * 0.58, cr = Math.min(3.2, bh * 0.3);
+        const b = [x + w * 0.14, top + h * 0.18, w * 0.52, h * 0.64];
+        s += block(b[0], b[1], b[2], b[3], 1.3, mixHex(P.sup, P.supLo, 0.52), { rail: true, shadow: 0.42, sw: 0.6 });
+        s += `<line x1="${f(b[0] + 1.2)}" y1="${f(b[1] + b[3] * 0.2)}" x2="${f(b[0] + 1.2)}" y2="${f(b[1] + b[3] * 0.8)}" stroke="${P.outline}" stroke-width="1.15" opacity="0.55"/>`;
+        s += wings(b[0], b[1], b[2], b[3]);
+        const arm = [b[0] + b[2] * 0.10, b[1] + b[3] * 0.25, b[2] * 0.40, b[3] * 0.5];
+        s += block(arm[0], arm[1], arm[2], arm[3], 1.0, mixHex(P.sup, P.supLo, 0.28), { shadow: 0.34, sw: 0.5, rail: true, rim: P.sup, rimOp: 0.22 });
+        const cxx = arm[0] + arm[2] * 0.34, cyy = arm[1] + arm[3] * 0.58, cr = Math.min(3.0, arm[3] * 0.28);
         s += `<circle cx="${f(cxx + 0.7)}" cy="${f(cyy + 0.9)}" r="${f(cr)}" fill="${P.outline}" opacity="0.38"/>`;
         s += `<circle cx="${f(cxx)}" cy="${f(cyy)}" r="${f(cr)}" fill="${mixHex(P.supLo, P.outline, 0.22)}" stroke="${P.outline}" stroke-width="0.5"/>`;
         s += `<circle cx="${f(cxx)}" cy="${f(cyy)}" r="${f(cr * 0.55)}" fill="url(#${id}-gTur)" stroke="${P.outline}" stroke-width="0.3"/>`;
         s += `<path d="M ${f(cxx - cr * 0.8)} ${f(cyy - cr * 0.2)} A ${f(cr * 0.8)} ${f(cr * 0.8)} 0 0 1 ${f(cxx + cr * 0.2)} ${f(cyy - cr * 0.76)}" fill="none" stroke="${P.sup}" stroke-width="0.35" opacity="0.6"/>`;
-        s += director(bx + bw * 0.72, by + bh * 0.3, Math.min(1.6, bw * 0.08));
-        s += wings(bx + 1, by + bh * 0.82, bw - 2);
-        s += hatch(bx + bw * 0.4, by + bh * 0.64, 2.6, 1.5);
-        s += mastBase(bx + bw * 0.58, by + bh * 0.16);
+        s += director(arm[0] + arm[2] * 0.78, arm[1] + arm[3] * 0.3, Math.min(1.5, arm[2] * 0.18));
+        s += hatch(arm[0] + arm[2] * 0.36, arm[1] + arm[3] * 0.82, 2.2, 1.3);
+        s += mastBase(arm[0] + arm[2] * 0.62, arm[1] + arm[3] * 0.14);
+        const af = [x + w * 0.70, top + h * 0.28, w * 0.26, h * 0.44];
+        s += block(af[0], af[1], af[2], af[3], 0.9, mixHex(P.supLo, P.sup, 0.35), { shadow: 0.28, sw: 0.45 });
+        s += hatch(af[0] + af[2] * 0.26, af[1] + af[3] * 0.5, 2.0, 1.3);
+        s += fan(af[0] + af[2] * 0.72, af[1] + af[3] * 0.52, 0.6);
     } else {
-        // 美/英/法/意/苏：前部方形舰桥 + 后部甲板室、轻量塔架
-        const bw = w * 0.5, bx = x + w * 0.17, by = top + h * 0.05, bh = h * 0.56;
-        s += roof(bx, by, bw, bh, 1.2);
-        s += wings(bx + 0.8, by + bh * 0.82, bw - 1.6);
-        const ux = bx + bw * 0.12, uy = by + bh * 0.16, uw = bw * 0.46, uh = bh * 0.36;
-        s += roof(ux, uy, uw, uh, 0.9);
-        s += director(ux + uw * 0.62, uy + uh * 0.5, Math.min(1.35, uw * 0.2));
-        s += hatch(bx + bw * 0.64, by + bh * 0.5, 2.6, 1.6);
-        s += fan(bx + bw * 0.78, by + bh * 0.66, 0.75);
-        s += mastBase(bx + bw - 2.4, by + bh - 1.6);
+        // 美/英/法/意/苏：前部航海舰桥 + 后部甲板室
+        const b = [x + w * 0.15, top + h * 0.17, w * 0.48, h * 0.66];
+        s += block(b[0], b[1], b[2], b[3], 1.3, mixHex(P.sup, P.supLo, 0.55), { rail: true, shadow: 0.42, sw: 0.6, rim: P.sup, rimOp: 0.26 });
+        for (const sy of [0.3, 0.55, 0.8]) {
+            s += `<line x1="${f(b[0] + 1.8)}" y1="${f(b[1] + b[3] * sy)}" x2="${f(b[0] + b[2] - 1.8)}" y2="${f(b[1] + b[3] * sy)}" stroke="${P.outline}" stroke-width="0.2" opacity="0.14"/>`;
+        }
+        for (const sx of [0.34, 0.62]) {
+            s += `<line x1="${f(b[0] + b[2] * sx)}" y1="${f(b[1] + 1.6)}" x2="${f(b[0] + b[2] * sx)}" y2="${f(b[1] + b[3] - 1.6)}" stroke="${P.outline}" stroke-width="0.2" opacity="0.12"/>`;
+        }
+        s += `<line x1="${f(b[0] + 1.2)}" y1="${f(b[1] + b[3] * 0.2)}" x2="${f(b[0] + 1.2)}" y2="${f(b[1] + b[3] * 0.8)}" stroke="${P.outline}" stroke-width="1.15" opacity="0.55"/>`;
+        s += `<line x1="${f(b[0] + 2.3)}" y1="${f(b[1] + b[3] * 0.24)}" x2="${f(b[0] + 2.3)}" y2="${f(b[1] + b[3] * 0.76)}" stroke="${P.sup}" stroke-width="0.3" opacity="0.3"/>`;
+        s += wings(b[0], b[1], b[2], b[3]);
+        // 中层装甲指挥室压深，顶层再抬一层小罗经平台
+        const u = [b[0] + b[2] * 0.28, b[1] + b[3] * 0.28, b[2] * 0.42, b[3] * 0.44];
+        s += block(u[0], u[1], u[2], u[3], 0.8, mixHex(P.sup, P.supLo, 0.22), { shadow: 0.36, sw: 0.45, rail: true, rim: P.sup, rimOp: 0.24 });
+        s += hatch(u[0] + u[2] * 0.56, u[1] + u[3] * 0.8, 1.6, 1.0);
+        const t = [u[0] + u[2] * 0.24, u[1] + u[3] * 0.23, u[2] * 0.5, u[3] * 0.54];
+        s += block(t[0], t[1], t[2], t[3], 0.6, mixHex(P.sup, '#ffffff', 0.04), { shadow: 0.26, sw: 0.35 });
+        s += director(t[0] + t[2] * 0.66, t[1] + t[3] * 0.5, Math.min(1.2, t[2] * 0.28));
+        s += hatch(b[0] + b[2] * 0.56, b[1] + b[3] * 0.03, 1.5, 0.9);
+        s += hatch(b[0] + b[2] * 0.56, b[1] + b[3] * 0.9, 1.5, 0.9);
+        const af = [x + w * 0.68, top + h * 0.28, w * 0.28, h * 0.44];
+        s += block(af[0], af[1], af[2], af[3], 0.9, mixHex(P.supLo, P.sup, 0.35), { shadow: 0.28, sw: 0.45 });
+        s += hatch(af[0] + af[2] * 0.22, af[1] + af[3] * 0.5, 2.0, 1.3);
+        s += fan(af[0] + af[2] * 0.74, af[1] + af[3] * 0.55, 0.6);
     }
     return s;
 }
 
-function aaMounts(xs, cy, beam, P) {
-    // 两舷的双联高平两用炮座
+function aaMounts(xs, cy, beam, P, xs40 = [], code = 'BB') {
+    // 两舷的双联高平两用炮座，以及 40mm 四联装炮座
     const y1 = cy - beam * 0.38, y2 = cy + beam * 0.38;
     let s = '';
     for (const x of (xs || [])) {
@@ -458,6 +518,12 @@ function aaMounts(xs, cy, beam, P) {
             s += `<line x1="1" y1="${sy * 1.1}" x2="1.9" y2="${sy * 3.9}" stroke="${P.barrel}" stroke-width="0.7" stroke-linecap="round"/>`;
             s += `<line x1="-2.4" y1="-0.9" x2="2.4" y2="-0.9" stroke="${P.sup}" stroke-width="0.4" opacity="0.55"/>`;
             s += `</g>`;
+        }
+    }
+    const k = code === 'CL' ? 0.82 : 1;
+    for (const x of (xs40 || [])) {
+        for (const [y, sy] of [[cy - beam * 0.355, -1], [cy + beam * 0.355, 1]]) {
+            s += quadAA(x, y, P, sy, k);
         }
     }
     return s;
@@ -563,6 +629,264 @@ function catapult(x, y, len, P, scale = 1) {
     }
     return out;
 }
+
+// ---------- 甲板属具（俯视线图细节） ----------
+
+// 甲板边缘在指定 x 处的半宽：取船体上缘折线插值
+function hullEdgeAt(pts, x, cy) {
+    let y = null;
+    for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        if (a[1] > cy + 0.01 || b[1] > cy + 0.01) continue;
+        const dx = b[0] - a[0];
+        if (Math.abs(dx) < 0.001) continue;
+        const t = (x - a[0]) / dx;
+        if (t >= -0.001 && t <= 1.001) y = a[1] + (b[1] - a[1]) * t;
+    }
+    return y == null ? cy : y;
+}
+
+function deckEdgeY(deckPts, x, cy, side) {
+    const y = hullEdgeAt(deckPts, x, cy);
+    return side < 0 ? y : 2 * cy - y;
+}
+
+function deckCapstan(x, y, P, id, k = 1) {
+    const f = (v) => (+v).toFixed(1);
+    let s = `<circle cx="${f(x + 0.5 * k)}" cy="${f(y + 0.8 * k)}" r="${f(2 * k)}" fill="${P.outline}" opacity="0.28"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(1.9 * k)}" fill="${mixHex(P.supLo, P.outline, 0.18)}" stroke="${P.outline}" stroke-width="0.4"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(1.2 * k)}" fill="url(#${id}-gTur)" stroke="${P.outline}" stroke-width="0.26"/>`;
+    for (let i = 0; i < 6; i++) {
+        const a = i * Math.PI / 3 + 0.5;
+        s += `<line x1="${f(x + Math.cos(a) * 0.45 * k)}" y1="${f(y + Math.sin(a) * 0.45 * k)}" x2="${f(x + Math.cos(a) * 1.02 * k)}" y2="${f(y + Math.sin(a) * 1.02 * k)}" stroke="${P.outline}" stroke-width="0.18" opacity="0.7"/>`;
+    }
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(0.35 * k)}" fill="${mixHex(P.sup, '#ffffff', 0.25)}" stroke="${P.outline}" stroke-width="0.14"/>`;
+    return s;
+}
+
+function deckBollard(x, y, P, k = 1) {
+    const f = (v) => (+v).toFixed(1);
+    let s = `<rect x="${f(x - 1.9 * k)}" y="${f(y - 0.75 * k)}" width="${f(3.8 * k)}" height="${f(1.5 * k)}" rx="${f(0.4 * k)}" fill="${mixHex(P.deckLo, P.outline, 0.28)}" stroke="${P.outline}" stroke-width="0.2" opacity="0.85"/>`;
+    for (const dx of [-0.75, 0.75]) {
+        s += `<circle cx="${f(x + dx * k)}" cy="${f(y)}" r="${f(0.5 * k)}" fill="${mixHex(P.supLo, P.outline, 0.35)}" stroke="${P.outline}" stroke-width="0.2"/>`;
+        s += `<circle cx="${f(x + (dx - 0.12) * k)}" cy="${f(y - 0.14 * k)}" r="${f(0.16 * k)}" fill="${mixHex(P.sup, '#ffffff', 0.5)}" opacity="0.6"/>`;
+    }
+    return s;
+}
+
+function deckHatch(x, y, w, h, P, rot = 0) {
+    const f = (v) => (+v).toFixed(1);
+    let s = `<g transform="translate(${f(x)},${f(y)}) rotate(${rot})">`;
+    s += `<rect x="${f(-w / 2 - 0.4)}" y="${f(-h / 2 - 0.4)}" width="${f(w + 0.8)}" height="${f(h + 0.8)}" rx="0.5" fill="${P.outline}" opacity="0.25"/>`;
+    s += `<rect x="${f(-w / 2)}" y="${f(-h / 2)}" width="${f(w)}" height="${f(h)}" rx="0.45" fill="${mixHex(P.deckLo, P.supLo, 0.5)}" stroke="${P.outline}" stroke-width="0.28"/>`;
+    s += `<rect x="${f(-w / 2 + 0.45)}" y="${f(-h / 2 + 0.45)}" width="${f(w - 0.9)}" height="${f(h - 0.9)}" rx="0.3" fill="none" stroke="${P.hullHi}" stroke-width="0.18" opacity="0.32"/>`;
+    s += `<line x1="${f(-w * 0.22)}" y1="${f(-h / 2 + 0.2)}" x2="${f(-w * 0.22)}" y2="${f(h / 2 - 0.2)}" stroke="${P.outline}" stroke-width="0.16" opacity="0.35"/>`;
+    s += `<line x1="${f(w * 0.2)}" y1="${f(-h / 2 + 0.2)}" x2="${f(w * 0.2)}" y2="${f(h / 2 - 0.2)}" stroke="${P.outline}" stroke-width="0.16" opacity="0.22"/>`;
+    s += `</g>`;
+    return s;
+}
+
+function deckVent(x, y, r, P, cowl = false, dir = 1) {
+    const f = (v) => (+v).toFixed(1);
+    if (cowl) {
+        let s = `<path d="M ${f(x)} ${f(y)} q ${f(r * 1.1)} ${f(dir * r * 0.2)} ${f(r * 1.7)} ${f(dir * r * 1.3)}" fill="none" stroke="${P.outline}" stroke-width="${f(r * 0.85 + 0.2)}" opacity="0.5"/>`;
+        s += `<path d="M ${f(x)} ${f(y)} q ${f(r * 1.1)} ${f(dir * r * 0.2)} ${f(r * 1.7)} ${f(dir * r * 1.3)}" fill="none" stroke="${mixHex(P.supLo, P.outline, 0.1)}" stroke-width="${f(r * 0.85)}"/>`;
+        s += `<ellipse cx="${f(x + r * 1.75)}" cy="${f(y + dir * r * 1.35)}" rx="${f(r * 0.7)}" ry="${f(r * 0.48)}" fill="${P.outline}" stroke="${P.supLo}" stroke-width="0.2"/>`;
+        s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(r * 0.62)}" fill="${P.supLo}" stroke="${P.outline}" stroke-width="0.2"/>`;
+        return s;
+    }
+    let s = `<circle cx="${f(x + 0.35)}" cy="${f(y + 0.55)}" r="${f(r)}" fill="${P.outline}" opacity="0.25"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="${mixHex(P.supLo, P.outline, 0.12)}" stroke="${P.outline}" stroke-width="0.28"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(r * 0.52)}" fill="${P.sup}" stroke="${P.outline}" stroke-width="0.2"/>`;
+    for (let i = 0; i < 4; i++) {
+        const a = i * Math.PI / 2 + 0.4;
+        s += `<line x1="${f(x)}" y1="${f(y)}" x2="${f(x + Math.cos(a) * r * 0.9)}" y2="${f(y + Math.sin(a) * r * 0.9)}" stroke="${P.outline}" stroke-width="0.14" opacity="0.45"/>`;
+    }
+    return s;
+}
+
+function deckRaft(x, y, w, P) {
+    const f = (v) => (+v).toFixed(1);
+    const rx = w / 2, ry = w * 0.21;
+    let s = `<ellipse cx="${f(x + 0.3)}" cy="${f(y + 0.45)}" rx="${f(rx)}" ry="${f(ry)}" fill="${P.outline}" opacity="0.22"/>`;
+    s += `<ellipse cx="${f(x)}" cy="${f(y)}" rx="${f(rx)}" ry="${f(ry)}" fill="${mixHex(P.sup, P.hullHi, 0.4)}" fill-opacity="0.9" stroke="${P.outline}" stroke-width="0.22"/>`;
+    s += `<ellipse cx="${f(x)}" cy="${f(y)}" rx="${f(rx * 0.58)}" ry="${f(ry * 0.55)}" fill="${P.deckLo}" stroke="${P.outline}" stroke-width="0.16" opacity="0.65"/>`;
+    s += `<line x1="${f(x - rx * 0.8)}" y1="${f(y)}" x2="${f(x + rx * 0.8)}" y2="${f(y)}" stroke="${P.outline}" stroke-width="0.14" opacity="0.4"/>`;
+    return s;
+}
+
+function shipBoat(x, y, len, wid, P, side, k = 1) {
+    const f = (v) => (+v).toFixed(1);
+    const hw = wid / 2;
+    const bow = x + len / 2, stern = x - len / 2;
+    const boatD = `M ${f(bow)} ${f(y)} C ${f(bow - len * 0.06)} ${f(y - hw * 0.55)} ${f(bow - len * 0.14)} ${f(y - hw * 0.9)} ${f(bow - len * 0.26)} ${f(y - hw)} L ${f(stern + len * 0.1)} ${f(y - hw * 0.94)} Q ${f(stern)} ${f(y - hw * 0.82)} ${f(stern)} ${f(y)} Q ${f(stern)} ${f(y + hw * 0.82)} ${f(stern + len * 0.1)} ${f(y + hw * 0.94)} L ${f(bow - len * 0.26)} ${f(y + hw)} C ${f(bow - len * 0.14)} ${f(y + hw * 0.9)} ${f(bow - len * 0.06)} ${f(y + hw * 0.55)} ${f(bow)} ${f(y)} Z`;
+    let s = '';
+    for (const dx of [-len * 0.28, len * 0.28]) {
+        const bx = x + dx, by = y + side * hw * 0.55;
+        s += `<path d="M ${f(bx)} ${f(by)} q ${f(0.5 * k)} ${f(side * 1.1 * k)} ${f(-0.4 * k)} ${f(side * 2.7 * k)}" fill="none" stroke="${P.outline}" stroke-width="${f(0.55 * k)}" opacity="0.8" stroke-linecap="round"/>`;
+        s += `<circle cx="${f(bx - 0.4 * k)}" cy="${f(by + side * 2.7 * k)}" r="${f(0.34 * k)}" fill="${P.supLo}" stroke="${P.outline}" stroke-width="0.16"/>`;
+    }
+    s += `<path d="${boatD}" transform="translate(0.7,1.1)" fill="${P.outline}" opacity="0.3"/>`;
+    s += `<path d="${boatD}" fill="${mixHex(P.sup, '#ffffff', 0.3)}" stroke="${P.outline}" stroke-width="0.4"/>`;
+    s += `<g transform="translate(${f(x)},${f(y)}) scale(0.86) translate(${f(-x)},${f(-y)})">`;
+    s += `<path d="${boatD}" fill="${mixHex(P.deckHi, P.supLo, 0.35)}" stroke="${P.outline}" stroke-width="0.18" opacity="0.92"/>`;
+    s += `</g>`;
+    for (const t of [-0.18, 0.06, 0.28]) {
+        const tx = x + len * t;
+        s += `<line x1="${f(tx)}" y1="${f(y - hw * 0.55)}" x2="${f(tx)}" y2="${f(y + hw * 0.55)}" stroke="${P.outline}" stroke-width="0.22" opacity="0.45"/>`;
+    }
+    s += `<line x1="${f(stern + len * 0.16)}" y1="${f(y)}" x2="${f(bow - len * 0.3)}" y2="${f(y)}" stroke="${P.outline}" stroke-width="0.18" opacity="0.35"/>`;
+    s += `<rect x="${f(stern + len * 0.06)}" y="${f(y - hw * 0.56)}" width="${f(len * 0.15)}" height="${f(hw * 1.12)}" rx="0.3" fill="${mixHex(P.supLo, P.outline, 0.2)}" stroke="${P.outline}" stroke-width="0.2"/>`;
+    return s;
+}
+
+function mastTop(x, y, P, span, k = 1) {
+    const f = (v) => (+v).toFixed(1);
+    let s = `<line x1="${f(x)}" y1="${f(y - span)}" x2="${f(x)}" y2="${f(y + span)}" stroke="${P.outline}" stroke-width="${f(0.55 * k)}" opacity="0.7"/>`;
+    s += `<line x1="${f(x + 1.1 * k)}" y1="${f(y - span * 0.6)}" x2="${f(x + 1.1 * k)}" y2="${f(y + span * 0.6)}" stroke="${P.outline}" stroke-width="${f(0.32 * k)}" opacity="0.45"/>`;
+    for (const sy of [-1, 1]) s += `<circle cx="${f(x)}" cy="${f(y + sy * span)}" r="${f(0.3 * k)}" fill="${P.supLo}" stroke="${P.outline}" stroke-width="0.14"/>`;
+    s += `<line x1="${f(x + 2.5 * k)}" y1="${f(y)}" x2="${f(x + 7 * k)}" y2="${f(y - span * 0.85)}" stroke="${P.outline}" stroke-width="0.18" opacity="0.25"/>`;
+    s += `<line x1="${f(x + 2.5 * k)}" y1="${f(y)}" x2="${f(x + 7 * k)}" y2="${f(y + span * 0.85)}" stroke="${P.outline}" stroke-width="0.18" opacity="0.25"/>`;
+    s += `<circle cx="${f(x + 0.5)}" cy="${f(y + 0.7)}" r="${f(1.4 * k)}" fill="${P.outline}" opacity="0.28"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(1.45 * k)}" fill="${mixHex(P.supLo, P.outline, 0.12)}" stroke="${P.outline}" stroke-width="0.32"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(0.55 * k)}" fill="${mixHex(P.sup, '#ffffff', 0.2)}" stroke="${P.outline}" stroke-width="0.18"/>`;
+    return s;
+}
+
+function searchlight(x, y, P, k = 1) {
+    const f = (v) => (+v).toFixed(1);
+    let s = `<circle cx="${f(x + 0.4)}" cy="${f(y + 0.6)}" r="${f(1.5 * k)}" fill="${P.outline}" opacity="0.28"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(1.45 * k)}" fill="${P.supLo}" stroke="${P.outline}" stroke-width="0.3"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(0.95 * k)}" fill="${mixHex(P.sup, '#b9b49c', 0.3)}" stroke="${P.outline}" stroke-width="0.18"/>`;
+    s += `<circle cx="${f(x - 0.2 * k)}" cy="${f(y - 0.2 * k)}" r="${f(0.28 * k)}" fill="#dfd8c2" opacity="0.35"/>`;
+    return s;
+}
+
+function quadAA(x, y, P, side, k = 1) {
+    const f = (v) => (+v).toFixed(1);
+    let s = `<circle cx="${f(x + 0.3)}" cy="${f(y + 0.5)}" r="${f(2 * k)}" fill="${P.outline}" opacity="0.28"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(1.95 * k)}" fill="${mixHex(P.deckLo, P.outline, 0.2)}" stroke="${P.outline}" stroke-width="0.3"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(1.55 * k)}" fill="${mixHex(P.supLo, P.outline, 0.28)}" stroke="${P.outline}" stroke-width="0.24"/>`;
+    s += `<path d="M ${f(x - 1.7 * k)} ${f(y)} A ${f(1.7 * k)} ${f(1.7 * k)} 0 0 ${side < 0 ? 1 : 0} ${f(x + 1.7 * k)} ${f(y)}" fill="none" stroke="${P.hullHi}" stroke-width="${f(0.45 * k)}" opacity="0.3"/>`;
+    for (const dx of [-0.55, 0.55]) {
+        s += `<line x1="${f(x + dx * k)}" y1="${f(y + side * 0.5 * k)}" x2="${f(x + dx * 2.1 * k)}" y2="${f(y + side * 3.1 * k)}" stroke="${P.barrel}" stroke-width="${f(0.55 * k)}" stroke-linecap="round"/>`;
+        s += `<line x1="${f(x + dx * 1.6 * k)}" y1="${f(y + side * 0.5 * k)}" x2="${f(x + dx * 2.9 * k)}" y2="${f(y + side * 3 * k)}" stroke="${P.barrel}" stroke-width="${f(0.55 * k)}" stroke-linecap="round"/>`;
+    }
+    return s;
+}
+
+function deckCrane(x, y, P, id, dir = 1, k = 1) {
+    const f = (v) => (+v).toFixed(1);
+    const len = 17 * k;
+    const tx = x + len, ty = y + dir * len * 0.3;
+    let s = `<circle cx="${f(x + 0.5)}" cy="${f(y + 0.8)}" r="${f(2.6 * k)}" fill="${P.outline}" opacity="0.3"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(2.5 * k)}" fill="${mixHex(P.supLo, P.outline, 0.18)}" stroke="${P.outline}" stroke-width="0.35"/>`;
+    s += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(1.1 * k)}" fill="url(#${id}-gTur)" stroke="${P.outline}" stroke-width="0.25"/>`;
+    s += `<rect x="${f(x - 3.4 * k)}" y="${f(y - 1.6 * k)}" width="${f(4.2 * k)}" height="${f(3.2 * k)}" rx="0.5" fill="${mixHex(P.sup, P.supLo, 0.3)}" stroke="${P.outline}" stroke-width="0.28"/>`;
+    s += `<line x1="${f(x)}" y1="${f(y)}" x2="${f(tx)}" y2="${f(ty)}" stroke="${P.outline}" stroke-width="${f(2.2 * k)}" opacity="0.45"/>`;
+    s += `<line x1="${f(x)}" y1="${f(y)}" x2="${f(tx)}" y2="${f(ty)}" stroke="${mixHex(P.supLo, P.sup, 0.45)}" stroke-width="${f(0.8 * k)}"/>`;
+    for (let i = 1; i <= 4; i++) {
+        const t = i / 5, px = x + (tx - x) * t, py = y + (ty - y) * t;
+        s += `<line x1="${f(px - 0.7 * k)}" y1="${f(py - 0.7 * k)}" x2="${f(px + 0.7 * k)}" y2="${f(py + 0.7 * k)}" stroke="${P.outline}" stroke-width="0.2" opacity="0.5"/>`;
+    }
+    s += `<circle cx="${f(tx)}" cy="${f(ty)}" r="${f(0.7 * k)}" fill="${P.supLo}" stroke="${P.outline}" stroke-width="0.22"/>`;
+    s += `<line x1="${f(tx)}" y1="${f(ty)}" x2="${f(tx + 2.4 * k)}" y2="${f(ty + dir * 3.2 * k)}" stroke="${P.outline}" stroke-width="0.28" stroke-dasharray="0.9 0.8" opacity="0.55"/>`;
+    s += `<path d="M ${f(tx + 2.1 * k)} ${f(ty + dir * 3 * k)} q 0.9 1.1 0 1.6" fill="none" stroke="${P.outline}" stroke-width="0.3" opacity="0.7"/>`;
+    return s;
+}
+
+// 低层属具：锚链、系缆、舱口、通风筒、救生筏、舰载艇（压在炮塔与上层建筑之下）
+function deckDetailsLow(code, lay, deckPts, cy, B, L, P, id) {
+    if (code !== 'BB' && code !== 'CL') return '';
+    const k = code === 'BB' ? 1 : 0.8;
+    const f = (v) => (+v).toFixed(1);
+    let s = '';
+
+    for (const side of [-1, 1]) {
+        const hx = 7.5, hy = deckEdgeY(deckPts, hx, cy, side);
+        const capX = 25, capY = cy + side * B * 0.055;
+        const chain = `M ${f(hx)} ${f(hy)} Q ${f(hx + 7)} ${f(hy + side * 0.6)} ${f(capX)} ${f(capY)}`;
+        s += `<path d="${chain}" fill="none" stroke="${mixHex(P.deckLo, '#000000', 0.4)}" stroke-width="${f(2.2 * k)}" opacity="0.26"/>`;
+        s += `<path d="${chain}" fill="none" stroke="${P.outline}" stroke-width="${f(1.05 * k)}" stroke-dasharray="${f(0.9 * k)} ${f(0.8 * k)}" opacity="0.72"/>`;
+        s += `<circle cx="${f(hx)}" cy="${f(hy)}" r="${f(1.15 * k)}" fill="${P.outline}" opacity="0.55"/>`;
+        s += `<circle cx="${f(hx)}" cy="${f(hy)}" r="${f(1.6 * k)}" fill="none" stroke="${P.hullHi}" stroke-width="0.28" opacity="0.35"/>`;
+        s += deckCapstan(capX, capY, P, id, k * 0.9);
+        s += deckBollard(36, cy + side * B * 0.14, P, k * 0.9);
+        s += deckBollard(L - 14, cy + side * B * 0.1, P, k * 0.9);
+    }
+
+    // 艏部防浪板：炮座前方的 V 形挡浪板
+    const t0 = lay.turrets?.[0];
+    if (t0) {
+        const bx = t0[0] - 9 * k, ex = bx + 6 * k;
+        const hw = cy - deckEdgeY(deckPts, ex, cy, -1);
+        const bw = `M ${f(ex)} ${f(cy - hw * 0.9)} Q ${f(bx)} ${f(cy)} ${f(ex)} ${f(cy + hw * 0.9)}`;
+        s += `<path d="${bw}" fill="none" stroke="${mixHex(P.hullLo, '#000000', 0.3)}" stroke-width="${f(1.7 * k)}" stroke-linecap="round" opacity="0.8"/>`;
+        s += `<path d="${bw}" fill="none" stroke="${P.hullHi}" stroke-width="${f(0.55 * k)}" stroke-linecap="round" opacity="0.35" transform="translate(0.7,0.6)"/>`;
+    }
+
+    const hy = (dy) => cy + dy * B;
+    if (code === 'BB') {
+        s += deckHatch(15, hy(-0.1), 3.4, 2.2, P);
+        s += deckHatch(15, hy(0.1), 3.4, 2.2, P);
+        s += deckHatch(162, hy(0), 4.6, 3, P);
+        s += deckHatch(205, hy(-0.17), 2.6, 1.8, P, 12);
+        s += deckHatch(226, hy(0.1), 2.4, 1.6, P);
+    } else {
+        const lastT = (lay.turrets || []).reduce((m, t) => Math.max(m, t[0]), 0);
+        s += deckHatch(14, hy(-0.12), 2.8, 1.7, P);
+        s += deckHatch(14, hy(0.12), 2.8, 1.7, P);
+        s += deckHatch(60, hy(-0.16), 2.5, 1.6, P);
+        s += deckHatch((lastT + L) / 2, hy(0), 2.6, 1.7, P);
+    }
+
+    const bxx = lay.bridge?.x ?? L * 0.4, bww = lay.bridge?.w ?? 30;
+    for (const side of [-1, 1]) {
+        s += deckVent(bxx - 8 * k, cy + side * B * 0.2, 1.15 * k, P, false);
+        s += deckVent(bxx + bww + 7 * k, cy + side * B * 0.2, 1 * k, P, true, side);
+    }
+
+    for (const side of [-1, 1]) {
+        for (const rx of (lay.rafts || [])) {
+            s += deckRaft(rx, deckEdgeY(deckPts, rx, cy, side) - side * 1.25 * k, 2.8 * k, P);
+        }
+    }
+
+    for (const [bx, side, bl] of (lay.boats || [])) {
+        s += shipBoat(bx, cy + side * B * 0.33, bl, bl * 0.3, P, side, k);
+    }
+    return s;
+}
+
+// 高层属具：桅杆、探照灯、航空吊车（压在上层建筑与烟囱之上）
+function deckDetailsHigh(code, lay, deckPts, cy, B, L, P, id) {
+    if (code !== 'BB' && code !== 'CL') return '';
+    const k = code === 'BB' ? 1 : 0.78;
+    const f = (v) => (+v).toFixed(1);
+    let s = '';
+    const bx = lay.bridge?.x ?? L * 0.4, bw = lay.bridge?.w ?? 30;
+    const funs = lay.funnels || [];
+    s += mastTop(bx + bw * 0.62, cy, P, B * 0.17, k);
+    if (funs.length) {
+        const lf = funs[funs.length - 1];
+        let mx;
+        if (code === 'BB') {
+            const nextT = (lay.turrets || []).filter(t => t[0] > lf[0] + lf[1] / 2).sort((a, b) => a[0] - b[0])[0];
+            mx = nextT ? (lf[0] + lf[1] / 2 + nextT[0] - 7) / 2 : lf[0] + lf[1] / 2 + 6;
+        } else {
+            mx = lf[0] - lf[1] / 2 - 4;
+        }
+        s += mastTop(mx, cy, P, B * 0.15, k * 0.9);
+    }
+    for (const side of [-1, 1]) {
+        s += searchlight(bx + bw * 0.34, cy + side * (B * 0.17 + 0.9), P, k * 0.78);
+    }
+    if (code === 'BB' && (lay.catapult || lay.plane)) {
+        s += deckCrane(L - 54, cy - B * 0.18, P, id, -1, k);
+    }
+    return s;
+}
+
 
 // ---------- 船体轮廓点集 ----------
 // 各海军的设计流派不同：舰首（clipper 前倾锐角 / plumb 垂直 / raked 微倾 / full 丰满）
@@ -729,9 +1053,14 @@ function svgDefs(id, P) {
             <stop offset="1" stop-color="${mixHex(P.supLo, '#000000', 0.5)}"/>
         </linearGradient>
         <linearGradient id="${id}-gSup" x1="0.1" y1="0" x2="0.4" y2="1">
-            <stop offset="0" stop-color="${mixHex(P.sup, '#ffffff', 0.28)}"/>
-            <stop offset="0.45" stop-color="${P.sup}"/>
-            <stop offset="1" stop-color="${mixHex(P.supLo, '#000000', 0.18)}"/>
+            <stop offset="0" stop-color="${mixHex(P.sup, '#ffffff', 0.14)}"/>
+            <stop offset="0.45" stop-color="${mixHex(P.sup, P.supLo, 0.18)}"/>
+            <stop offset="1" stop-color="${mixHex(P.supLo, '#000000', 0.24)}"/>
+        </linearGradient>
+        <linearGradient id="${id}-gSupBase" x1="0.12" y1="0" x2="0.45" y2="1">
+            <stop offset="0" stop-color="${mixHex(P.supLo, P.outline, 0.06)}"/>
+            <stop offset="0.5" stop-color="${mixHex(P.supLo, P.outline, 0.26)}"/>
+            <stop offset="1" stop-color="${mixHex(P.supLo, P.outline, 0.5)}"/>
         </linearGradient>
         <linearGradient id="${id}-gIsl" x1="0.08" y1="0" x2="0.4" y2="1">
             <stop offset="0" stop-color="${mixHex(P.sup, '#ffffff', 0.12)}"/>
@@ -821,19 +1150,16 @@ function drawWarship(code, lay, P, id, factionId) {
     }
     s += `</g>`;
 
-    // 首部锚与锚链
-    const ay = B * 0.22;
-    for (const sy of [-1, 1]) {
-        s += `<circle cx="13" cy="${f(cy + sy * ay)}" r="1.1" fill="${P.outline}" opacity="0.55"/>`;
-        s += `<line x1="14" y1="${f(cy + sy * ay)}" x2="19" y2="${f(cy + sy * ay * 0.8)}" stroke="${mixHex(P.hullLo, '#000000', 0.35)}" stroke-width="0.7" opacity="0.6"/>`;
-    }
+    // 甲板属具：锚链、系缆、舱口、通风、救生筏、舰载艇
+    s += deckDetailsLow(code, lay, deckPts, cy, B, L, P, id);
     // 防浪板（战列舰/巡洋舰）
-    if (code === 'BB') {
+    if (code === 'BB' || code === 'CL') {
         const bx0 = lay.bridge ? lay.bridge.x - 4.5 : L * 0.4;
-        const hw = B * 0.31;
+        const hw = B * (code === 'BB' ? 0.31 : 0.33);
+        const sw = code === 'BB' ? 1.8 : 1.35;
         const bw = `M ${f(bx0)} ${f(cy - hw)} Q ${f(bx0 + 5)} ${f(cy)} ${f(bx0)} ${f(cy + hw)}`;
-        s += `<path d="${bw}" fill="none" stroke="${mixHex(P.hullLo, '#000000', 0.3)}" stroke-width="1.8" stroke-linecap="round" opacity="0.85"/>`;
-        s += `<path d="${bw}" fill="none" stroke="${P.hullHi}" stroke-width="0.6" stroke-linecap="round" opacity="0.4" transform="translate(0.8,0.7)"/>`;
+        s += `<path d="${bw}" fill="none" stroke="${mixHex(P.hullLo, '#000000', 0.3)}" stroke-width="${sw}" stroke-linecap="round" opacity="0.85"/>`;
+        s += `<path d="${bw}" fill="none" stroke="${P.hullHi}" stroke-width="${sw * 0.33}" stroke-linecap="round" opacity="0.4" transform="translate(0.8,0.7)"/>`;
     }
 
     // 鱼雷发射管是低矮甲板装备，压在下层炮塔与上层建筑之下
@@ -853,7 +1179,7 @@ function drawWarship(code, lay, P, id, factionId) {
     }
     if (lay.bridge) {
         s += superstructure(lay.bridge.x, lay.bridge.w, cy, B, lay.bridge.style, P, id);
-        if (lay.aa) s += aaMounts(lay.aa, cy, B, P);
+        if (lay.aa || lay.aa40) s += aaMounts(lay.aa, cy, B, P, lay.aa40, code);
     }
     for (const t of turrets) {
         if (t[3]) s += turret(t[0], cy, scale, t[1], t[2], true, P, id, factionId);
@@ -864,6 +1190,7 @@ function drawWarship(code, lay, P, id, factionId) {
     for (const f of (lay.funnels || [])) {
         s += funnel(f[0], cy, f[1], f[2], !!f[3], P, id);
     }
+    s += deckDetailsHigh(code, lay, deckPts, cy, B, L, P, id);
     if (lay.catapult) {
         s += catapult(L - 42, cy - B * 0.28, 26, P);
         if (lay.catapult > 1) s += catapult(L - 42, cy + B * 0.28, 26, P);
@@ -871,10 +1198,6 @@ function drawWarship(code, lay, P, id, factionId) {
         if (lay.plane > 1) s += deckPlane(L - 34, cy + B * 0.3, 90, P);
     } else if (lay.plane) {
         s += deckPlane(L - 22, cy, 90, P);
-    }
-    if (lay.crane) {
-        s += `<line x1="${L - 30}" y1="${cy - B * 0.3}" x2="${L - 18}" y2="${cy + B * 0.25}" stroke="${P.supLo}" stroke-width="1.4" stroke-linecap="round"/>`;
-        if (lay.plane) s += deckPlane(L - 38, cy - B * 0.25, 90, P);
     }
     if (lay.badge) {
         const bx = L - 16, by = cy - B * 0.26, r = 3.4;
