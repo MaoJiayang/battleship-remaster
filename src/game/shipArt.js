@@ -286,9 +286,9 @@ function drawWarship(code, lay, P, id) {
     const deckPts = insetPts(hullPts, cy, 0.84, 7);
     const scale = code === 'BB' ? 1 : (code === 'CL' ? 0.72 : 0.55);
 
-    let s = `<path d="${crPath(hullPts)}" fill="url(#${id}-gHull)" stroke="${P.outline}" stroke-width="1.5" filter="url(#${id}-fSh)"/>`;
+    let s = `<path d="${crPath(hullPts)}" fill="url(#${id}-gHull)" stroke="${P.outline}" stroke-width="1.5" vector-effect="non-scaling-stroke" filter="url(#${id}-fSh)"/>`;
     // 甲板
-    s += `<path d="${crPath(deckPts)}" fill="url(#${id}-gDeck)" stroke="${P.outline}" stroke-width="0.8"/>`;
+    s += `<path d="${crPath(deckPts)}" fill="url(#${id}-gDeck)" stroke="${P.outline}" stroke-width="0.8" vector-effect="non-scaling-stroke"/>`;
     // 甲板铺装纹理
     s += `<clipPath id="${id}-clipDeck"><path d="${crPath(deckPts)}"/></clipPath>`;
     s += `<g clip-path="url(#${id}-clipDeck)">`;
@@ -348,7 +348,7 @@ function drawCV(lay, P, id) {
         ? [[0.02, -0.80], [0.08, -0.94], [0.90, -0.94], [0.97, -0.86], [1.0, -0.5], [1.0, 0]]
         : [[0.0, -0.55], [0.06, -0.90], [0.90, -0.94], [0.97, -0.86], [1.0, -0.5], [1.0, 0]];
     const deckPts = mirrorPts(top, L, B);
-    let s = `<path d="${crPath(deckPts)}" fill="url(#${id}-gDeck)" stroke="${P.outline}" stroke-width="1.5" filter="url(#${id}-fSh)"/>`;
+    let s = `<path d="${crPath(deckPts)}" fill="url(#${id}-gDeck)" stroke="${P.outline}" stroke-width="1.5" vector-effect="non-scaling-stroke" filter="url(#${id}-fSh)"/>`;
     s += `<clipPath id="${id}-clipDeck"><path d="${crPath(deckPts)}"/></clipPath>`;
     s += `<g clip-path="url(#${id}-clipDeck)">`;
     // 甲板中线
@@ -403,7 +403,7 @@ function drawCV(lay, P, id) {
 
 function drawSS(lay, P, id) {
     const L = 60, B = 16, cy = B / 2;
-    let s = `<rect x="1" y="1.5" width="${L - 2}" height="${B - 3}" rx="7.5" fill="url(#${id}-gHull)" stroke="${P.outline}" stroke-width="1.3" filter="url(#${id}-fSh)"/>`;
+    let s = `<rect x="1" y="1.5" width="${L - 2}" height="${B - 3}" rx="7.5" fill="url(#${id}-gHull)" stroke="${P.outline}" stroke-width="1.3" vector-effect="non-scaling-stroke" filter="url(#${id}-fSh)"/>`;
     if (lay.saddle) {
         s += `<rect x="14" y="1" width="30" height="3" rx="1.5" fill="${P.hullLo}" stroke="${P.outline}" stroke-width="0.5"/>`;
         s += `<rect x="14" y="${B - 4}" width="30" height="3" rx="1.5" fill="${P.hullLo}" stroke="${P.outline}" stroke-width="0.5"/>`;
@@ -434,13 +434,17 @@ function drawSS(lay, P, id) {
 
 // ---------- 主入口 ----------
 
+// 渐变/滤镜的 id 必须逐实例唯一：同款舰船会在船坞、帮助弹窗、棋盘上同时存在，
+// 重复 id 会让浏览器解析到先出现的（可能处于 display:none 的）defs，填充直接失效
+let artSeq = 0;
+
 export function getShipSvg(code, factionId = 'us') {
     const P = PALETTES[factionId] || PALETTES.us;
     const lay = (LAYOUTS[code] || {})[factionId] || (LAYOUTS[code] || {}).us;
     if (!lay) return '';
     const L = HULL_LEN[code];
     const B = (code === 'CV' || code === 'SS') ? HULL_BEAM[code] : (lay.beam || HULL_BEAM[code]);
-    const id = `${code.toLowerCase()}-${factionId}`;
+    const id = `${code.toLowerCase()}-${factionId}-${++artSeq}`;
 
     let body = '';
     if (code === 'CV') body = drawCV(lay, P, id);

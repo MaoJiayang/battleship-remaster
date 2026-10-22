@@ -709,8 +709,18 @@ import { getShipSvg } from './shipArt.js';
         wrapper.style.transform = `scale(${scale})`;
     }
 
+    // 装备区里的舰船不按棋盘格尺寸渲染，而是铺满容器宽度，避免细节缩成一道暗影
+    function getDockCellSize() {
+        const dock = document.getElementById('dock');
+        const inner = dock ? dock.clientWidth - 24 : 0;
+        if (!inner) return getCellSize();
+        const maxLen = SHIP_TYPES.reduce((m, t) => Math.max(m, t.len), 1);
+        const byWidth = (inner * 0.62) / (maxLen * 0.95);
+        return Math.max(getCellSize(), Math.min(byWidth, getCellSize() * 2));
+    }
+
     function updateShipVisuals(ship, isDragging = false) {
-        const cellSize = getCellSize();
+        const cellSize = (ship.inDock && !isDragging) ? getDockCellSize() : getCellSize();
         const widthPx = (ship.len * cellSize) + 'px';
         const heightPx = cellSize + 'px';
 
@@ -868,8 +878,9 @@ import { getShipSvg } from './shipArt.js';
         currentPreview = null;
 
         const rect = ship.el.getBoundingClientRect();
-        let clickOffsetX = e.clientX - rect.left;
-        let clickOffsetY = e.clientY - rect.top;
+        // 记录相对抓取位置：出坞时船会缩回棋盘尺寸，按比例换算才能贴着指针
+        const grabX = (e.clientX - rect.left) / rect.width;
+        const grabY = (e.clientY - rect.top) / rect.height;
 
         ship.el.classList.add('dragging');
         
@@ -878,12 +889,15 @@ import { getShipSvg } from './shipArt.js';
         if (ship.inDock) ship.vertical = (currentDeployMode === 'vertical');
         updateShipVisuals(ship, true);
 
+        const zoomed = ship.el.getBoundingClientRect();
+
         if (isPortExit) {
-            dragOffset.x = clickOffsetY;
-            dragOffset.y = clickOffsetX;
+            // 出坞时船体旋转 90°：长度方向的抓取比例映射到纵向
+            dragOffset.x = grabY * zoomed.width;
+            dragOffset.y = grabX * zoomed.height;
         } else {
-            dragOffset.x = clickOffsetX;
-            dragOffset.y = clickOffsetY;
+            dragOffset.x = grabX * zoomed.width;
+            dragOffset.y = grabY * zoomed.height;
         }
 
         ship.el.style.left = (e.clientX - dragOffset.x) + 'px';
