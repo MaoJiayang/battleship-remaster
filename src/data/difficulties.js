@@ -56,40 +56,40 @@
  * 
  * EASY（简单）：
  *   - 高随机性，经常犯错
- *   - 偏重直接伤害，缺乏侦查
+ *   - 探索权重偏低，仍保留基本侦查
  *   - 几乎不考虑风险，不会战术性抢用能力
  * 
  * NORMAL（普通）：
  *   - 适度随机，偶有失误
- *   - 平衡探索与伤害
+ *   - 探索略偏信息，兼顾伤害
  *   - 轻微风险意识，偶尔会抢用濒危能力
  * 
  * HARD（困难）：
  *   - 完全理性，从不失误
- *   - 偏重信息收集，积累情报后精准打击
+ *   - 信息优先（alpha 0.84，镜像对局平台区下界）
  *   - 较强风险意识，会主动利用即将丧失的能力
  */
 
 export const DIFFICULTY_SETTINGS = {
     EASY: {
-        // alpha: 探索权重 - 偏重伤害，较少侦查
-        alpha: 0.25,
+        // alpha: 探索权重 - 偏低，但仍保留基本侦查
+        alpha: 0.4,
         // randomness: 随机决策概率 - 60% 概率随机决策（高失误率）
         randomness: 0.6,
         // riskAwareness: 风险意识强度 - 几乎不考虑风险
-        riskAwareness: 0.05
+        riskAwareness: 0.1
     },
     NORMAL: {
-        // alpha: 探索权重 - 平衡探索与利用
-        alpha: 0.5,
+        // alpha: 探索权重 - 探索略偏信息
+        alpha: 0.6,
         // randomness: 随机决策概率 - 30% 概率随机决策（偶有失误）
         randomness: 0.3,
         // riskAwareness: 风险意识强度 - 轻微风险意识
-        riskAwareness: 0.15
+        riskAwareness: 0.25
     },
     HARD: {
-        // alpha: 探索权重 - 平衡探索与利用
-        alpha: 0.76,
+        // alpha: 探索权重 - 镜像对局搜索得出的最优区间（0.84~0.90），取下界
+        alpha: 0.84,
         // randomness: 随机决策概率 - 完全理性（从不随机）
         randomness: 0.0,
         // riskAwareness: 风险意识强度 - 较强风险意识，会抢用濒危能力
