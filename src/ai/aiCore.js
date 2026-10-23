@@ -32,7 +32,6 @@ import {
     applyAPDefense,
     applyHEDefense,
     getHEProfile,
-    getHEOffsets,
     getSonarProfile,
     getAIBias
 } from '../data/doctrines.js';
@@ -61,27 +60,51 @@ function inBounds(r, c) {
     return r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE;
 }
 
+// 学说形状的静态偏移表，避免热路径反复建数组
+const HE_OFFSETS = {
+    x: [[0, 0], [-1, -1], [-1, 1], [1, -1], [1, 1]],
+    plus: [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]],
+    single: [[0, 0]]
+};
+
+function heOffsets(shape) {
+    return HE_OFFSETS[shape] || HE_OFFSETS.x;
+}
+
+/**
+ * 无分配地遍历武器覆盖格
+ */
+function forEachCoverage(weapon, r, c, abilities, fn) {
+    if (weapon === 'HE') {
+        const offsets = heOffsets(abilities?.heShape || 'x');
+        for (let i = 0; i < offsets.length; i++) {
+            const nr = r + offsets[i][0];
+            const nc = c + offsets[i][1];
+            if (inBounds(nr, nc)) fn(nr, nc);
+        }
+        return;
+    }
+    if (weapon === 'SONAR') {
+        const radius = abilities?.sonarRadius ?? 1;
+        for (let dr = -radius; dr <= radius; dr++) {
+            for (let dc = -radius; dc <= radius; dc++) {
+                const nr = r + dr;
+                const nc = c + dc;
+                if (inBounds(nr, nc)) fn(nr, nc);
+            }
+        }
+        return;
+    }
+    if (inBounds(r, c)) fn(r, c);
+}
+
 /**
  * 某武器在给定中心覆盖的格子（按学说形状/半径）
  */
 export function getActionCoverage(weapon, r, c, abilities = null) {
-    if (weapon === 'HE') {
-        const shape = abilities?.heShape || 'x';
-        return getHEOffsets(shape)
-            .map(([dr, dc]) => ({ r: r + dr, c: c + dc }))
-            .filter(cell => inBounds(cell.r, cell.c));
-    }
-    if (weapon === 'SONAR') {
-        const radius = abilities?.sonarRadius ?? 1;
-        const cells = [];
-        for (let dr = -radius; dr <= radius; dr++) {
-            for (let dc = -radius; dc <= radius; dc++) {
-                if (inBounds(r + dr, c + dc)) cells.push({ r: r + dr, c: c + dc });
-            }
-        }
-        return cells;
-    }
-    return inBounds(r, c) ? [{ r, c }] : [];
+    const cells = [];
+    forEachCoverage(weapon, r, c, abilities, (nr, nc) => cells.push({ r: nr, c: nc }));
+    return cells;
 }
 
 /**
@@ -102,14 +125,103 @@ function hasUnknownInArea(viewGrid, r, c, radius) {
  * 攻击覆盖中是否还有可打击/可侦察的格子
  */
 function coverageHasPotential(viewGrid, weapon, r, c, abilities) {
-    const cells = getActionCoverage(weapon, r, c, abilities);
-    for (const cell of cells) {
-        const state = viewGrid[cell.r][cell.c];
+    let potential = false;
+    forEachCoverage(weapon, r, c, abilities, (nr, nc) => {
+        if (potential) return;
+        const state = viewGrid[nr][nc];
         if (state !== CellState.MISS && state !== CellState.SUNK && state !== CellState.DESTROYED) {
-            return true;
+            potential = true;
         }
+    });
+    return potential;
+}
+
+// ============================================================================
+// 采样加速：静态放置表 + 位掩码
+// ============================================================================
+
+const MASK_WORDS = Math.ceil((BOARD_SIZE * BOARD_SIZE) / 32);
+const STATIC_PLACEMENTS = new Map();
+
+function popcount32(v) {
+    v = v - ((v >>> 1) & 0x55555555);
+    v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+    return (((v + (v >>> 4)) & 0x0F0F0F0F) * 0x01010101) >>> 24;
+}
+
+function andPopcount(masks, base, filter) {
+    let count = 0;
+    for (let w = 0; w < MASK_WORDS; w++) {
+        count += popcount32(masks[base + w] & filter[w]);
+    }
+    return count;
+}
+
+function masksOverlap(masks, base, filter) {
+    for (let w = 0; w < MASK_WORDS; w++) {
+        if (masks[base + w] & filter[w]) return true;
     }
     return false;
+}
+
+function buildCellMask(cells) {
+    if (!Array.isArray(cells) || cells.length === 0) return null;
+    const mask = new Uint32Array(MASK_WORDS);
+    let any = false;
+    for (const cell of cells) {
+        if (!cell || !inBounds(cell.r, cell.c)) continue;
+        const idx = cell.r * BOARD_SIZE + cell.c;
+        mask[idx >>> 5] |= 1 << (idx & 31);
+        any = true;
+    }
+    return any ? mask : null;
+}
+
+/**
+ * 某舰长的全部棋盘放置（与视角无关，进程内共享）
+ * 每项用 121 位掩码表示占格，附带展开后的格子索引
+ */
+function getStaticPlacements(len) {
+    const key = `${BOARD_SIZE}:${len}`;
+    const cached = STATIC_PLACEMENTS.get(key);
+    if (cached) return cached;
+
+    const masks = [];
+    const cells = [];
+    let count = 0;
+    for (let vertical = 0; vertical <= 1; vertical++) {
+        const isVertical = vertical === 1;
+        const maxR = isVertical ? BOARD_SIZE - len : BOARD_SIZE - 1;
+        const maxC = isVertical ? BOARD_SIZE - 1 : BOARD_SIZE - len;
+        for (let r = 0; r <= maxR; r++) {
+            for (let c = 0; c <= maxC; c++) {
+                const mask = new Uint32Array(MASK_WORDS);
+                for (let i = 0; i < len; i++) {
+                    const nr = isVertical ? r + i : r;
+                    const nc = isVertical ? c : c + i;
+                    const idx = nr * BOARD_SIZE + nc;
+                    mask[idx >>> 5] |= 1 << (idx & 31);
+                    cells.push(idx);
+                }
+                masks.push(mask);
+                count++;
+            }
+        }
+    }
+
+    const flatMasks = new Uint32Array(count * MASK_WORDS);
+    for (let i = 0; i < count; i++) {
+        flatMasks.set(masks[i], i * MASK_WORDS);
+    }
+
+    const entry = {
+        len,
+        count,
+        masks: flatMasks,
+        cells: Int16Array.from(cells)
+    };
+    STATIC_PLACEMENTS.set(key, entry);
+    return entry;
 }
 
 // ============================================================================
@@ -126,31 +238,57 @@ export class BeliefState {
      * @param {Ship[]} ships - 目标船只
      * @param {number[][]} viewGrid - 视角网格
      * @param {number} [sampleCount=DEFAULT_SAMPLE_COUNT] - 采样数量
+     * @param {Object} [options]
+     * @param {Object} [options.placementPrior] - 玩家历史布阵先验 { byLen: { [len]: { cells, strength } } }
+     * @param {Object} [options.areaContact] - 区域接触观测 { cells: [{r,c}] }：单艘目标舰至少有一格落在该区域
      */
-    constructor(ships, viewGrid, sampleCount = DEFAULT_SAMPLE_COUNT) {
+    constructor(ships, viewGrid, sampleCount = DEFAULT_SAMPLE_COUNT, options = {}) {
         this.ships = ships;
         this.viewGrid = viewGrid;
         this.boardSize = BOARD_SIZE;
+        this.placementPrior = options?.placementPrior?.byLen ? options.placementPrior : null;
+        this.areaContact = options?.areaContact?.cells ? options.areaContact : null;
+        // 区域接触只对“最后 1 艘目标舰”有确定含义
+        this._areaMask = this.ships.length === 1 ? buildCellMask(this.areaContact?.cells) : null;
         
         // 预计算约束信息
         this.constraints = this._buildConstraints();
-        this._mustHitIndices = this.constraints.mustHit.map(({ r, c }) => r * this.boardSize + c);
-        this._hitMask = new Uint8Array(this.boardSize * this.boardSize);
-        for (const idx of this._mustHitIndices) this._hitMask[idx] = 1;
         
         // 检查是否为空盘面（第一回合）
         this.isFirstTurn = this._checkIfFirstTurn();
 
         // 蒙特卡洛采样（使用传入的采样数）
-        // 如果是第一回合，跳过采样以保持概率图完全平均
-        if (this.isFirstTurn) {
-            this.samples = [];
+        // 第一回合且没有历史先验时跳过采样，保持概率图完全平均
+        if (this.isFirstTurn && !this.placementPrior && !this._areaMask) {
+            this._sampleCount = 0;
         } else {
             this._placementCache = this._buildPlacementCache();
             this._sortedShips = [...this.ships].sort((a, b) => b.len - a.len);
+            this._shipEntries = this._sortedShips.map(ship => ({
+                ship,
+                entry: this._placementCache.get(ship.len)
+            }));
             this._occupied = new Uint8Array(this.boardSize * this.boardSize);
-            this._coveredHits = new Set();
-            this.samples = this._sampleConfigurations(sampleCount);
+            this._covered = new Uint8Array(this.boardSize * this.boardSize);
+            this._hitFlags = new Uint8Array(this.boardSize * this.boardSize);
+            for (const { r, c } of this.constraints.mustHit) {
+                this._hitFlags[r * this.boardSize + c] = 1;
+            }
+            this._mustHitCount = this.constraints.mustHit.length;
+            this._chosenPlacements = new Int32Array(this._sortedShips.length);
+            this._samplePlacements = null;
+            this._sampleCount = 0;
+            this._sampleConfigurations(sampleCount);
+            // 区域观测与已命中信息冲突时忽略该观测，保证仍有可用假设
+            if (this._sampleCount === 0 && this._areaMask) {
+                this._areaMask = null;
+                this._placementCache = this._buildPlacementCache();
+                this._shipEntries = this._sortedShips.map(ship => ({
+                    ship,
+                    entry: this._placementCache.get(ship.len)
+                }));
+                this._sampleConfigurations(sampleCount);
+            }
         }
         
         // 缓存边缘概率分布
@@ -198,76 +336,114 @@ export class BeliefState {
 
     /**
      * 蒙特卡洛采样：生成 n 个与观测一致的配置
+     * 样本以“每艘船的放置索引”扁平存储，避免每轮分配对象
      */
     _sampleConfigurations(n) {
-        const samples = [];
+        const shipCount = this._sortedShips.length;
+        this._samplePlacements = new Int16Array(n * shipCount);
         let attempts = 0;
         const maxAttempts = n * 20; // 防止死循环
+        let filled = 0;
         
-        while (samples.length < n && attempts < maxAttempts) {
+        while (filled < n && attempts < maxAttempts) {
             attempts++;
-            const config = this._sampleOneConfiguration();
-            if (config) {
-                samples.push(config);
+            if (this._sampleOneConfiguration()) {
+                this._samplePlacements.set(this._chosenPlacements, filled * shipCount);
+                filled++;
             }
         }
         
         // 如果采样不足，用已有样本填充
-        while (samples.length < n && samples.length > 0) {
-            samples.push(samples[Math.floor(Math.random() * samples.length)]);
+        while (filled < n && filled > 0) {
+            const src = Math.floor(Math.random() * filled) * shipCount;
+            this._samplePlacements.copyWithin(filled * shipCount, src, src + shipCount);
+            filled++;
         }
         
-        return samples;
+        this._sampleCount = filled;
+        this.sampleAttempts = attempts;
     }
 
     /**
-     * 预计算每种舰长的全部合法放置
-     * 视角在单次采样内不变，只有占用格会随采样变化
+     * 预计算每种舰长在当前视角下的合法放置与权重
+     * 静态放置表全进程共享，这里只做一次掩码过滤
      */
     _buildPlacementCache() {
-        const cache = new Map();
-        const lengths = new Set(this.ships.map(s => s.len));
+        const blockedMask = new Uint32Array(MASK_WORDS);
+        const hitMask = new Uint32Array(MASK_WORDS);
+        const suspectMask = new Uint32Array(MASK_WORDS);
         
-        for (const len of lengths) {
-            const placements = [];
-            for (let vertical = 0; vertical <= 1; vertical++) {
-                const isVertical = vertical === 1;
-                const maxR = isVertical ? this.boardSize - len : this.boardSize - 1;
-                const maxC = isVertical ? this.boardSize - 1 : this.boardSize - len;
-                
-                for (let r = 0; r <= maxR; r++) {
-                    for (let c = 0; c <= maxC; c++) {
-                        const cells = [];
-                        let valid = true;
-                        let weight = 1;
-                        
-                        for (let i = 0; i < len; i++) {
-                            const nr = isVertical ? r + i : r;
-                            const nc = isVertical ? c : c + i;
-                            const state = this.viewGrid[nr][nc];
-                            
-                            if (state === CellState.MISS || state === CellState.SUNK) {
-                                valid = false;
-                                break;
-                            }
-                            
-                            if (state === CellState.HIT || state === CellState.DESTROYED) weight += 10;
-                            else if (state === CellState.SUSPECT) weight += 1.25;
-                            cells.push(nr * this.boardSize + nc);
-                        }
-                        
-                        if (valid) placements.push({ cells, weight });
-                    }
+        for (let r = 0; r < this.boardSize; r++) {
+            for (let c = 0; c < this.boardSize; c++) {
+                const state = this.viewGrid[r][c];
+                const idx = r * this.boardSize + c;
+                if (state === CellState.MISS || state === CellState.SUNK) {
+                    blockedMask[idx >>> 5] |= 1 << (idx & 31);
+                } else if (state === CellState.HIT || state === CellState.DESTROYED) {
+                    hitMask[idx >>> 5] |= 1 << (idx & 31);
+                } else if (state === CellState.SUSPECT) {
+                    suspectMask[idx >>> 5] |= 1 << (idx & 31);
                 }
             }
-            cache.set(len, {
-                placements,
-                viable: new Int32Array(placements.length),
-                cumulative: new Float64Array(placements.length)
-            });
+        }
+        
+        const cache = new Map();
+        const lengths = new Set(this.ships.map(s => s.len));
+        const areaMask = this._areaMask;
+        
+        for (const len of lengths) {
+            let entry = this._buildLengthCache(len, blockedMask, hitMask, suspectMask, areaMask);
+            // 观测与命中信息冲突时退回无区域约束，避免整局采样为空
+            if (areaMask && entry.n === 0) {
+                entry = this._buildLengthCache(len, blockedMask, hitMask, suspectMask, null);
+            }
+            cache.set(len, entry);
         }
         
         return cache;
+    }
+
+    /**
+     * 单个舰长的合法放置与权重
+     * areaMask 为区域接触观测：区外摆放的似然为 0，直接排除
+     */
+    _buildLengthCache(len, blockedMask, hitMask, suspectMask, areaMask) {
+        const staticEntry = getStaticPlacements(len);
+        const { count, masks, cells: flatCells } = staticEntry;
+        const priorCells = this.placementPrior?.byLen?.[len]?.cells || null;
+        const viable = new Int32Array(count);
+        const weights = new Float64Array(count);
+        let n = 0;
+        
+        for (let p = 0; p < count; p++) {
+            const base = p * MASK_WORDS;
+            if (masksOverlap(masks, base, blockedMask)) continue;
+            if (areaMask && !masksOverlap(masks, base, areaMask)) continue;
+            // 原权重：基础上 1，每个命中舱 +10，每个疑似格 +1.25
+            let weight = 1
+                + 10 * andPopcount(masks, base, hitMask)
+                + 1.25 * andPopcount(masks, base, suspectMask);
+            // 玩家历史布阵先验：取船体各格先验的几何平均
+            if (priorCells) {
+                const cellBase = p * len;
+                let product = 1;
+                for (let k = 0; k < len; k++) product *= priorCells[flatCells[cellBase + k]];
+                weight *= Math.pow(product, 1 / len);
+            }
+            viable[n] = p;
+            weights[n] = weight;
+            n++;
+        }
+        
+        return {
+            staticEntry,
+            n,
+            viable,
+            weights,
+            // 每次抽船复用的临时数组
+            tmpViable: new Int32Array(n),
+            tmpCumulative: new Float64Array(n)
+        };
     }
 
     /**
@@ -275,63 +451,67 @@ export class BeliefState {
      */
     _sampleOneConfiguration() {
         const occupied = this._occupied;
-        const coveredHits = this._coveredHits;
+        const covered = this._covered;
+        const hitFlags = this._hitFlags;
         occupied.fill(0);
-        coveredHits.clear();
-        const config = [];
+        covered.fill(0);
+        let coveredCount = 0;
+        const chosen = this._chosenPlacements;
         
-        for (const ship of this._sortedShips) {
-            const placement = this._sampleShipPlacement(ship, occupied);
-            if (!placement) {
-                return null; // 放置失败，整个配置作废
+        for (let i = 0; i < this._shipEntries.length; i++) {
+            const { entry } = this._shipEntries[i];
+            const placement = this._sampleShipPlacement(entry, occupied);
+            if (placement < 0) {
+                return false; // 放置失败，整个配置作废
             }
-            config.push({ shipId: ship.id, cells: placement.cells });
-            for (const idx of placement.cells) {
-                occupied[idx] = 1;
-                if (this._hitMask[idx]) coveredHits.add(idx);
+            chosen[i] = placement;
+            const { staticEntry } = entry;
+            const base = placement * staticEntry.len;
+            for (let k = 0; k < staticEntry.len; k++) {
+                const cell = staticEntry.cells[base + k];
+                occupied[cell] = 1;
+                if (hitFlags[cell] && !covered[cell]) {
+                    covered[cell] = 1;
+                    coveredCount++;
+                }
             }
         }
         
-        if (!this._validateMustHit(coveredHits)) {
-            return null;
-        }
-        
-        return config;
+        return coveredCount === this._mustHitCount;
     }
 
     /**
      * 为单艘船采样一个合法放置位置
      * 单次遍历可行放置并累积权重，再按累计权重抽样
      */
-    _sampleShipPlacement(ship, occupied) {
-        const entry = this._placementCache.get(ship.len);
-        if (!entry || entry.placements.length === 0) {
-            return null;
-        }
+    _sampleShipPlacement(entry, occupied) {
+        const { staticEntry, n, viable, weights, tmpViable, tmpCumulative } = entry;
+        if (!n) return -1;
         
-        const { placements, viable, cumulative } = entry;
+        const { cells, len } = staticEntry;
         let count = 0;
         let totalWeight = 0;
         
-        for (let i = 0; i < placements.length; i++) {
-            const cells = placements[i].cells;
+        for (let i = 0; i < n; i++) {
+            const p = viable[i];
+            const base = p * len;
             let blocked = false;
-            for (let j = 0; j < cells.length; j++) {
-                if (occupied[cells[j]]) {
+            for (let k = 0; k < len; k++) {
+                if (occupied[cells[base + k]]) {
                     blocked = true;
                     break;
                 }
             }
             if (blocked) continue;
             
-            totalWeight += placements[i].weight;
-            cumulative[count] = totalWeight;
-            viable[count] = i;
+            totalWeight += weights[i];
+            tmpCumulative[count] = totalWeight;
+            tmpViable[count] = p;
             count++;
         }
         
         if (count === 0) {
-            return null;
+            return -1;
         }
         
         const rand = Math.random() * totalWeight;
@@ -339,22 +519,11 @@ export class BeliefState {
         let hi = count - 1;
         while (lo < hi) {
             const mid = (lo + hi) >> 1;
-            if (cumulative[mid] < rand) lo = mid + 1;
+            if (tmpCumulative[mid] < rand) lo = mid + 1;
             else hi = mid;
         }
         
-        return placements[viable[lo]];
-    }
-
-    /**
-     * 验证配置是否覆盖所有 mustHit 点
-     */
-    _validateMustHit(coveredHits) {
-        if (coveredHits.size < this._mustHitIndices.length) return false;
-        for (const idx of this._mustHitIndices) {
-            if (!coveredHits.has(idx)) return false;
-        }
-        return true;
+        return tmpViable[lo];
     }
 
     /**
@@ -365,8 +534,8 @@ export class BeliefState {
             return this._probabilityGrid;
         }
         
-        // 特殊处理第一回合：返回完全平均的概率
-        if (this.isFirstTurn) {
+        // 特殊处理第一回合：无历史先验时返回完全平均的概率
+        if (this.isFirstTurn && !this.placementPrior && !this._areaMask) {
             const totalShipCells = this.ships.reduce((sum, s) => sum + s.len, 0);
             const totalCells = this.boardSize * this.boardSize;
             const avgProb = totalCells > 0 ? totalShipCells / totalCells : 0;
@@ -379,25 +548,29 @@ export class BeliefState {
         const grid = Array(this.boardSize).fill(0)
             .map(() => Array(this.boardSize).fill(0));
         
-        if (this.samples.length === 0) {
+        if (this._sampleCount === 0) {
             return grid;
         }
         
         // 统计每个格子在采样中出现的频率
         const boardSize = this.boardSize;
-        for (const config of this.samples) {
-            for (const placement of config) {
-                for (const idx of placement.cells) {
-                    grid[Math.floor(idx / boardSize)][idx % boardSize]++;
+        const shipCount = this._shipEntries.length;
+        const counts = new Uint32Array(boardSize * boardSize);
+        for (let s = 0; s < this._sampleCount; s++) {
+            const rowBase = s * shipCount;
+            for (let i = 0; i < shipCount; i++) {
+                const { staticEntry } = this._shipEntries[i].entry;
+                const base = this._samplePlacements[rowBase + i] * staticEntry.len;
+                for (let k = 0; k < staticEntry.len; k++) {
+                    counts[staticEntry.cells[base + k]]++;
                 }
             }
         }
         
         // 归一化为概率
-        const sampleCount = this.samples.length;
         for (let r = 0; r < this.boardSize; r++) {
             for (let c = 0; c < this.boardSize; c++) {
-                grid[r][c] /= sampleCount;
+                grid[r][c] = counts[r * boardSize + c] / this._sampleCount;
             }
         }
         
@@ -526,21 +699,14 @@ export class BeliefState {
         const { weapon, r, c } = action;
         const currentEntropy = this.getEntropy();
         
-        // 获取攻击覆盖的格子
-        const cells = this._getWeaponCoverage(weapon, r, c, abilities);
-        
-        // 计算这些格子的总熵
+        // 计算覆盖格的总熵（无临时数组）
         let coveredEntropy = 0;
-        for (const cell of cells) {
-            if (cell.r >= 0 && cell.r < this.boardSize && 
-                cell.c >= 0 && cell.c < this.boardSize) {
-                const state = this.viewGrid[cell.r][cell.c];
-                if (state === CellState.UNKNOWN || state === CellState.SUSPECT) {
-                    const p = probGrid[cell.r][cell.c];
-                    coveredEntropy += this._cellEntropy(p);
-                }
+        forEachCoverage(weapon, r, c, abilities, (nr, nc) => {
+            const state = this.viewGrid[nr][nc];
+            if (state === CellState.UNKNOWN || state === CellState.SUSPECT) {
+                coveredEntropy += this._cellEntropy(probGrid[nr][nc]);
             }
-        }
+        });
         
         // 攻击后这些格子的状态将被揭示
         return Math.max(0, currentEntropy - coveredEntropy);
@@ -554,12 +720,6 @@ export class BeliefState {
         return -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
     }
 
-    /**
-     * 获取武器覆盖的格子（按学说形状与半径）
-     */
-    _getWeaponCoverage(weapon, r, c, abilities = null) {
-        return getActionCoverage(weapon, r, c, abilities);
-    }
 }
 
 // ============================================================================
@@ -620,11 +780,11 @@ export function evaluateAction(beliefState, action, abilities, alpha, damageGrid
     if (weapon !== 'SONAR' && (hitAffinity > 0 || suspectAffinity > 0)) {
         let hitCells = 0;
         let suspectCells = 0;
-        for (const cell of getActionCoverage(weapon, r, c, abilities)) {
-            const state = beliefState.viewGrid[cell.r][cell.c];
+        forEachCoverage(weapon, r, c, abilities, (nr, nc) => {
+            const state = beliefState.viewGrid[nr][nc];
             if (state === CellState.HIT || state === CellState.DESTROYED) hitCells++;
             else if (state === CellState.SUSPECT) suspectCells++;
-        }
+        });
         utility *= 1 + hitAffinity * Math.min(hitCells, 2)
                        + suspectAffinity * Math.min(suspectCells, 2);
     }
@@ -671,10 +831,12 @@ export function calculateExpectedDamage(action, probGrid, abilities, damageGrid 
         }
     } else if (weapon === 'HE') {
         // 学说形状攻击（X 型 / 十字型），中心伤害可被学说强化
-        const offsets = getHEOffsets(abilities.heShape || 'x');
+        const offsets = heOffsets(abilities.heShape || 'x');
         const centerDamage = abilities.heCenterDamage ?? 1;
         const outerDamage = abilities.heOuterDamage ?? 1;
-        for (const [dr, dc] of offsets) {
+        for (let i = 0; i < offsets.length; i++) {
+            const dr = offsets[i][0];
+            const dc = offsets[i][1];
             const nr = r + dr;
             const nc = c + dc;
             if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {

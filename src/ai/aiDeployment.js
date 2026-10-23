@@ -31,14 +31,19 @@ const IDEAL_MIN_DISTANCE = 5.0;
 /** 最小可接受间距 */
 const MIN_ACCEPTABLE_DISTANCE = 1.5;
 
+/** 玩家射击热图对布阵的规避强度（0 = 完全忽略） */
+const ATTENTION_WEIGHT = 0.6;
+
 /**
  * AI 部署船只
  * 
  * @param {Array} shipTypes - 船只类型定义数组
  * @param {number} boardSize - 棋盘大小（默认使用常量）
+ * @param {Object} [options]
+ * @param {number[]} [options.attention] - 玩家历史射击热图（121 格，0 = 平均）
  * @returns {Array} 船只放置结果，包含位置和方向信息
  */
-export function deployShips(shipTypes, boardSize = BOARD_SIZE) {
+export function deployShips(shipTypes, boardSize = BOARD_SIZE, options = {}) {
     const placements = [];
     const occupiedGrid = createEmptyGrid(boardSize);
     
@@ -46,7 +51,7 @@ export function deployShips(shipTypes, boardSize = BOARD_SIZE) {
     const shuffledTypes = shuffleArray([...shipTypes]);
     
     for (const shipType of shuffledTypes) {
-        const placement = findRandomSparsePlacement(shipType, occupiedGrid, placements, boardSize);
+        const placement = findRandomSparsePlacement(shipType, occupiedGrid, placements, boardSize, options);
         
         if (placement) {
             // 标记占用格子
@@ -103,7 +108,7 @@ function markOccupied(grid, r, c, len, vertical) {
  * 3. 从中随机选择一个
  * 4. 如果没有满足间距的位置，逐步降低要求
  */
-function findRandomSparsePlacement(shipType, occupiedGrid, existingPlacements, boardSize) {
+function findRandomSparsePlacement(shipType, occupiedGrid, existingPlacements, boardSize, options = {}) {
     // 收集所有合法位置及其与已有船只的最小距离
     const allCandidates = [];
     
@@ -128,7 +133,7 @@ function findRandomSparsePlacement(shipType, occupiedGrid, existingPlacements, b
     
     // 如果是第一艘船，完全随机选择
     if (existingPlacements.length === 0) {
-        return allCandidates[Math.floor(Math.random() * allCandidates.length)];
+        return pickCandidate(allCandidates, shipType.len, boardSize, options);
     }
     
     // 尝试不同的间距阈值，从理想间距逐步降低
@@ -136,7 +141,7 @@ function findRandomSparsePlacement(shipType, occupiedGrid, existingPlacements, b
         const sparsePositions = allCandidates.filter(c => c.minDist >= threshold);
         if (sparsePositions.length > 0) {
             // 从满足间距的位置中随机选择
-            return sparsePositions[Math.floor(Math.random() * sparsePositions.length)];
+            return pickCandidate(sparsePositions, shipType.len, boardSize, options);
         }
     }
     
@@ -145,7 +150,36 @@ function findRandomSparsePlacement(shipType, occupiedGrid, existingPlacements, b
     const topCount = Math.min(5, allCandidates.length);
     const topCandidates = allCandidates.slice(0, topCount);
     
-    return topCandidates[Math.floor(Math.random() * topCandidates.length)];
+    return pickCandidate(topCandidates, shipType.len, boardSize, options);
+}
+
+/**
+ * 从候选位置中抽样；有射击热图时轻度避开玩家常搜的格子
+ */
+function pickCandidate(candidates, len, boardSize, options = {}) {
+    const attention = options.attention;
+    if (!Array.isArray(attention) || candidates.length === 0) {
+        return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+    const weights = new Array(candidates.length);
+    let total = 0;
+    for (let i = 0; i < candidates.length; i++) {
+        const { r, c, v } = candidates[i];
+        let sum = 0;
+        for (let k = 0; k < len; k++) {
+            const idx = (v ? r + k : r) * boardSize + (v ? c : c + k);
+            sum += attention[idx] || 0;
+        }
+        const weight = 1 / (1 + ATTENTION_WEIGHT * (sum / len));
+        weights[i] = weight;
+        total += weight;
+    }
+    let roll = Math.random() * total;
+    for (let i = 0; i < candidates.length; i++) {
+        roll -= weights[i];
+        if (roll <= 0) return candidates[i];
+    }
+    return candidates[candidates.length - 1];
 }
 
 /**

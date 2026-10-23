@@ -99,6 +99,8 @@ export class AIDecisionEngine {
             enemyShips,
             difficultyConfig,
             playerViewGrid,
+            placementPrior = null,
+            areaContact = null,
             aiFaction = 'us',
             playerFaction = 'us'
         } = context;
@@ -123,8 +125,8 @@ export class AIDecisionEngine {
             return makeRandomDecision(viewGrid, abilities);
         }
 
-        // 4. 构建置信状态（蒙特卡洛采样）
-        const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount);
+        // 4. 构建置信状态（蒙特卡洛采样；历史布阵先验与区域接触观测参与概率更新）
+        const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount, { placementPrior, areaContact });
 
         // 5. 枚举行动，过滤已用过的声呐点
         let actions = enumerateAllActions(viewGrid, abilities);
@@ -221,7 +223,7 @@ export function resetAIState() {
 /**
  * 计算概率热力图，供 AI 视角调试显示
  */
-export function calculateProbabilityGrid(viewGrid, targets, difficultyConfig = null) {
+export function calculateProbabilityGrid(viewGrid, targets, difficultyConfig = null, placementPrior = null, areaContact = null) {
     if (!targets || targets.length === 0) {
         return Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
     }
@@ -233,6 +235,6 @@ export function calculateProbabilityGrid(viewGrid, targets, difficultyConfig = n
 
     const tuning = difficultyConfig?.tuning
         || getAITuning(difficultyConfig?.level || 'HARD');
-    const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount);
+    const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount, { placementPrior, areaContact });
     return beliefState.getProbabilityGrid();
 }
