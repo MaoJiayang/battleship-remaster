@@ -105,13 +105,14 @@ export class AIDecisionEngine {
             playerFaction = 'us'
         } = context;
 
-        const { alpha = 0.5, randomness = 0, riskAwareness = 0 } = difficultyConfig;
+        const { alpha = 0.5, randomness = 0, riskAwareness = 0, neutralBias = false } = difficultyConfig;
         const tuning = difficultyConfig?.tuning
             || getAITuning(difficultyConfig?.level || context.difficultyLevel || 'HARD');
 
         // 1. 己方能力（含学说；狼群战果取决于已击沉敌舰数）
         const abilities = checkAIAbilities(enemyShips, aiFaction, playerFaction, {
-            sunkEnemyShips: myShips.filter(s => s.sunk).length
+            sunkEnemyShips: myShips.filter(s => s.sunk).length,
+            neutralBias
         });
 
         // 2. 存活目标

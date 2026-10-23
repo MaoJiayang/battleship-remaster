@@ -45,6 +45,7 @@ function normalizeConfig(config = {}, defaultLevel = 'HARD') {
         alpha: config.alpha ?? base.alpha,
         randomness: config.randomness ?? base.randomness,
         riskAwareness: config.riskAwareness ?? base.riskAwareness,
+        neutralBias: !!config.neutralBias,
         tuning: config.tuning || getAITuning(level)
     };
 }
@@ -203,8 +204,8 @@ export class SimulationEngine {
     }
 
     _decisionConfig(side) {
-        const { alpha, randomness, riskAwareness, level, tuning } = side.config;
-        return { alpha, randomness, riskAwareness, level, tuning };
+        const { alpha, randomness, riskAwareness, neutralBias, level, tuning } = side.config;
+        return { alpha, randomness, riskAwareness, neutralBias, level, tuning };
     }
 
     _decisionContext(attacker, defender) {
@@ -228,7 +229,8 @@ export class SimulationEngine {
 
     _abilities(side, opponent) {
         return checkAIAbilities(side.ships, side.faction, opponent.faction, {
-            sunkEnemyShips: opponent.ships.filter(s => s.sunk).length
+            sunkEnemyShips: opponent.ships.filter(s => s.sunk).length,
+            neutralBias: side.config.neutralBias
         });
     }
 

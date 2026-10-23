@@ -902,7 +902,8 @@ export function checkAIAbilities(ships, factionId = 'us', opponentFaction = null
         ? applyHEDefense(opponentFaction, heProfile.centerDamage)
         : heProfile.centerDamage;
     const sonarProfile = getSonarProfile(factionId);
-    const bias = getAIBias(factionId) || {};
+    // 平衡基准可关闭学说人格层，只保留机制推导出的期望伤害/信息价值
+    const bias = options.neutralBias ? {} : (getAIBias(factionId) || {});
     const rawAP = getAPDamage(factionId, ships, { sunkEnemyShips });
     const rawAPSuspect = getAPMaxDamage(factionId, ships, { sunkEnemyShips });
     const apDamage = opponentFaction ? applyAPDefense(opponentFaction, rawAP) : rawAP;

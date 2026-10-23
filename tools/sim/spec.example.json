@@ -1,0 +1,10 @@
+{
+  "alpha": 0.84,
+  "riskAwareness": 0.46,
+  "pairs": 100,
+  "seedOffset": 8181,
+  "maxPlies": 320,
+  "jobs": 6,
+  "neutralBias": false,
+  "doctrineOverrides": {}
+}
