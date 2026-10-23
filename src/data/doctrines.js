@@ -13,7 +13,7 @@ export const DOCTRINES = {
         name: '雷达火控',
         aiHint: '水听锁定后集中跨射',
         en: 'RADAR FIRE CONTROL',
-        brief: '主炮对水听标记的疑似目标伤害 +1，并可连续穿甲至多 2 舱',
+        brief: '主炮对疑似格 +1 伤，可连穿 2 舱',
         desc: '依托舰载雷达与射击指挥仪，对已标定海域实施精确跨射，命中后沿舰体向相邻舱室传导。',
         ap: { suspectBonus: 1, maxPenetrations: 2 },
         ai: {
@@ -26,7 +26,7 @@ export const DOCTRINES = {
         name: '精锐航空队',
         aiHint: '优先航空打击与补刀',
         en: 'ELITE AIR GROUPS',
-        brief: '空袭中心 3 伤、外围 1 伤，直击传导；航母存活时主炮 +1；航母沉没后陆基航空队仍可单点出击（中心 2 伤）',
+        brief: '空袭中心 3 伤并传导，外围 1 伤；航母存活时主炮 +1，沉没后改为陆基单点空袭（2 伤）',
         desc: '以精锐舰载航空兵实施先制打击，航弹中心命中造成三重破坏，外围仅有破片杀伤；舰载机同时为战列线校射，航母损失后改由陆基航空队维持有限的单点空中打击。',
         he: {
             centerDamage: 3,
@@ -43,8 +43,8 @@ export const DOCTRINES = {
         name: 'ASDIC 猎潜',
         aiHint: '反复广域搜索再集火',
         en: 'ASDIC SWEEP',
-        brief: '水听覆盖 3×3；有信号标定最近接触，无信号清空海域',
-        desc: '以护航反潜体系实施水声搜索，接触信号由护航舰直接引导精确打击，避免大范围疑似摊薄火力。',
+        brief: '水听有信号时，标定最近的接触格',
+        desc: '以护航反潜体系实施水声搜索，接触信号可直接引导精确打击。',
         sonar: { radius: 1, reveal: 'nearest' },
         ai: {
             weaponBias: { AP: 1.02, HE: 1.0, SONAR: 1.02 },
@@ -57,7 +57,7 @@ export const DOCTRINES = {
         aiHint: '追击受创目标滚雪球',
         en: 'WOLFPACK',
         brief: '每击沉 1 艘敌舰，主炮伤害 +1（最多 +2）',
-        desc: '潜艇狼群与水面袭击舰持续追击残舰，战果会转化为更凶猛的近战火力。',
+        desc: '潜艇狼群与水面袭击舰持续追击残舰，战果会转化为更强的主炮火力。',
         ap: { sunkBonus: 1, sunkBonusCap: 2 },
         ai: {
             weaponBias: { AP: 1.08, HE: 1.0, SONAR: 0.98 },
@@ -68,8 +68,8 @@ export const DOCTRINES = {
         name: '四联装主炮',
         aiHint: '围绕战列舰打爆发',
         en: 'QUAD TURRETS',
-        brief: '战列舰存活时主炮 4 伤；沉没后仍有 2 伤',
-        desc: '全前置四联装炮塔带来最强单发火力；火力核心失去后由巡洋舰炮维持一半输出。',
+        brief: '战列舰存活时主炮 4 伤',
+        desc: '全前置四联装炮塔带来最强单发火力；火力核心失去后，主炮输出减半。',
         ap: {
             quadTurrets: true,
             fallbackDamage: 2,
@@ -84,8 +84,8 @@ export const DOCTRINES = {
         name: '高速规避',
         aiHint: '规避炮火并以主炮反击',
         en: 'HIGH-SPEED EVASION',
-        brief: '承受 3 伤及以上主炮伤害 -1（最低 1），轻弹不受影响；空袭中心直击至少 2 伤',
-        desc: '以高航速与机动规避重炮，轻弹近战难以完全规避；舰体防空薄弱，空袭中心落弹必然造成双倍破坏。',
+        brief: '重炮伤害 -1，轻弹不受影响；空袭中心至少 2 伤',
+        desc: '以高航速与机动规避重炮，轻弹难以完全规避；舰体防空薄弱，空袭中心落弹至少造成 2 伤。',
         defense: { apReduction: 1, apReductionMinDamage: 3, heVulnerability: 1 },
         ai: {
             weaponBias: { AP: 1.06, HE: 0.96, SONAR: 1.02 },
@@ -97,7 +97,7 @@ export const DOCTRINES = {
         aiHint: '火箭覆盖压制散布目标',
         en: 'ROCKET SALVO',
         brief: '空袭无需航母，覆盖十字 5 格、中心 2 伤；主炮伤害 -1',
-        desc: '以舰载火箭实施饱和覆盖，不依赖航母航空兵，中心落点可击穿甲板；轻型舰体牺牲了主炮口径。',
+        desc: '以舰载火箭实施饱和覆盖，不依赖航母航空兵，中心落点可击穿甲板；为搭载火箭发射装置，主炮威力有所下降。',
         he: { requiresCV: false, shape: 'plus', centerDamage: 2 },
         ap: { damagePenalty: 1 },
         ai: {
@@ -221,20 +221,20 @@ export function getHEProfile(factionId, ships = []) {
         ? '十字型 5 格'
         : shape === 'single' ? '单点 1 格' : 'X 型 5 格';
     const damageLabel = shape === 'single'
-        ? `单点，中心${centerDamage}伤，直击传导`
+        ? `单点，中心 ${centerDamage} 伤，可传导`
         : shape === 'plus'
-            ? (centerDamage > 1 ? `十字，中心${centerDamage}伤，直击传导` : '十字，无需航母')
+            ? (centerDamage > 1 ? `十字，中心 ${centerDamage} 伤，可传导` : '十字，无需航母')
             : (centerDamage > 1
-                ? `X型，中心${centerDamage}伤${outerDamage > 1 ? `，外围${outerDamage}伤` : ''}，直击传导`
-                : 'X型 1 伤');
+                ? `X 型，中心 ${centerDamage} 伤${outerDamage !== centerDamage ? `，外围 ${outerDamage} 伤` : ''}，可传导`
+                : 'X 型 1 伤');
     // 武器按钮空间有限，单独提供紧凑版本
     const compact = degraded && shape === 'single'
-        ? `陆基单点 ${centerDamage}伤`
+        ? `陆基单点 ${centerDamage} 伤`
         : shape === 'single'
-            ? `单点 ${centerDamage}伤`
+            ? `单点 ${centerDamage} 伤`
             : shape === 'plus'
-                ? `十字 ${centerDamage}伤`
-                : `X型 ${centerDamage}${outerDamage > 1 ? `/${outerDamage}` : ''}伤`;
+                ? `十字 ${centerDamage} 伤`
+                : `X 型 ${centerDamage}${outerDamage !== centerDamage ? `/${outerDamage}` : ''} 伤`;
 
     return {
         requiresCV,

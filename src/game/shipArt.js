@@ -110,7 +110,7 @@ const LAYOUTS = {
         rm: { island: 'rm', islandX: 140, span: [14, 228],
               deck: { hw: 14.0, nose: 6.0, bowLen: 30, corner: 2.0, stern: 7 },
               elev: [82, 174], elevSize: [12, 10.5], cats: 2, planes: 3,
-              planeSpots: [[96, -8.8, 180], [114, 8.8, 176], [152, -8.8, 184]],
+              planeSpots: [[96, -8.8, 180], [114, 8.8, 176], [196, -8.8, 184]],
               sponsons: [[66, -1], [66, 1], [196, -1], [196, 1]], aa: [108, 204] },
         sn: { island: 'sn', islandX: 146, span: [16, 226],
               deck: { hw: 14.7, nose: 6.8, bowLen: 30, corner: 2.0, stern: 6 },

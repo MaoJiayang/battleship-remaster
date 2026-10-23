@@ -1603,21 +1603,20 @@ import { VIEW_STATE } from './battle/ViewState.js';
         const descEl = document.getElementById('ap-desc');
         if (descEl) {
             const notes = [];
-            if (doctrine.ap?.suspectBonus) notes.push('疑似+1');
-            if (doctrine.ap?.sunkBonus) notes.push('击沉+1');
+            if (doctrine.ap?.suspectBonus) notes.push('疑似 +1');
+            if (doctrine.ap?.sunkBonus) notes.push('击沉 +1');
             if (doctrine.ap?.quadTurrets) {
                 notes.push(myShips.some(s => s.code === 'BB' && !s.sunk) ? '四联' : '核心损失');
             }
-            if (maxPenetrations > 1) notes.push(`连穿${maxPenetrations}舱`);
-            if (doctrine.ap?.damagePenalty) notes.push('主炮-1');
+            if (maxPenetrations > 1) notes.push(`连穿 ${maxPenetrations} 舱`);
+            if (doctrine.ap?.damagePenalty) notes.push('主炮 -1');
             if (doctrine.ap?.cvBonus) {
                 notes.push(myShips.some(s => s.code === 'CV' && !s.sunk)
-                    ? `CV+${doctrine.ap.cvBonus}`
-                    : '无CV');
+                    ? `CV +${doctrine.ap.cvBonus}`
+                    : '无 CV');
             }
-            const note = notes.length ? `，${notes.join(' / ')}` : '';
             descEl.innerText = maxPenetrations > 1 ? `${dmg}伤 连穿` : `${dmg}伤 穿甲`;
-            const apFull = `单点 ${dmg} 伤，穿甲${note}`;
+            const apFull = `单点 ${dmg} 伤，穿甲${notes.length ? `（${notes.join('，')}）` : ''}`;
             descEl.title = apFull;
             const apBtn = document.getElementById('btn-ap');
             if (apBtn) apBtn.title = apFull;
