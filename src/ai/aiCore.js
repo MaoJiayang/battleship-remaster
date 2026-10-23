@@ -250,6 +250,8 @@ export class BeliefState {
         this.areaContact = options?.areaContact?.cells ? options.areaContact : null;
         this.sampleFirstTurn = !!options.sampleFirstTurn;
         this.posterior = !!options.posterior;
+        this.deadline = options.deadline ?? Infinity;
+        this._deadlineReached = false;
         // 区域接触只对“最后 1 艘目标舰”有确定含义
         this._areaMask = this.ships.length === 1 ? buildCellMask(this.areaContact?.cells) : null;
         
@@ -282,7 +284,7 @@ export class BeliefState {
             this._sampleCount = 0;
             this._sampleConfigurations(sampleCount);
             // 区域观测与已命中信息冲突时忽略该观测，保证仍有可用假设
-            if (this._sampleCount === 0 && this._areaMask) {
+            if (this._sampleCount === 0 && this._areaMask && !this._deadlineReached) {
                 this._areaMask = null;
                 this._placementCache = this._buildPlacementCache();
                 this._shipEntries = this._sortedShips.map(ship => ({
@@ -349,6 +351,7 @@ export class BeliefState {
         let filled = 0;
         
         while (filled < n && attempts < maxAttempts) {
+            if (this.deadline !== Infinity && attempts % 16 === 0 && performance.now() >= this.deadline) { this._deadlineReached = true; break; }
             attempts++;
             if (this._sampleOneConfiguration()) {
                 this._samplePlacements.set(this._chosenPlacements, filled * shipCount);
@@ -358,7 +361,7 @@ export class BeliefState {
         }
         
         // 如果采样不足，用已有样本填充
-        while (filled < n && filled > 0) {
+        while (filled < n && filled > 0 && !this._deadlineReached) {
             const src = Math.floor(Math.random() * filled) * shipCount;
             this._samplePlacements.copyWithin(filled * shipCount, src, src + shipCount);
             if (this.posterior) this._sampleLogWeights[filled] = this._sampleLogWeights[src / shipCount];
@@ -551,8 +554,12 @@ export class BeliefState {
     }
 
     getSampleFleets(limit = this._sampleCount) {
+        return [...this.iterateSampleFleets(limit)];
+    }
+
+    *iterateSampleFleets(limit = this._sampleCount, shuffled = false) {
         const count = Math.min(limit, this._sampleCount);
-        const fleets = [];
+        const indices = new Int32Array(count);
         let weightIndex = 0;
         let cumulativeWeight = this._sampleWeights?.[0] || 0;
         for (let sample = 0; sample < count; sample++) {
@@ -562,14 +569,21 @@ export class BeliefState {
                 while (weightIndex < this._sampleCount - 1 && cumulativeWeight < position) cumulativeWeight += this._sampleWeights[++weightIndex];
                 sampleIndex = weightIndex;
             }
-            const fleet = this._shipEntries.map(({ ship, entry }, shipIndex) => {
+            indices[sample] = sampleIndex;
+        }
+        if (shuffled) {
+            for (let index = count - 1; index > 0; index--) {
+                const target = Math.floor(Math.random() * (index + 1));
+                [indices[index], indices[target]] = [indices[target], indices[index]];
+            }
+        }
+        for (const sampleIndex of indices) {
+            yield this._shipEntries.map(({ ship, entry }, shipIndex) => {
                 const placement = this._samplePlacements[sampleIndex * this._shipEntries.length + shipIndex];
                 const offset = placement * entry.staticEntry.len;
                 return { ship, cells: Array.from(entry.staticEntry.cells.subarray(offset, offset + ship.len)) };
             });
-            fleets.push(fleet);
         }
-        return fleets;
     }
 
     /**

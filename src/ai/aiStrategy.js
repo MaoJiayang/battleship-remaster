@@ -100,25 +100,38 @@ export class AIDecisionEngine {
         return action;
     }
 
-    createSearch(context, tuning) {
+    createSearch(context, tuning, deadline = Infinity) {
+        const started = performance.now();
+        let baseline;
+        if (tuning.pairedSearch) {
+            const engine = new AIDecisionEngine();
+            engine.damageDealtGrid = this.damageDealtGrid.map(row => [...row]);
+            engine.sonarHistory = new Set(this.sonarHistory);
+            baseline = engine.decide({ ...context, difficultyConfig: { ...context.difficultyConfig, tuning: { ...tuning, search: false } } });
+        }
+        const baselineMs = performance.now() - started;
         const previous = this.actionHistory?.at(-1);
         if (previous && !previous.afterView) previous.afterView = context.viewGrid.map(row => [...row]);
         const targets = context.myShips.filter(ship => !ship.sunk);
-        const belief = new BeliefState(targets, context.viewGrid, tuning.sampleCount, {
+        const belief = baseline && performance.now() >= deadline ? null : new BeliefState(targets, context.viewGrid, tuning.sampleCount, {
             placementPrior: context.placementPrior, areaContact: context.areaContact,
-            sampleFirstTurn: true, posterior: true
+            sampleFirstTurn: true, posterior: true, deadline
         });
-        return new BeliefSearch(context, belief, this.actionHistory || [], this.damageDealtGrid, tuning, () => new AIDecisionEngine());
+        const search = new BeliefSearch(context, belief, this.actionHistory || [], this.damageDealtGrid, tuning, () => new AIDecisionEngine(), baseline, deadline);
+        search.baselineMs = baselineMs;
+        search.inferenceMs = performance.now() - started - baselineMs;
+        return search;
     }
 
     finishSearch(context, search) {
         const result = search.decision();
         if (!result) return null;
-        this.lastDecisionStats = { iterations: result.iterations, particles: result.particles, visits: result.visits, winRate: result.winRate };
+        const { action, ...stats } = result;
+        this.lastDecisionStats = stats;
         const abilities = checkAIAbilities(context.enemyShips, context.aiFaction, context.playerFaction, {
             sunkEnemyShips: context.myShips.filter(ship => ship.sunk).length, neutralBias: true
         });
-        return this.recordDecision(result.action, abilities, context.viewGrid);
+        return this.recordDecision(action, abilities, context.viewGrid);
     }
 
     async decideAsync(context) {
@@ -126,16 +139,16 @@ export class AIDecisionEngine {
         if (!tuning.search) return this.decide(context);
         const generation = this.generation;
         const started = performance.now();
-        const search = this.createSearch(context, tuning);
+        const search = this.createSearch(context, tuning, started + (tuning.searchTimeMs ?? 120));
         if (!search.root) {
             this.lastDecisionStats = { iterations: 0, particles: 0, inferenceFallback: true };
             return this.decide({ ...context, difficultyConfig: { ...context.difficultyConfig, tuning: { ...tuning, search: false } } });
         }
         do {
-            search.advance(tuning.searchBatchSize ?? 8);
+            search.advance(tuning.searchBatchSize ?? 4);
             await new Promise(resolve => setTimeout(resolve, 1));
             if (generation !== this.generation) return null;
-        } while (search.iterations < tuning.searchIterations && performance.now() - started < (tuning.searchTimeMs ?? 2000));
+        } while (!search.finished);
         return this.finishSearch(context, search);
     }
 
@@ -160,9 +173,11 @@ export class AIDecisionEngine {
             || getAITuning(difficultyConfig?.level || context.difficultyLevel || 'HARD');
 
         if (tuning.search) {
-            const search = this.createSearch(context, tuning);
+            const started = performance.now();
+            const deadline = tuning.searchFixedIterations ? Infinity : started + (tuning.searchTimeMs ?? 120);
+            const search = this.createSearch(context, tuning, deadline);
             if (search.root) {
-                search.advance(tuning.searchIterations);
+                while (!search.finished) search.advance(tuning.searchBatchSize ?? 4);
                 return this.finishSearch(context, search);
             }
             this.lastDecisionStats = { iterations: 0, particles: 0, inferenceFallback: true };

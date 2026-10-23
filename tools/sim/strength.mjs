@@ -9,7 +9,7 @@ import { deployShips } from '../../src/ai/aiDeployment.js';
 import { getAITuning } from '../../src/ai/aiTuning.js';
 import { SHIP_TYPES } from '../../src/data/ships.js';
 import { DIFFICULTY_SETTINGS } from '../../src/data/difficulties.js';
-import { FACTIONS, mulberry32, hashSeed } from './core.mjs';
+import { FACTIONS, mulberry32, hashSeed, boundedMeanInterval } from './core.mjs';
 
 const [, , specPath, outputPath, shardArg, workersArg] = process.argv;
 if (!specPath || !outputPath) {
@@ -20,7 +20,7 @@ const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
 const factions = spec.factions || FACTIONS;
 const pairs = spec.pairs ?? 50;
 const seedOffset = spec.seedOffset ?? 0;
-const candidate = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.candidate, tuning: { ...getAITuning('HARD'), search: true, ...spec.candidate?.tuning } };
+const candidate = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.candidate, tuning: { ...getAITuning('HARD'), search: true, searchFixedIterations: true, ...spec.candidate?.tuning } };
 const opponent = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.opponent, tuning: { ...getAITuning('HARD'), search: false, ...spec.opponent?.tuning } };
 
 function makeFleet(seed) {
@@ -48,8 +48,12 @@ if (shardArg !== undefined) {
         const seat = task % 2 === 0 ? 'A' : 'B';
         const saved = Math.random;
         const elapsed = [];
+        const phaseTimings = [];
         let inferenceFallbacks = 0;
         let searchCalls = 0;
+        let improvedDecisions = 0;
+        let validationSamples = 0;
+        let timeStops = 0;
         let result;
         try {
             Math.random = mulberry32(hashSeed(`strength|${seed}|${seat}`));
@@ -61,11 +65,17 @@ if (shardArg !== undefined) {
             while (!engine.finished) {
                 const measure = engine.currentSeat === seat;
                 const start = performance.now();
+                Math.random = mulberry32(hashSeed(`strength-turn|${seed}|${engine.currentSeat}|${engine.plies}`));
                 engine.step();
                 if (measure) {
                     elapsed.push(performance.now() - start);
+                    const stats = engine.sides[seat].engine.lastDecisionStats;
+                    phaseTimings.push([stats?.baselineMs || 0, stats?.inferenceMs || 0]);
                     if (engine.sides[seat].engine.lastDecisionStats?.inferenceFallback) inferenceFallbacks++;
                     if (engine.sides[seat].engine.lastDecisionStats?.iterations > 0) searchCalls++;
+                    if (engine.sides[seat].engine.lastDecisionStats?.improved) improvedDecisions++;
+                    validationSamples += engine.sides[seat].engine.lastDecisionStats?.validationSamples || 0;
+                    if (engine.sides[seat].engine.lastDecisionStats?.stopReason === 'time') timeStops++;
                 }
             }
             result = engine.getResult();
@@ -73,7 +83,8 @@ if (shardArg !== undefined) {
             Math.random = saved;
         }
         rows.push({ faction, pair, seed, seat, winner: result.winner, plies: result.plies,
-            candidateStats: result[seat].stats, opponentStats: result[seat === 'A' ? 'B' : 'A'].stats, decisionMs: elapsed, inferenceFallbacks, searchCalls });
+            candidateStats: result[seat].stats, opponentStats: result[seat === 'A' ? 'B' : 'A'].stats, decisionMs: elapsed,
+            inferenceFallbacks, searchCalls, improvedDecisions, validationSamples, timeStops, phaseTimings });
     }
     fs.writeFileSync(outputPath, JSON.stringify({ rows }), 'utf8');
 } else {
@@ -99,13 +110,24 @@ if (shardArg !== undefined) {
         const draws = selected.filter(row => row.winner === 'DRAW').length;
         const games = selected.length;
         const rate = games ? (wins + draws / 2) / games : 0;
-        const denominator = 1 + 3.8416 / Math.max(1, games);
-        const center = (rate + 3.8416 / (2 * Math.max(1, games))) / denominator;
-        const half = 1.96 * Math.sqrt(rate * (1 - rate) / Math.max(1, games) + 3.8416 / (4 * Math.max(1, games) ** 2)) / denominator;
+        const groups = new Map();
+        for (const row of selected) {
+            const key = `${row.faction}-${row.pair}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(row.winner === row.seat ? 1 : row.winner === 'DRAW' ? 0.5 : 0);
+        }
+        const pairRates = [...groups.values()].map(values => values.reduce((sum, value) => sum + value, 0) / values.length);
         const durations = selected.flatMap(row => row.decisionMs).sort((left, right) => left - right);
+        const baselineTimes = selected.flatMap(row => row.phaseTimings?.map(timing => timing[0]) || []).sort((left, right) => left - right);
+        const inferenceTimes = selected.flatMap(row => row.phaseTimings?.map(timing => timing[1]) || []).sort((left, right) => left - right);
         const quantile = fraction => durations[Math.min(durations.length - 1, Math.floor(durations.length * fraction))] || 0;
-        return { games, wins, draws, rate, ci95: [center - half, center + half], p50Ms: quantile(0.5), p95Ms: quantile(0.95), maxMs: durations.at(-1) || 0,
-            inferenceFallbacks: selected.reduce((sum, row) => sum + row.inferenceFallbacks, 0), searchCalls: selected.reduce((sum, row) => sum + row.searchCalls, 0) };
+        return { games, wins, draws, rate, ci95: boundedMeanInterval(pairRates), ci95Method: 'paired-bounded-mean-KL',
+            pairedWins: pairRates.filter(value => value > 0.5).length, pairedLosses: pairRates.filter(value => value < 0.5).length,
+            pairedSplits: pairRates.filter(value => value === 0.5).length, p50Ms: quantile(0.5), p95Ms: quantile(0.95), maxMs: durations.at(-1) || 0,
+            baselineP95Ms: baselineTimes[Math.floor(baselineTimes.length * 0.95)] || 0, inferenceP95Ms: inferenceTimes[Math.floor(inferenceTimes.length * 0.95)] || 0,
+            inferenceFallbacks: selected.reduce((sum, row) => sum + row.inferenceFallbacks, 0), searchCalls: selected.reduce((sum, row) => sum + row.searchCalls, 0),
+            improvedDecisions: selected.reduce((sum, row) => sum + row.improvedDecisions, 0), validationSamples: selected.reduce((sum, row) => sum + row.validationSamples, 0),
+            timeStops: selected.reduce((sum, row) => sum + row.timeStops, 0) };
     };
     const sourceRoot = fileURLToPath(new URL('../../src/', import.meta.url));
     const sourceHash = crypto.createHash('sha256');
@@ -120,7 +142,8 @@ if (shardArg !== undefined) {
         }
     }
     hashDirectory(sourceRoot);
-    const report = { generatedAt: new Date().toISOString(), sourceHash: sourceHash.digest('hex'), node: process.version,
+    const report = { generatedAt: new Date().toISOString(), sourceHash: sourceHash.digest('hex'),
+        harnessHash: crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex'), randomness: 'per-seat-turn', node: process.version,
         options: { ...spec, pairs, seedOffset, candidate, opponent }, elapsedSec: (Date.now() - started) / 1000,
         overall: summarize(rows), factions: Object.fromEntries(factions.map(faction => [faction, summarize(rows.filter(row => row.faction === faction))])) };
     fs.writeFileSync(output, JSON.stringify(report, null, 2), 'utf8');

@@ -4,9 +4,12 @@ import { resolveHit } from '../game/battle/HitResolver.js';
 import { resolveSonar } from '../game/battle/SonarResolver.js';
 import { advancePursuit } from '../game/battle/PursuitResolver.js';
 import { CellState, checkAIAbilities, getActionCoverage } from './aiCore.js';
-import { approximatePosterior } from './rolloutBelief.js';
+import { approximatePosterior, activeSensorRegions } from './rolloutBelief.js';
+import { PairedEvidence, scenarioRandom } from './pairedEvidence.js';
 
 const CELL_COUNT = BOARD_SIZE * BOARD_SIZE;
+const DEADLINE = Symbol('搜索时间预算已到');
+const HE_COVERAGE = new Map();
 const isOpen = state => state === CellState.UNKNOWN || state === CellState.SUSPECT || state === CellState.HIT;
 
 function createModel(fleet, useKnownHp = false) {
@@ -72,11 +75,8 @@ function applyAction(model, descriptor, view, dealt = null) {
             const options = weapon === 'AP'
                 ? { penetrate: true, maxPenetrations: descriptor.apMaxPenetrations, emitEvents: false }
                 : { penetrate: center && descriptor.heCenterPenetrates, emitEvents: false };
+            if (dealt) dealt[row * BOARD_SIZE + col] += amount;
             const result = resolveHit(row, col, amount, model.grid, model.ships, false, options);
-            if (result.dealt > 0) {
-                observations.push(`${row * BOARD_SIZE + col}:${result.dealt}`);
-                if (dealt) dealt[row * BOARD_SIZE + col] += result.dealt;
-            }
             if (result.sunk) observations.push(`S${result.hitShip.code}`);
         }
     }
@@ -99,25 +99,37 @@ function applyAction(model, descriptor, view, dealt = null) {
     return observations.join('|');
 }
 
-function prepareParticle(fleet, currentView, history) {
-    const model = createModel(fleet);
-    for (const descriptor of history) {
+function compileHistory(history, currentView) {
+    return history.map(descriptor => {
         const before = descriptor.beforeView ? Uint8Array.from(descriptor.beforeView.flat()) : null;
+        const observed = descriptor.afterView ? Uint8Array.from(descriptor.afterView.flat()) : null;
+        const scan = descriptor.action.weapon === 'SONAR'
+            ? new Set(getActionCoverage('SONAR', descriptor.action.r, descriptor.action.c, { sonarRadius: descriptor.sonarRadius }).map(cell => cell.r * BOARD_SIZE + cell.c)) : null;
+        const sunkWitness = !!before && !!scan && [...scan].some(cell => currentView[cell] === CellState.SUNK && (before[cell] === CellState.UNKNOWN || before[cell] === CellState.SUSPECT));
+        return { descriptor, before, observed, scan, sunkWitness };
+    });
+}
+
+function heCoverage(shape) {
+    if (!HE_COVERAGE.has(shape)) {
+        const offsets = getHEOffsets(shape);
+        HE_COVERAGE.set(shape, Array.from({ length: CELL_COUNT }, (_, cell) => Int16Array.from(offsets.map(([rowOffset, colOffset]) => {
+            const row = Math.floor(cell / BOARD_SIZE) + rowOffset;
+            const col = cell % BOARD_SIZE + colOffset;
+            return row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE ? -1 : row * BOARD_SIZE + col;
+        }))));
+    }
+    return HE_COVERAGE.get(shape);
+}
+
+function prepareParticle(fleet, currentView, history, deadline = Infinity) {
+    const model = createModel(fleet);
+    for (const { descriptor, before, observed, scan, sunkWitness } of history) {
+        if (deadline !== Infinity && performance.now() >= deadline) return DEADLINE;
         const after = before ? Uint8Array.from(before) : null;
         if (before) setKnownCells(model, before);
         applyAction(model, descriptor, after);
-        if (descriptor.afterView && after) {
-            const observed = descriptor.afterView.flat();
-            const scan = descriptor.action.weapon === 'SONAR'
-                ? new Set(getActionCoverage('SONAR', descriptor.action.r, descriptor.action.c, { sonarRadius: descriptor.sonarRadius }).map(cell => cell.r * BOARD_SIZE + cell.c)) : null;
-            let sunkWitness = false;
-            if (descriptor.action.weapon === 'SONAR') {
-                const { r, c } = descriptor.action;
-                for (const cell of getActionCoverage('SONAR', r, c, { sonarRadius: descriptor.sonarRadius })) {
-                    const index = cell.r * BOARD_SIZE + cell.c;
-                    if (currentView[index] === CellState.SUNK && (before[index] === CellState.UNKNOWN || before[index] === CellState.SUSPECT)) sunkWitness = true;
-                }
-            }
+        if (observed && after) {
             for (let cell = 0; cell < CELL_COUNT; cell++) {
                 if (currentView[cell] === CellState.SUNK) continue;
                 if (observed[cell] === CellState.SUSPECT && (sunkWitness || !scan?.has(cell))) continue;
@@ -171,14 +183,26 @@ function makeNode(actions, preferred) {
     }
     const preferredIndex = preferred ? shuffled.findIndex(action => action.weapon === preferred.weapon && action.r === preferred.r && action.c === preferred.c) : -1;
     if (preferredIndex > 0) [shuffled[0], shuffled[preferredIndex]] = [shuffled[preferredIndex], shuffled[0]];
-    return { visits: 0, actions: shuffled.map(action => ({ action, visits: 0, wins: 0, children: null })) };
+    return { visits: 0, actions: shuffled.map(action => ({ action, visits: 0, wins: 0, difference: 0, children: null })) };
 }
 
 export class BeliefSearch {
-    constructor(context, belief, history, damageGrid, tuning, createPolicyEngine = null) {
+    constructor(context, belief, history, damageGrid, tuning, createPolicyEngine = null, preferredBaseline = null, deadline = Infinity) {
         this.context = context;
         this.tuning = tuning;
         this.iterations = 0;
+        this.planningIterations = 0;
+        this.phase = 'planning';
+        this.stopReason = null;
+        this.deadline = deadline;
+        this.particles = [];
+        if (preferredBaseline && performance.now() >= deadline) {
+            this.root = makeNode([preferredBaseline], preferredBaseline);
+            this.baseline = this.root.actions[0];
+            this.stop('time');
+            return;
+        }
+        this.scenarios = [];
         this.policyCache = new Map();
         this.createPolicyEngine = createPolicyEngine;
         this.sonarHistory = new Set(history.filter(entry => entry.action.weapon === 'SONAR').map(entry => `${entry.action.r},${entry.action.c}`));
@@ -186,28 +210,60 @@ export class BeliefSearch {
         this.view = Uint8Array.from(context.viewGrid.flat());
         this.opponentView = Uint8Array.from((context.playerViewGrid || Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(0))).flat());
         this.damageGrid = Float64Array.from(damageGrid.flat());
+        const compiledHistory = compileHistory(history, this.view);
+        this.sensorRegions = [[], []];
+        for (const entry of compiledHistory) {
+            if (!entry.scan || !entry.before || !entry.observed) continue;
+            const cells = [...entry.scan].filter(cell => entry.before[cell] === CellState.UNKNOWN || entry.before[cell] === CellState.SUSPECT);
+            if (cells.some(cell => entry.observed[cell] === CellState.HIT || entry.observed[cell] === CellState.SUSPECT)) this.sensorRegions[0].push(cells);
+        }
+        for (const seat of [0, 1]) {
+            const area = this.pursuit?.hunters?.[seat]?.areaContact || (seat === 0 ? context.areaContact : null);
+            const targets = seat === 0 ? context.myShips : context.enemyShips;
+            if (area && targets.filter(ship => !ship.sunk).length === 1) {
+                const cells = area.cells.map(cell => cell.r * BOARD_SIZE + cell.c);
+                if (cells.length) this.sensorRegions[seat].push(cells);
+            }
+        }
         const ownFleet = context.enemyShips.map(ship => ({ ship, cells: Array.from({ length: ship.len }, (_, segment) => (ship.r + ((ship.vertical ?? ship.v) ? segment : 0)) * BOARD_SIZE + ship.c + ((ship.vertical ?? ship.v) ? 0 : segment)) }));
         this.own = createModel(ownFleet, true);
         this.own.faction = context.aiFaction;
         setKnownCells(this.own, this.opponentView);
         this.own.saved = saveModel(this.own);
-        this.particles = [];
-        const fleets = belief.getSampleFleets(belief._sampleCount);
-        for (let index = fleets.length - 1; index > 0; index--) {
-            const target = Math.floor(Math.random() * (index + 1));
-            [fleets[index], fleets[target]] = [fleets[target], fleets[index]];
-        }
+        const fleets = belief.iterateSampleFleets ? belief.iterateSampleFleets(belief._sampleCount, true) : belief.getSampleFleets(belief._sampleCount);
         for (const fleet of fleets) {
-            const model = prepareParticle(fleet, this.view, history);
+            if (performance.now() >= deadline) break;
+            const model = prepareParticle(fleet, this.view, compiledHistory, deadline);
+            if (model === DEADLINE) break;
             if (!model) continue;
             model.faction = context.playerFaction;
             model.initialSunk = context.myShips.filter(ship => ship.sunk).length;
             this.particles.push(model);
             if (this.particles.length >= (tuning.modelSamples ?? 96)) break;
         }
+        if (preferredBaseline && performance.now() >= deadline) {
+            this.root = makeNode([preferredBaseline], preferredBaseline);
+            this.baseline = this.root.actions[0];
+            this.stop('time');
+            return;
+        }
         if (this.particles.length) {
             const state = { models: [this.own, this.particles[0]], views: [this.view, this.opponentView], dealt: [this.damageGrid, new Float64Array(CELL_COUNT)] };
-            this.root = makeNode(legalActions(this.view, abilitiesFor(this.own, this.particles[0])), this.rolloutPolicy(state, 0));
+            let preferred;
+            if (preferredBaseline) preferred = preferredBaseline;
+            else if (tuning.pairedSearch && createPolicyEngine) {
+                const engine = createPolicyEngine();
+                engine.damageDealtGrid = damageGrid.map(row => [...row]);
+                engine.sonarHistory = new Set(this.sonarHistory);
+                preferred = engine.decide({ ...context, difficultyConfig: { ...context.difficultyConfig, tuning: { ...tuning, search: false } } });
+            } else preferred = this.rolloutPolicy(state, 0);
+            this.root = makeNode(legalActions(this.view, abilitiesFor(this.own, this.particles[0])), preferred);
+            this.baseline = this.root.actions[0];
+        } else if (tuning.pairedSearch && preferredBaseline) {
+            this.root = makeNode([preferredBaseline], preferredBaseline);
+            this.baseline = this.root.actions[0];
+            this.inferenceFallback = true;
+            this.stop('inference');
         } else this.root = null;
     }
 
@@ -239,6 +295,16 @@ export class BeliefSearch {
     }
 
     rolloutPolicy(state, seat) {
+        this.checkDeadline();
+        if (state.randomSeed === undefined) return this.computeRolloutPolicy(state, seat);
+        const saved = Math.random;
+        const turn = state.policyTurns?.[seat] ?? 0;
+        Math.random = scenarioRandom(state.randomSeed ^ Math.imul(turn + 1, seat === 0 ? 0x9E3779B9 : 0x85EBCA6B));
+        try { return this.computeRolloutPolicy(state, seat); }
+        finally { Math.random = saved; }
+    }
+
+    computeRolloutPolicy(state, seat) {
         const own = state.models[seat];
         const target = state.models[1 - seat];
         const view = state.views[seat];
@@ -265,14 +331,25 @@ export class BeliefSearch {
             engine.actionHistory.length = historyLength;
             return action;
         }
-        const key = targets.map(ship => ship.code).join(',') + ':' + view.join('');
+        const regions = activeSensorRegions((state.regions || this.sensorRegions)[seat], view);
+        const key = targets.map(ship => ship.code).join(',') + ':' + view.join('') + ':' + regions.map(region => region.join(',')).join('|');
         let probabilities = this.policyCache.get(key);
         if (!probabilities) {
-            probabilities = approximatePosterior(targets, view);
+            probabilities = approximatePosterior(targets, view, regions);
             if (this.policyCache.size >= (this.tuning.policyCacheLimit ?? 2048)) this.policyCache.clear();
             this.policyCache.set(key, probabilities);
         }
         const maximumHp = Math.max(...targets.map(ship => ship.maxHp), 1);
+        const centerValues = abilities.canUseAir ? new Float64Array(CELL_COUNT) : null;
+        const outerValues = abilities.canUseAir ? new Float64Array(CELL_COUNT) : null;
+        const coverage = abilities.canUseAir ? heCoverage(abilities.heShape) : null;
+        if (abilities.canUseAir) {
+            for (let cell = 0; cell < CELL_COUNT; cell++) {
+                const remaining = Math.max(1, maximumHp - state.dealt[seat][cell]);
+                centerValues[cell] = probabilities[cell] * Math.min(abilities.heCenterDamage, remaining);
+                outerValues[cell] = probabilities[cell] * Math.min(abilities.heOuterDamage, remaining);
+            }
+        }
         let maximum = -Infinity;
         let selected = null;
         let ties = 0;
@@ -286,14 +363,10 @@ export class BeliefSearch {
                 else if (Math.abs(score - maximum) <= 1e-12 && Math.random() < 1 / ++ties) selected = { weapon: 'AP', r, c };
             }
             if (abilities.canUseAir) {
-                let score = 0;
-                for (const [rowOffset, colOffset] of getHEOffsets(abilities.heShape)) {
-                    const row = r + rowOffset;
-                    const col = c + colOffset;
-                    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) continue;
-                    const index = row * BOARD_SIZE + col;
-                    const amount = rowOffset === 0 && colOffset === 0 ? abilities.heCenterDamage : abilities.heOuterDamage;
-                    score += probabilities[index] * Math.min(amount, Math.max(1, maximumHp - state.dealt[seat][index]));
+                let score = centerValues[cell];
+                const cells = coverage[cell];
+                for (let offset = 1; offset < cells.length; offset++) {
+                    if (cells[offset] >= 0) score += outerValues[cells[offset]];
                 }
                 if (score > maximum + 1e-12) { maximum = score; selected = { weapon: 'HE', r, c }; ties = 1; }
                 else if (Math.abs(score - maximum) <= 1e-12 && Math.random() < 1 / ++ties) selected = { weapon: 'HE', r, c };
@@ -303,7 +376,11 @@ export class BeliefSearch {
     }
 
     play(state, seat, action) {
+        this.checkDeadline();
         const abilities = abilitiesFor(state.models[seat], state.models[1 - seat]);
+        if (!state.regions) state.regions = this.sensorRegions.map(regions => [...regions]);
+        const scan = action.weapon === 'SONAR' ? getActionCoverage('SONAR', action.r, action.c, abilities)
+            .map(cell => cell.r * BOARD_SIZE + cell.c).filter(cell => state.views[seat][cell] === CellState.UNKNOWN || state.views[seat][cell] === CellState.SUSPECT) : null;
         const engine = this.legacyEngine(state, seat);
         if (engine) {
             const view = Array.from({ length: BOARD_SIZE }, (_, row) => Array.from(state.views[seat].subarray(row * BOARD_SIZE, (row + 1) * BOARD_SIZE)));
@@ -311,9 +388,12 @@ export class BeliefSearch {
             if (action.weapon === 'SONAR') engine.sonarHistory.add(`${action.r},${action.c}`);
         }
         const observation = applyAction(state.models[1 - seat], describeAttack(action, abilities, state.views[seat]), state.views[seat], state.dealt[seat]);
+        if (scan?.some(cell => state.views[seat][cell] === CellState.HIT || state.views[seat][cell] === CellState.SUSPECT)) state.regions[seat].push(scan);
         if (this.pursuit?.enabled !== false && state.models[1 - seat].ships.some(ship => !ship.sunk)) {
-            advancePursuit(this.hunters(state)[seat], state.models[1 - seat].ships, state.views[seat]);
+            const contact = advancePursuit(this.hunters(state)[seat], state.models[1 - seat].ships, state.views[seat]);
+            if (contact) state.regions[seat].push(contact.cells.map(cell => cell.r * BOARD_SIZE + cell.c).filter(cell => state.views[seat][cell] === CellState.SUSPECT));
         }
+        if (state.policyTurns) state.policyTurns[seat]++;
         return observation;
     }
 
@@ -331,16 +411,23 @@ export class BeliefSearch {
         return 0.5;
     }
 
-    simulate(node, state, depth) {
+    selectEntry(node) {
         const active = node.actions.slice(0, Math.min(node.actions.length, Math.ceil(Math.sqrt(node.visits + 1))));
         let selected = active.find(entry => entry.visits === 0);
         if (!selected) {
             let maximum = -Infinity;
             for (const entry of active) {
-                const score = entry.wins / entry.visits + Math.sqrt(2 * Math.log(Math.max(1, node.visits)) / entry.visits);
+                const paired = this.tuning.pairedSearch && node === this.root;
+                const value = (paired ? entry.difference : entry.wins) / entry.visits;
+                const score = value + (paired ? 2 : 1) * Math.sqrt(2 * Math.log(Math.max(1, node.visits)) / entry.visits);
                 if (score > maximum) { maximum = score; selected = entry; }
             }
         }
+        return selected;
+    }
+
+    simulate(node, state, depth, selected = this.selectEntry(node)) {
+        this.checkDeadline();
         if (!selected) return 0.5;
         const observation = this.play(state, 0, selected.action);
         let result = victory(state);
@@ -369,20 +456,84 @@ export class BeliefSearch {
         return result;
     }
 
+    get finished() { return !this.root || this.phase === 'complete'; }
+
+    setDeadline(deadline) { this.deadline = deadline; }
+
+    checkDeadline() {
+        if (performance.now() >= this.deadline) throw DEADLINE;
+    }
+
+    stop(reason) {
+        this.phase = 'complete';
+        this.stopReason = reason;
+    }
+
+    makeScenario() {
+        return { particle: this.particles[Math.floor(Math.random() * this.particles.length)], seed: Math.floor(Math.random() * 4294967296) };
+    }
+
+    scenarioState(scenario) {
+        restoreModel(this.own, this.own.saved);
+        restoreModel(scenario.particle, scenario.particle.saved);
+        return { models: [this.own, scenario.particle], views: [Uint8Array.from(this.view), Uint8Array.from(this.opponentView)],
+            dealt: [Float64Array.from(this.damageGrid), new Float64Array(CELL_COUNT)], randomSeed: scenario.seed, policyTurns: [0, 0] };
+    }
+
+    evaluateScenario(action, scenario) {
+        const state = this.scenarioState(scenario);
+        this.play(state, 0, action);
+        return this.rollout(state, 1);
+    }
+
+    freezeCandidate() {
+        if (!this.tuning.pairedSearch) { this.stop('iterations'); return; }
+        this.candidate = this.root.actions.filter(entry => entry.visits > 0)
+            .sort((left, right) => right.difference / right.visits - left.difference / left.visits || right.visits - left.visits)[0];
+        if (!this.candidate || this.candidate === this.baseline || this.candidate.difference <= 0) { this.stop('baseline'); return; }
+        this.evidence = new PairedEvidence(this.tuning.searchRisk ?? 0.05);
+        this.phase = 'validation';
+    }
+
     advance(count) {
-        if (!this.root) return;
-        for (let iteration = 0; iteration < count && this.iterations < (this.tuning.searchIterations ?? 1024); iteration++) {
-            const particle = this.particles[Math.floor(Math.random() * this.particles.length)];
-            restoreModel(this.own, this.own.saved);
-            restoreModel(particle, particle.saved);
-            const state = { models: [this.own, particle], views: [Uint8Array.from(this.view), Uint8Array.from(this.opponentView)], dealt: [Float64Array.from(this.damageGrid), new Float64Array(CELL_COUNT)] };
-            this.simulate(this.root, state, 0);
-            this.iterations++;
+        for (let iteration = 0; iteration < count && !this.finished; iteration++) {
+            try {
+                this.checkDeadline();
+                if (this.phase === 'planning') {
+                    const selected = this.selectEntry(this.root);
+                    const paired = this.tuning.pairedSearch;
+                    const scenarioIndex = selected.visits;
+                    const scenario = paired ? (this.scenarios[scenarioIndex] ??= this.makeScenario()) : this.makeScenario();
+                    if (paired && scenario.baselineReward === undefined) scenario.baselineReward = this.evaluateScenario(this.baseline.action, scenario);
+                    const result = this.simulate(this.root, this.scenarioState(scenario), 0, selected);
+                    if (paired) selected.difference += result - scenario.baselineReward;
+                    this.planningIterations++;
+                    if (this.planningIterations >= (this.tuning.searchIterations ?? 64)) this.freezeCandidate();
+                } else {
+                    const scenario = this.makeScenario();
+                    const baseline = this.evaluateScenario(this.baseline.action, scenario);
+                    const candidate = this.evaluateScenario(this.candidate.action, scenario);
+                    this.evidence.observe(candidate, baseline);
+                    if (this.evidence.accepted) this.stop('accepted');
+                    else if (this.evidence.rejected) this.stop('rejected');
+                    else if (this.evidence.samples >= (this.tuning.validationIterations ?? 64)) this.stop('inconclusive');
+                }
+                this.iterations++;
+            } catch (error) {
+                if (error !== DEADLINE) throw error;
+                this.stop('time');
+            }
         }
     }
 
     decision() {
-        const selected = this.root?.actions.filter(entry => entry.visits > 0).sort((left, right) => right.visits - left.visits || right.wins / right.visits - left.wins / left.visits)[0];
-        return selected ? { action: selected.action, visits: selected.visits, winRate: selected.wins / selected.visits, iterations: this.iterations, particles: this.particles.length } : null;
+        const selected = this.tuning.pairedSearch ? (this.evidence?.accepted ? this.candidate : this.baseline)
+            : this.root?.actions.filter(entry => entry.visits > 0).sort((left, right) => right.visits - left.visits || right.wins / right.visits - left.wins / left.visits)[0];
+        return selected ? { action: selected.action, visits: selected.visits, winRate: selected.visits ? selected.wins / selected.visits : null,
+            iterations: this.iterations, particles: this.particles.length, planningIterations: this.planningIterations,
+            validationSamples: this.evidence?.samples ?? 0, logEvidence: this.evidence?.logEvidence ?? 0,
+            pairedDifference: this.evidence?.mean ?? 0, pairedVariance: this.evidence?.variance ?? 0,
+            improved: !!this.evidence?.accepted, stopReason: this.stopReason,
+            baselineMs: this.baselineMs ?? 0, inferenceMs: this.inferenceMs ?? 0, inferenceFallback: !!this.inferenceFallback } : null;
     }
 }

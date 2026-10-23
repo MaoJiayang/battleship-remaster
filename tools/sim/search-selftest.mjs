@@ -128,6 +128,7 @@ for (const faction of ['us', 'ijn', 'rn', 'km', 'fn', 'rm', 'sn']) {
         if (!action) break;
         search.play(state, 0, action);
         assert.deepEqual(Array.from(state.views[0]), attacker.view.flat(), `${faction} 第 ${simulation.plies} 手的预测视野须等于实际视野`);
+        assert.deepEqual(Array.from(state.dealt[0]), attacker.engine.damageDealtGrid.flat(), `${faction} 第 ${simulation.plies} 手的推演伤害记账须等于实际决策器`);
         for (const predicted of state.models[1].ships) {
             const actual = defender.ships.find(ship => ship.code === predicted.code);
             assert.deepEqual(predicted.hp, actual.hp, `${faction} ${actual.code} 的预测血量须等于实际血量`);

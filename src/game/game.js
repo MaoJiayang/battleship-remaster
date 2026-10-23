@@ -1796,7 +1796,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
         try {
             aiWorker = new AiDecisionWorker();
             aiWorker.onmessage = (event) => {
-                const { id, decision } = event.data || {};
+                const { id, decision, elapsedMs } = event.data || {};
+                if (import.meta.env?.MODE === 'ai-lab') console.debug('AI 实验线程耗时（毫秒）', elapsedMs);
                 const resolve = pendingAiDecisions.get(id);
                 if (resolve) {
                     pendingAiDecisions.delete(id);

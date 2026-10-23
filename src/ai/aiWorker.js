@@ -12,10 +12,11 @@ self.onmessage = async (event) => {
 
     let decision = null;
     let error = null;
+    const started = performance.now();
     try {
         decision = await makeAIDecisionAsync(context);
     } catch (err) {
         error = err?.message || String(err);
     }
-    self.postMessage({ type: 'decision', id, decision, error });
+    self.postMessage({ type: 'decision', id, decision, error, elapsedMs: performance.now() - started });
 };

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "ai:lab": "vite --mode ai-lab --port 5175 --strictPort",
     "build": "vite build",
     "preview": "vite preview",
     "single": "vite build --mode single"
