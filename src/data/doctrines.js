@@ -13,9 +13,9 @@ export const DOCTRINES = {
         name: '雷达火控',
         aiHint: '水听锁定后集中跨射',
         en: 'RADAR FIRE CONTROL',
-        brief: '主炮对水听标记的疑似目标伤害 +1',
-        desc: '依托舰载雷达与射击指挥仪，对已标定海域实施精确跨射。',
-        ap: { suspectBonus: 1 },
+        brief: '主炮对水听标记的疑似目标伤害 +1，并可连续穿甲至多 2 舱',
+        desc: '依托舰载雷达与射击指挥仪，对已标定海域实施精确跨射，命中后沿舰体向相邻舱室传导。',
+        ap: { suspectBonus: 1, maxPenetrations: 2 },
         ai: {
             weaponBias: { AP: 1.06, HE: 1.0, SONAR: 1.05 },
             hitAffinity: 0.10,
@@ -26,11 +26,11 @@ export const DOCTRINES = {
         name: '精锐航空队',
         aiHint: '优先航空打击与补刀',
         en: 'ELITE AIR GROUPS',
-        brief: '空袭中心 3 伤、命中 2 伤，直击传导；航母存活时主炮 +1；航母沉没后陆基航空队仍可单点出击（中心 2 伤）',
-        desc: '以精锐舰载航空兵实施先制打击，航弹命中即造成双倍破坏；舰载机同时为战列线校射，航母损失后改由陆基航空队维持有限的单点空中打击。',
+        brief: '空袭中心 3 伤、外围 1 伤，直击传导；航母存活时主炮 +1；航母沉没后陆基航空队仍可单点出击（中心 2 伤）',
+        desc: '以精锐舰载航空兵实施先制打击，航弹中心命中造成三重破坏，外围仅有破片杀伤；舰载机同时为战列线校射，航母损失后改由陆基航空队维持有限的单点空中打击。',
         he: {
             centerDamage: 3,
-            outerDamage: 2,
+            outerDamage: 1,
             fallback: { centerDamage: 2, outerDamage: 1, shape: 'single' }
         },
         ap: { cvBonus: 1 },
@@ -68,13 +68,12 @@ export const DOCTRINES = {
         name: '四联装主炮',
         aiHint: '围绕战列舰打爆发',
         en: 'QUAD TURRETS',
-        brief: '战列舰存活时主炮 4 伤、可连续穿甲至多 2 舱；沉没后仍有 2 伤',
-        desc: '全前置四联装炮塔带来最强单发火力，战列舰在阵时可沿同一舰体连续击穿舱室；火力核心失去后由巡洋舰炮维持一半输出。',
+        brief: '战列舰存活时主炮 4 伤；沉没后仍有 2 伤',
+        desc: '全前置四联装炮塔带来最强单发火力；火力核心失去后由巡洋舰炮维持一半输出。',
         ap: {
             quadTurrets: true,
             fallbackDamage: 2,
-            maxPenetrations: 2,
-            maxPenetrationsRequiresBB: true
+            maxPenetrations: 1
         },
         ai: {
             weaponBias: { AP: 1.12, HE: 0.98, SONAR: 0.98 },
@@ -85,9 +84,9 @@ export const DOCTRINES = {
         name: '高速规避',
         aiHint: '规避炮火并以主炮反击',
         en: 'HIGH-SPEED EVASION',
-        brief: '承受主炮伤害 -1（最低 1）；空袭中心直击至少 2 伤',
-        desc: '以高航速与机动规避炮火，但舰体防空薄弱，空袭中心落弹必然造成双倍破坏。',
-        defense: { apReduction: 1, heVulnerability: 1 },
+        brief: '承受 3 伤及以上主炮伤害 -1（最低 1），轻弹不受影响；空袭中心直击至少 2 伤',
+        desc: '以高航速与机动规避重炮，轻弹近战难以完全规避；舰体防空薄弱，空袭中心落弹必然造成双倍破坏。',
+        defense: { apReduction: 1, apReductionMinDamage: 3, heVulnerability: 1 },
         ai: {
             weaponBias: { AP: 1.06, HE: 0.96, SONAR: 1.02 },
             hitAffinity: 0.16
@@ -185,6 +184,8 @@ export function getAPMaxPenetrations(factionId, ships = []) {
 export function applyAPDefense(defenderFaction, damage) {
     const doctrine = getDoctrine(defenderFaction);
     const reduction = doctrine.defense?.apReduction || 0;
+    const minDamage = doctrine.defense?.apReductionMinDamage ?? 0;
+    if (damage < minDamage) return damage;
     return Math.max(1, damage - reduction);
 }
 
