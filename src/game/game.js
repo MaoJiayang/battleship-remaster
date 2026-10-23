@@ -1,7 +1,7 @@
 import { BOARD_SIZE, CELL_SIZE as DEFAULT_CELL_SIZE, INTERACTION_TIMING } from "../config/constants";
 import { SHIP_TYPES } from "../data/ships";
 import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
-import { makeAIDecision, calculateProbabilityGrid, resetAIState } from '../ai/aiStrategy.js';
+import { makeAIDecisionAsync, calculateProbabilityGrid, resetAIState } from '../ai/aiStrategy.js';
 import AiDecisionWorker from '../ai/aiWorker.js?worker&inline';
 import { deployShips as aiDeployShips } from '../ai/aiDeployment.js';
 import { getPlayerModel, recordCompletedMatch } from '../ai/playerModel.js';
@@ -1867,6 +1867,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
             playerViewGrid,
             placementPrior: getPlayerModel().placementPrior,
             areaContact: getAiAreaContact(),
+            pursuit: { enabled: true, hunters: [{ ...endgameHunt.ai, areaContact: getAiAreaContact() }, { ...endgameHunt.player }] },
             aiFaction: enemyFaction,
             playerFaction
         };
@@ -1882,7 +1883,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
             aiTurnTimeout = null;
             let decision = await decisionPromise;
             if (token !== aiTurnToken || gameState !== 'PLAYING') return;
-            if (!decision) decision = makeAIDecision(context);
+            if (!decision) decision = await makeAIDecisionAsync(context);
+            if (token !== aiTurnToken || gameState !== 'PLAYING') return;
             aiTurn(decision);
         }, delay);
     }

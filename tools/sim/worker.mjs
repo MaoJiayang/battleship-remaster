@@ -12,6 +12,7 @@ import { deployShips } from '../../src/ai/aiDeployment.js';
 import { SHIP_TYPES } from '../../src/data/ships.js';
 import { DIFFICULTY_SETTINGS } from '../../src/data/difficulties.js';
 import { DOCTRINES } from '../../src/data/doctrines.js';
+import { getAITuning } from '../../src/ai/aiTuning.js';
 import { mulberry32, hashSeed, FACTIONS } from './core.mjs';
 
 try { os.setPriority(process.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* 平台不支持时忽略 */ }
@@ -33,7 +34,8 @@ const hard = {
     alpha: spec.alpha ?? DIFFICULTY_SETTINGS.HARD.alpha,
     randomness: spec.randomness ?? DIFFICULTY_SETTINGS.HARD.randomness,
     riskAwareness: spec.riskAwareness ?? DIFFICULTY_SETTINGS.HARD.riskAwareness,
-    neutralBias: spec.neutralBias === true
+    neutralBias: spec.neutralBias === true,
+    tuning: { ...getAITuning('HARD'), ...spec.tuning }
 };
 
 function deepMerge(target, patch) {

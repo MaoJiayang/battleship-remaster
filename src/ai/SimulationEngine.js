@@ -21,6 +21,7 @@ import { VIEW_STATE } from '../game/battle/ViewState.js';
 import { EventType } from '../game/weapons/WeaponTypes.js';
 import { resolveHit } from '../game/battle/HitResolver.js';
 import { resolveSonar } from '../game/battle/SonarResolver.js';
+import { advancePursuit } from '../game/battle/PursuitResolver.js';
 import {
     getAPDamage,
     getAPMaxPenetrations,
@@ -31,9 +32,6 @@ import {
 } from '../data/doctrines.js';
 
 const MAX_PLIES = 400;
-const RECON_RADIUS = 1;
-const ENDGAME_FIRST_DELAY = 2;
-const ENDGAME_PING_INTERVAL = 3;
 const OTHER_SEAT = { A: 'B', B: 'A' };
 
 function normalizeConfig(config = {}, defaultLevel = 'HARD') {
@@ -222,6 +220,7 @@ export class SimulationEngine {
             difficultyConfig: this._decisionConfig(attacker),
             playerViewGrid: defender.view,
             areaContact,
+            pursuit: { enabled: this.enablePursuit, hunters: [{ ...attacker.hunt }, { ...defender.hunt }] },
             aiFaction: attacker.faction,
             playerFaction: defender.faction
         };
@@ -421,45 +420,13 @@ export class SimulationEngine {
     }
 
     _tickPursuit(hunter, target) {
-        const alive = target.ships.filter(s => !s.sunk);
-        if (alive.length !== 1) {
-            hunter.hunt.turns = 0;
-            hunter.hunt.first = true;
-            hunter.hunt.areaContact = null;
-            return;
+        const view = hunter.view.flat();
+        const contact = advancePursuit(hunter.hunt, target.ships, view);
+        if (!contact) return;
+        for (let row = 0; row < BOARD_SIZE; row++) {
+            for (let col = 0; col < BOARD_SIZE; col++) hunter.view[row][col] = view[row * BOARD_SIZE + col];
         }
-
-        hunter.hunt.turns++;
-        const threshold = hunter.hunt.first ? ENDGAME_FIRST_DELAY : ENDGAME_PING_INTERVAL;
-        if (hunter.hunt.turns < threshold) return;
-        hunter.hunt.turns = 0;
-        hunter.hunt.first = false;
-
-        const last = alive[0];
-        for (let i = 0; i < last.len; i++) {
-            if (last.hp[i] <= 0) continue;
-            const { r, c } = segmentCell(last, i);
-            const centerState = hunter.view[r][c];
-            if (centerState === VIEW_STATE.MISS
-                || centerState === VIEW_STATE.HIT
-                || centerState === VIEW_STATE.DESTROYED) continue;
-
-            const cells = [];
-            for (let dr = -RECON_RADIUS; dr <= RECON_RADIUS; dr++) {
-                for (let dc = -RECON_RADIUS; dc <= RECON_RADIUS; dc++) {
-                    const nr = r + dr;
-                    const nc = c + dc;
-                    if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
-                    cells.push({ r: nr, c: nc });
-                    if (hunter.view[nr][nc] === VIEW_STATE.UNKNOWN) {
-                        hunter.view[nr][nc] = VIEW_STATE.SUSPECT;
-                    }
-                }
-            }
-            hunter.hunt.areaContact = { shipId: last.id, cells };
-            hunter.stats.pursuitContacts++;
-            return;
-        }
+        hunter.stats.pursuitContacts++;
     }
 }
 

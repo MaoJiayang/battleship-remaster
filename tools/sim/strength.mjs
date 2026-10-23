@@ -1,0 +1,128 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { SimulationEngine } from '../../src/ai/SimulationEngine.js';
+import { deployShips } from '../../src/ai/aiDeployment.js';
+import { getAITuning } from '../../src/ai/aiTuning.js';
+import { SHIP_TYPES } from '../../src/data/ships.js';
+import { DIFFICULTY_SETTINGS } from '../../src/data/difficulties.js';
+import { FACTIONS, mulberry32, hashSeed } from './core.mjs';
+
+const [, , specPath, outputPath, shardArg, workersArg] = process.argv;
+if (!specPath || !outputPath) {
+    console.error('用法: node tools/sim/strength.mjs <配置.json> <输出.json>');
+    process.exit(2);
+}
+const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
+const factions = spec.factions || FACTIONS;
+const pairs = spec.pairs ?? 50;
+const seedOffset = spec.seedOffset ?? 0;
+const candidate = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.candidate, tuning: { ...getAITuning('HARD'), search: true, ...spec.candidate?.tuning } };
+const opponent = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.opponent, tuning: { ...getAITuning('HARD'), search: false, ...spec.opponent?.tuning } };
+
+function makeFleet(seed) {
+    const saved = Math.random;
+    try {
+        Math.random = mulberry32(seed);
+        return deployShips(SHIP_TYPES);
+    } finally {
+        Math.random = saved;
+    }
+}
+
+if (shardArg !== undefined) {
+    try { os.setPriority(process.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
+    const shard = Number(shardArg);
+    const workers = Number(workersArg);
+    const rows = [];
+    for (let task = shard; task < factions.length * pairs * 2; task += workers) {
+        const group = Math.floor(task / 2);
+        const faction = factions[Math.floor(group / pairs)];
+        const pair = group % pairs;
+        const seed = hashSeed(`strength|${faction}|${seedOffset}|${pair}`);
+        const fleetA = makeFleet(seed);
+        const fleetB = spec.sameFleet ? fleetA : makeFleet(seed ^ 0x9E3779B9);
+        const seat = task % 2 === 0 ? 'A' : 'B';
+        const saved = Math.random;
+        const elapsed = [];
+        let inferenceFallbacks = 0;
+        let searchCalls = 0;
+        let result;
+        try {
+            Math.random = mulberry32(hashSeed(`strength|${seed}|${seat}`));
+            const engine = new SimulationEngine(
+                { ...(seat === 'A' ? candidate : opponent), faction },
+                { ...(seat === 'B' ? candidate : opponent), faction },
+                { fleetA, fleetB, maxPlies: spec.maxPlies ?? 320 }
+            );
+            while (!engine.finished) {
+                const measure = engine.currentSeat === seat;
+                const start = performance.now();
+                engine.step();
+                if (measure) {
+                    elapsed.push(performance.now() - start);
+                    if (engine.sides[seat].engine.lastDecisionStats?.inferenceFallback) inferenceFallbacks++;
+                    if (engine.sides[seat].engine.lastDecisionStats?.iterations > 0) searchCalls++;
+                }
+            }
+            result = engine.getResult();
+        } finally {
+            Math.random = saved;
+        }
+        rows.push({ faction, pair, seed, seat, winner: result.winner, plies: result.plies,
+            candidateStats: result[seat].stats, opponentStats: result[seat === 'A' ? 'B' : 'A'].stats, decisionMs: elapsed, inferenceFallbacks, searchCalls });
+    }
+    fs.writeFileSync(outputPath, JSON.stringify({ rows }), 'utf8');
+} else {
+    const workers = Math.min(factions.length * pairs * 2, Math.max(1, spec.jobs ?? 8));
+    const output = path.resolve(outputPath);
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    const started = Date.now();
+    const script = fileURLToPath(import.meta.url);
+    const shards = await Promise.all(Array.from({ length: workers }, (_, shard) => new Promise((resolve, reject) => {
+        const shardPath = output.replace(/\.json$/i, '') + `-shard${shard}.json`;
+        const child = spawn(process.execPath, [script, specPath, shardPath, String(shard), String(workers)], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+        let errors = '';
+        child.stderr.on('data', chunk => { errors += chunk.toString(); });
+        child.on('error', reject);
+        child.on('exit', code => {
+            if (code !== 0) reject(new Error(`分片 ${shard} 退出 ${code}: ${errors.slice(-1000)}`));
+            else resolve(JSON.parse(fs.readFileSync(shardPath, 'utf8')).rows);
+        });
+    })));
+    const rows = shards.flat();
+    const summarize = selected => {
+        const wins = selected.filter(row => row.winner === row.seat).length;
+        const draws = selected.filter(row => row.winner === 'DRAW').length;
+        const games = selected.length;
+        const rate = games ? (wins + draws / 2) / games : 0;
+        const denominator = 1 + 3.8416 / Math.max(1, games);
+        const center = (rate + 3.8416 / (2 * Math.max(1, games))) / denominator;
+        const half = 1.96 * Math.sqrt(rate * (1 - rate) / Math.max(1, games) + 3.8416 / (4 * Math.max(1, games) ** 2)) / denominator;
+        const durations = selected.flatMap(row => row.decisionMs).sort((left, right) => left - right);
+        const quantile = fraction => durations[Math.min(durations.length - 1, Math.floor(durations.length * fraction))] || 0;
+        return { games, wins, draws, rate, ci95: [center - half, center + half], p50Ms: quantile(0.5), p95Ms: quantile(0.95), maxMs: durations.at(-1) || 0,
+            inferenceFallbacks: selected.reduce((sum, row) => sum + row.inferenceFallbacks, 0), searchCalls: selected.reduce((sum, row) => sum + row.searchCalls, 0) };
+    };
+    const sourceRoot = fileURLToPath(new URL('../../src/', import.meta.url));
+    const sourceHash = crypto.createHash('sha256');
+    function hashDirectory(directory) {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+            const full = path.join(directory, entry.name);
+            if (entry.isDirectory()) hashDirectory(full);
+            else if (entry.name.endsWith('.js')) {
+                sourceHash.update(path.relative(sourceRoot, full).replaceAll('\\', '/'));
+                sourceHash.update(fs.readFileSync(full));
+            }
+        }
+    }
+    hashDirectory(sourceRoot);
+    const report = { generatedAt: new Date().toISOString(), sourceHash: sourceHash.digest('hex'), node: process.version,
+        options: { ...spec, pairs, seedOffset, candidate, opponent }, elapsedSec: (Date.now() - started) / 1000,
+        overall: summarize(rows), factions: Object.fromEntries(factions.map(faction => [faction, summarize(rows.filter(row => row.faction === faction))])) };
+    fs.writeFileSync(output, JSON.stringify(report, null, 2), 'utf8');
+    console.log(JSON.stringify(report, null, 2));
+}

@@ -15,8 +15,9 @@ import { createCellUpdateEvent, createLogEvent, isInBounds } from '../weapons/We
  * @param {string} reveal - 信号显形方式：'center' 中心格 / 'nearest' 最近接触
  * @returns {Object} { events: Event[], hasSignal: boolean, radius: number }
  */
-export function resolveSonar(centerR, centerC, grid, ships, isPlayer, radius = 1, reveal = 'center') {
+export function resolveSonar(centerR, centerC, grid, ships, isPlayer, radius = 1, reveal = 'center', options = {}) {
     const events = [];
+    const emitEvents = options.emitEvents !== false;
     
     // 统计扫描区内未暴露的船只格数
     let shipCount = 0;
@@ -52,10 +53,10 @@ export function resolveSonar(centerR, centerC, grid, ships, isPlayer, radius = 1
             const cell = grid[r][c];
             if (!cell.hit) {
                 cell.hit = true;
-                events.push(createCellUpdateEvent(r, c, 'MISS'));
+                if (emitEvents) events.push(createCellUpdateEvent(r, c, 'MISS'));
             }
         }
-        events.push(createLogEvent(
+        if (emitEvents) events.push(createLogEvent(
             `${prefix}声纳扫描 (${centerR + 1},${centerC + 1}) ${size}×${size} 区域：无反应。`,
             'c-sys'
         ));
@@ -71,9 +72,9 @@ export function resolveSonar(centerR, centerC, grid, ships, isPlayer, radius = 1
         if (!targetCell.hit) {
             targetCell.hit = true;
             if (targetCell.shipId !== -1) {
-                events.push(createCellUpdateEvent(revealCell.r, revealCell.c, 'CONTACT'));
+                if (emitEvents) events.push(createCellUpdateEvent(revealCell.r, revealCell.c, 'CONTACT'));
             } else {
-                events.push(createCellUpdateEvent(revealCell.r, revealCell.c, 'MISS'));
+                if (emitEvents) events.push(createCellUpdateEvent(revealCell.r, revealCell.c, 'MISS'));
             }
         }
         
@@ -83,14 +84,14 @@ export function resolveSonar(centerR, centerC, grid, ships, isPlayer, radius = 1
             
             const cell = grid[r][c];
             if (!cell.hit) {
-                events.push(createCellUpdateEvent(r, c, 'SUSPECT'));
+                if (emitEvents) events.push(createCellUpdateEvent(r, c, 'SUSPECT'));
             }
         }
         
         const contact = reveal === 'nearest' && nearest
             ? `标定最近接触 (${nearest.r + 1},${nearest.c + 1})`
             : '中心格已显形';
-        events.push(createLogEvent(
+        if (emitEvents) events.push(createLogEvent(
             `${prefix}声纳扫描 (${centerR + 1},${centerC + 1}) ${size}×${size} 区域：发现信号！${contact}，周边标记为疑似。`,
             'c-warn'
         ));

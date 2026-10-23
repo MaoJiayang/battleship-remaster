@@ -41,6 +41,7 @@ import {
     getActionCoverage
 } from './aiCore.js';
 import { getAITuning } from './aiTuning.js';
+import { BeliefSearch, describeAttack } from './beliefSearch.js';
 
 // ============================================================================
 // 内部状态
@@ -62,6 +63,8 @@ export class AIDecisionEngine {
     reset() {
         this.damageDealtGrid = createEmptyDamageGrid();
         this.sonarHistory = new Set();
+        this.actionHistory = [];
+        this.generation = (this.generation || 0) + 1;
     }
 
     /**
@@ -89,6 +92,53 @@ export class AIDecisionEngine {
         }
     }
 
+    recordDecision(action, abilities, viewGrid) {
+        this.recordDamageDealt(action, abilities, viewGrid);
+        if (action.weapon === 'SONAR') this.sonarHistory.add(`${action.r},${action.c}`);
+        if (!this.actionHistory) this.actionHistory = [];
+        this.actionHistory.push({ ...describeAttack(action, abilities, viewGrid), beforeView: viewGrid.map(row => [...row]) });
+        return action;
+    }
+
+    createSearch(context, tuning) {
+        const previous = this.actionHistory?.at(-1);
+        if (previous && !previous.afterView) previous.afterView = context.viewGrid.map(row => [...row]);
+        const targets = context.myShips.filter(ship => !ship.sunk);
+        const belief = new BeliefState(targets, context.viewGrid, tuning.sampleCount, {
+            placementPrior: context.placementPrior, areaContact: context.areaContact,
+            sampleFirstTurn: true, posterior: true
+        });
+        return new BeliefSearch(context, belief, this.actionHistory || [], this.damageDealtGrid, tuning, () => new AIDecisionEngine());
+    }
+
+    finishSearch(context, search) {
+        const result = search.decision();
+        if (!result) return null;
+        this.lastDecisionStats = { iterations: result.iterations, particles: result.particles, visits: result.visits, winRate: result.winRate };
+        const abilities = checkAIAbilities(context.enemyShips, context.aiFaction, context.playerFaction, {
+            sunkEnemyShips: context.myShips.filter(ship => ship.sunk).length, neutralBias: true
+        });
+        return this.recordDecision(result.action, abilities, context.viewGrid);
+    }
+
+    async decideAsync(context) {
+        const tuning = context.difficultyConfig?.tuning || getAITuning(context.difficultyConfig?.level || 'HARD');
+        if (!tuning.search) return this.decide(context);
+        const generation = this.generation;
+        const started = performance.now();
+        const search = this.createSearch(context, tuning);
+        if (!search.root) {
+            this.lastDecisionStats = { iterations: 0, particles: 0, inferenceFallback: true };
+            return this.decide({ ...context, difficultyConfig: { ...context.difficultyConfig, tuning: { ...tuning, search: false } } });
+        }
+        do {
+            search.advance(tuning.searchBatchSize ?? 8);
+            await new Promise(resolve => setTimeout(resolve, 1));
+            if (generation !== this.generation) return null;
+        } while (search.iterations < tuning.searchIterations && performance.now() - started < (tuning.searchTimeMs ?? 2000));
+        return this.finishSearch(context, search);
+    }
+
     /**
      * AI 决策主入口
      */
@@ -109,6 +159,15 @@ export class AIDecisionEngine {
         const tuning = difficultyConfig?.tuning
             || getAITuning(difficultyConfig?.level || context.difficultyLevel || 'HARD');
 
+        if (tuning.search) {
+            const search = this.createSearch(context, tuning);
+            if (search.root) {
+                search.advance(tuning.searchIterations);
+                return this.finishSearch(context, search);
+            }
+            this.lastDecisionStats = { iterations: 0, particles: 0, inferenceFallback: true };
+        }
+
         // 1. 己方能力（含学说；狼群战果取决于已击沉敌舰数）
         const abilities = checkAIAbilities(enemyShips, aiFaction, playerFaction, {
             sunkEnemyShips: myShips.filter(s => s.sunk).length,
@@ -123,7 +182,7 @@ export class AIDecisionEngine {
 
         // 3. 难度控制：随机扰动
         if (Math.random() < randomness) {
-            return makeRandomDecision(viewGrid, abilities);
+            return this.recordDecision(makeRandomDecision(viewGrid, abilities), abilities, viewGrid);
         }
 
         // 4. 构建置信状态（蒙特卡洛采样；历史布阵先验与区域接触观测参与概率更新）
@@ -194,12 +253,7 @@ export class AIDecisionEngine {
         const bestAction = candidates[Math.floor(Math.random() * candidates.length)];
 
         // 8. 记账：预计伤害与声呐使用
-        this.recordDamageDealt(bestAction, abilities, viewGrid);
-        if (bestAction.weapon === 'SONAR') {
-            this.sonarHistory.add(`${bestAction.r},${bestAction.c}`);
-        }
-
-        return bestAction;
+        return this.recordDecision(bestAction, abilities, viewGrid);
     }
 }
 
@@ -211,6 +265,10 @@ const defaultEngine = new AIDecisionEngine();
 
 export function makeAIDecision(context) {
     return defaultEngine.decide(context);
+}
+
+export function makeAIDecisionAsync(context) {
+    return defaultEngine.decideAsync(context);
 }
 
 export function resetAIState() {

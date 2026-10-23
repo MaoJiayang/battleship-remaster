@@ -86,6 +86,7 @@ function serializeSide(side) {
         view: side.view,
         engine: {
             damageDealtGrid: side.engine.damageDealtGrid,
+            actionHistory: side.engine.actionHistory || [],
             sonarHistory: [...side.engine.sonarHistory]
         },
         hunt: side.hunt,
@@ -129,6 +130,7 @@ export function reviveEngine(saved) {
     const reviveSide = savedSide => {
         const ai = new AIEngine();
         ai.damageDealtGrid = savedSide.engine.damageDealtGrid;
+        ai.actionHistory = savedSide.engine.actionHistory || [];
         ai.sonarHistory = new Set(savedSide.engine.sonarHistory);
         return { ...savedSide, engine: ai };
     };

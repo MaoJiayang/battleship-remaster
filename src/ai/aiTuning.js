@@ -8,7 +8,16 @@
 const HARD_TUNING = Object.freeze({
     sampleCount: 1400,
     opponentSampleCount: 80,
-    lookaheadSteps: 4
+    lookaheadSteps: 4,
+    search: false,
+    rolloutOpponent: 'legacy',
+    modelSamples: 96,
+    searchIterations: 1024,
+    rolloutLimit: 160,
+    searchDepth: 12,
+    searchBatchSize: 1,
+    searchTimeMs: 2000,
+    policyCacheLimit: 2048
 });
 
 const NORMAL_TUNING = Object.freeze({

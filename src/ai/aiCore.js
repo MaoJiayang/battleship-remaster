@@ -181,7 +181,7 @@ function buildCellMask(cells) {
  * 某舰长的全部棋盘放置（与视角无关，进程内共享）
  * 每项用 121 位掩码表示占格，附带展开后的格子索引
  */
-function getStaticPlacements(len) {
+export function getStaticPlacements(len) {
     const key = `${BOARD_SIZE}:${len}`;
     const cached = STATIC_PLACEMENTS.get(key);
     if (cached) return cached;
@@ -248,6 +248,8 @@ export class BeliefState {
         this.boardSize = BOARD_SIZE;
         this.placementPrior = options?.placementPrior?.byLen ? options.placementPrior : null;
         this.areaContact = options?.areaContact?.cells ? options.areaContact : null;
+        this.sampleFirstTurn = !!options.sampleFirstTurn;
+        this.posterior = !!options.posterior;
         // 区域接触只对“最后 1 艘目标舰”有确定含义
         this._areaMask = this.ships.length === 1 ? buildCellMask(this.areaContact?.cells) : null;
         
@@ -259,7 +261,7 @@ export class BeliefState {
 
         // 蒙特卡洛采样（使用传入的采样数）
         // 第一回合且没有历史先验时跳过采样，保持概率图完全平均
-        if (this.isFirstTurn && !this.placementPrior && !this._areaMask) {
+        if (this.isFirstTurn && !this.placementPrior && !this._areaMask && !this.sampleFirstTurn) {
             this._sampleCount = 0;
         } else {
             this._placementCache = this._buildPlacementCache();
@@ -341,6 +343,7 @@ export class BeliefState {
     _sampleConfigurations(n) {
         const shipCount = this._sortedShips.length;
         this._samplePlacements = new Int16Array(n * shipCount);
+        if (this.posterior) this._sampleLogWeights = new Float64Array(n);
         let attempts = 0;
         const maxAttempts = n * 20; // 防止死循环
         let filled = 0;
@@ -349,6 +352,7 @@ export class BeliefState {
             attempts++;
             if (this._sampleOneConfiguration()) {
                 this._samplePlacements.set(this._chosenPlacements, filled * shipCount);
+                if (this.posterior) this._sampleLogWeights[filled] = this._chosenLogWeight;
                 filled++;
             }
         }
@@ -357,11 +361,18 @@ export class BeliefState {
         while (filled < n && filled > 0) {
             const src = Math.floor(Math.random() * filled) * shipCount;
             this._samplePlacements.copyWithin(filled * shipCount, src, src + shipCount);
+            if (this.posterior) this._sampleLogWeights[filled] = this._sampleLogWeights[src / shipCount];
             filled++;
         }
         
         this._sampleCount = filled;
         this.sampleAttempts = attempts;
+        if (this.posterior && filled) {
+            const maximum = Math.max(...this._sampleLogWeights.subarray(0, filled));
+            this._sampleWeights = Float64Array.from(this._sampleLogWeights.subarray(0, filled), value => Math.exp(value - maximum));
+            const total = this._sampleWeights.reduce((sum, value) => sum + value, 0);
+            for (let sample = 0; sample < filled; sample++) this._sampleWeights[sample] /= total;
+        }
     }
 
     /**
@@ -413,6 +424,8 @@ export class BeliefState {
         const priorCells = this.placementPrior?.byLen?.[len]?.cells || null;
         const viable = new Int32Array(count);
         const weights = new Float64Array(count);
+        const priorWeights = this.posterior ? new Float64Array(count) : null;
+        const proposalWeights = this.posterior ? new Float64Array(count) : null;
         let n = 0;
         
         for (let p = 0; p < count; p++) {
@@ -424,11 +437,17 @@ export class BeliefState {
                 + 10 * andPopcount(masks, base, hitMask)
                 + 1.25 * andPopcount(masks, base, suspectMask);
             // 玩家历史布阵先验：取船体各格先验的几何平均
+            let priorWeight = 1;
             if (priorCells) {
                 const cellBase = p * len;
                 let product = 1;
                 for (let k = 0; k < len; k++) product *= priorCells[flatCells[cellBase + k]];
-                weight *= Math.pow(product, 1 / len);
+                priorWeight = Math.pow(product, 1 / len);
+                weight *= priorWeight;
+            }
+            if (this.posterior) {
+                priorWeights[p] = priorWeight;
+                proposalWeights[p] = weight;
             }
             viable[n] = p;
             weights[n] = weight;
@@ -440,6 +459,8 @@ export class BeliefState {
             n,
             viable,
             weights,
+            priorWeights,
+            proposalWeights,
             // 每次抽船复用的临时数组
             tmpViable: new Int32Array(n),
             tmpCumulative: new Float64Array(n)
@@ -456,6 +477,7 @@ export class BeliefState {
         occupied.fill(0);
         covered.fill(0);
         let coveredCount = 0;
+        this._chosenLogWeight = 0;
         const chosen = this._chosenPlacements;
         
         for (let i = 0; i < this._shipEntries.length; i++) {
@@ -523,7 +545,31 @@ export class BeliefState {
             else hi = mid;
         }
         
-        return tmpViable[lo];
+        const placement = tmpViable[lo];
+        if (this.posterior) this._chosenLogWeight += Math.log(totalWeight / entry.proposalWeights[placement]) + Math.log(entry.priorWeights[placement]);
+        return placement;
+    }
+
+    getSampleFleets(limit = this._sampleCount) {
+        const count = Math.min(limit, this._sampleCount);
+        const fleets = [];
+        let weightIndex = 0;
+        let cumulativeWeight = this._sampleWeights?.[0] || 0;
+        for (let sample = 0; sample < count; sample++) {
+            let sampleIndex = Math.floor(sample * this._sampleCount / count);
+            if (this.posterior && this._sampleWeights) {
+                const position = (sample + 0.5) / count;
+                while (weightIndex < this._sampleCount - 1 && cumulativeWeight < position) cumulativeWeight += this._sampleWeights[++weightIndex];
+                sampleIndex = weightIndex;
+            }
+            const fleet = this._shipEntries.map(({ ship, entry }, shipIndex) => {
+                const placement = this._samplePlacements[sampleIndex * this._shipEntries.length + shipIndex];
+                const offset = placement * entry.staticEntry.len;
+                return { ship, cells: Array.from(entry.staticEntry.cells.subarray(offset, offset + ship.len)) };
+            });
+            fleets.push(fleet);
+        }
+        return fleets;
     }
 
     /**
@@ -535,7 +581,7 @@ export class BeliefState {
         }
         
         // 特殊处理第一回合：无历史先验时返回完全平均的概率
-        if (this.isFirstTurn && !this.placementPrior && !this._areaMask) {
+        if (this.isFirstTurn && !this.placementPrior && !this._areaMask && !this.sampleFirstTurn) {
             const totalShipCells = this.ships.reduce((sum, s) => sum + s.len, 0);
             const totalCells = this.boardSize * this.boardSize;
             const avgProb = totalCells > 0 ? totalShipCells / totalCells : 0;
@@ -555,14 +601,14 @@ export class BeliefState {
         // 统计每个格子在采样中出现的频率
         const boardSize = this.boardSize;
         const shipCount = this._shipEntries.length;
-        const counts = new Uint32Array(boardSize * boardSize);
+        const counts = this.posterior ? new Float64Array(boardSize * boardSize) : new Uint32Array(boardSize * boardSize);
         for (let s = 0; s < this._sampleCount; s++) {
             const rowBase = s * shipCount;
             for (let i = 0; i < shipCount; i++) {
                 const { staticEntry } = this._shipEntries[i].entry;
                 const base = this._samplePlacements[rowBase + i] * staticEntry.len;
                 for (let k = 0; k < staticEntry.len; k++) {
-                    counts[staticEntry.cells[base + k]]++;
+                    counts[staticEntry.cells[base + k]] += this.posterior ? this._sampleWeights[s] : 1;
                 }
             }
         }
@@ -570,7 +616,7 @@ export class BeliefState {
         // 归一化为概率
         for (let r = 0; r < this.boardSize; r++) {
             for (let c = 0; c < this.boardSize; c++) {
-                grid[r][c] = counts[r * boardSize + c] / this._sampleCount;
+                grid[r][c] = counts[r * boardSize + c] / (this.posterior ? 1 : this._sampleCount);
             }
         }
         

@@ -1,8 +1,8 @@
 // AI 决策 Worker
 // 蒙特卡洛采样与多步推演放到 Worker，避免和爆炸/沉没动画抢主线程
-import { makeAIDecision, resetAIState } from './aiStrategy.js';
+import { makeAIDecisionAsync, resetAIState } from './aiStrategy.js';
 
-self.onmessage = (event) => {
+self.onmessage = async (event) => {
     const { type, id, context } = event.data || {};
     if (type === 'reset') {
         resetAIState();
@@ -13,7 +13,7 @@ self.onmessage = (event) => {
     let decision = null;
     let error = null;
     try {
-        decision = makeAIDecision(context);
+        decision = await makeAIDecisionAsync(context);
     } catch (err) {
         error = err?.message || String(err);
     }

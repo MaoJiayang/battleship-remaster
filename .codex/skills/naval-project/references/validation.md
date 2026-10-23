@@ -80,6 +80,16 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 
 后续模拟先确认目录、空闲资源和当前源码，再创建独立实验目录，保留原有文件。进程数按任务规模和资源情况决定，避免简单按逻辑处理器数量开满。SSH 调用 PowerShell 时可用 `-EncodedCommand` 传递脚本，减少本机与远端两层转义问题。
 
+### 新旧算法配对验证
+
+`node tools/sim/strength.mjs <配置.json> <输出.json>` 用同学说、两套独立随机舰队交换算法座位，固定种子比较候选与旧 AI；与上面的阵营循环赛用途不同。
+
+- 7 学说合计 `14 × pairs` 局；配置支持 `pairs`、`jobs`、`seedOffset`、`maxPlies`、`factions`、`sameFleet`、`candidate.tuning` 和 `opponent.tuning`。
+- 候选默认显式开启实验搜索，对手显式关闭；游戏默认开关不会改变该实验含义。具体实验必须保存完整配置。
+- 按“学说 × 对局组 × 座位”分片，默认 8 进程，远端当前可显式设 `jobs=10`；进程优先级低于普通，窗口隐藏。交换座位仍使用同组舰队与固定种子，并行度不改变棋局；小样本的尾段任务分配更均匀。
+- 汇总含源码内容哈希、Node 版本、双方配置、胜率区间、决策耗时、有效搜索及推断回退次数；原始行保留在分片文件。计时受并发争用影响，不代表浏览器单手耗时。
+- 实验进度及未验收限制见 [AI 实验进度](ai-research.md)。
+
 ## 接手验证快照
 
 日期：2026-10-24；代码基线：`3b17b80`。

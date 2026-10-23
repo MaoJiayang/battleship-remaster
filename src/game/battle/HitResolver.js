@@ -19,6 +19,7 @@ import { createCellUpdateEvent, createShipUpdateEvent, createLogEvent, isInBound
  */
 export function resolveHit(r, c, damage, grid, ships, isPlayer, options = {}) {
     const events = [];
+    const emitEvents = options.emitEvents !== false;
     
     // 边界检查
     if (!isInBounds(r, c)) {
@@ -82,29 +83,31 @@ export function resolveHit(r, c, damage, grid, ships, isPlayer, options = {}) {
             }
             
             const cellState = ship.hp[idx] <= 0 ? 'DESTROYED' : 'HIT';
-            const evt = createCellUpdateEvent(target.r, target.c, cellState);
-            if (k > 0) evt.payload.secondary = true;
-            events.push(evt);
-            events.push(createShipUpdateEvent(ship.id, idx, ship.hp[idx], false));
+            if (emitEvents) {
+                const evt = createCellUpdateEvent(target.r, target.c, cellState);
+                if (k > 0) evt.payload.secondary = true;
+                events.push(evt);
+                events.push(createShipUpdateEvent(ship.id, idx, ship.hp[idx], false));
+            }
         }
         
         // 判断沉船
         const isSunk = ship.hp.every(h => h <= 0) && !ship.sunk;
         if (isSunk) {
             ship.sunk = true;
-            events.push(createShipUpdateEvent(ship.id, -1, 0, true));
+            if (emitEvents) events.push(createShipUpdateEvent(ship.id, -1, 0, true));
             
             const logClass = isPlayer ? 'c-warn' : 'c-e';
             const logMsg = isPlayer 
                 ? `战报：敌方【${ship.name}】确认沉没！`
                 : `严重警报：我方【${ship.name}】沉没！`;
-            events.push(createLogEvent(logMsg, logClass));
+            if (emitEvents) events.push(createLogEvent(logMsg, logClass));
         }
         
         return { events, hitShip: ship, sunk: isSunk, dealt, penetrated };
     } else {
         // 未命中
-        events.push(createCellUpdateEvent(r, c, 'MISS'));
+        if (emitEvents) events.push(createCellUpdateEvent(r, c, 'MISS'));
         return { events, hitShip: null, sunk: false, dealt: 0, penetrated: 0 };
     }
 }
