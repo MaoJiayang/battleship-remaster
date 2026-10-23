@@ -4,7 +4,7 @@ import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 import { makeAIDecision, calculateProbabilityGrid, resetAIState } from '../ai/aiStrategy.js';
 import AiDecisionWorker from '../ai/aiWorker.js?worker&inline';
 import { deployShips as aiDeployShips } from '../ai/aiDeployment.js';
-
+import { getPlayerModel, recordCompletedMatch } from '../ai/playerModel.js';
 // 武器系统导入
 import { WeaponRegistry } from './weapons/WeaponRegistry.js';
 import { WeaponService } from './weapons/WeaponService.js';
@@ -79,6 +79,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
     // 战斗统计与连击
     let battleStats = null;
     let playerStreak = 0;
+    // 本局玩家的射击格（结算时写入历史画像）
+    const playerShotCells = new Set();
 
     // 追击阶段：一方仅剩最后 1 艘舰艇时，对方在下个己方回合获得接触区，之后每 3 回合刷新
     const ENDGAME_PING_INTERVAL = 3;
@@ -89,6 +91,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
         ai: { turns: 0, first: true }
     };
     const aiReconCells = new Set();
+    // 区域接触观测：把“最后 1 艘舰至少有一格在该区域”作为一次传感器观测交给 AI
+    let aiAreaContact = null;
 
     // 阵营选择（敌方可选“随机”：按集团对立逻辑每局重新抽取）
     let playerFaction = localStorage.getItem('playerFaction') || 'us';
@@ -105,11 +109,13 @@ import { VIEW_STATE } from './battle/ViewState.js';
             ai: { shots: 0, hits: 0, damage: 0 }
         };
         playerStreak = 0;
+        playerShotCells.clear();
         endgameHunt.player.turns = 0;
         endgameHunt.player.first = true;
         endgameHunt.ai.turns = 0;
         endgameHunt.ai.first = true;
         aiReconCells.clear();
+        aiAreaContact = null;
     }
 
     /**
@@ -143,6 +149,16 @@ import { VIEW_STATE } from './battle/ViewState.js';
         for (const ev of events || []) {
             if (ev.type === 'EFFECT' && ev.payload?.kind === 'DAMAGE') {
                 battleStats[side].damage += ev.payload.amount || 0;
+            }
+        }
+
+        if (isPlayer && weapon !== 'SONAR') {
+            for (const ev of events || []) {
+                if (ev.type !== EventType.CELL_UPDATE || ev.payload?.secondary) continue;
+                const s = ev.payload.state;
+                if (s === 'HIT' || s === 'DESTROYED' || s === 'MISS') {
+                    playerShotCells.add(ev.payload.r * BOARD_SIZE + ev.payload.c);
+                }
             }
         }
 
@@ -433,7 +449,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
         const settingsModal = document.getElementById('settings-modal');
         if (menuBtn && settingsModal) {
             menuBtn.addEventListener('click', () => {
-                settingsModal.style.display = 'block';
+
             });
         }
 
@@ -486,6 +502,10 @@ import { VIEW_STATE } from './battle/ViewState.js';
                 initHelpShips();
                 updateWeaponStates();
                 if (gameState === 'SETUP') {
+                    if (autoDeployTimer) {
+                        clearTimeout(autoDeployTimer);
+                        autoDeployTimer = null;
+                    }
                     myGridMap = createEmptyGrid();
                     initShips();
                     checkReady();
@@ -714,6 +734,9 @@ import { VIEW_STATE } from './battle/ViewState.js';
 
     function initShips() {
         const dock = document.getElementById('dock');
+        const pGrid = document.getElementById('player-grid');
+        // 切换阵营会重建舰船对象，旧模型挂在棋盘上不随对象一起消失
+        pGrid.querySelectorAll(':scope > .ship').forEach(el => el.remove());
         myShips = [];
         dock.innerHTML = '';
 
@@ -864,7 +887,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
         // 概率图即使在准备阶段也可查看，便于调试
         const viewGrid = getAiViewGrid();
         const targets = myShips.filter(s => !s.sunk);
-        const probabilityMap = precomputedMap || (targets.length > 0 ? calculateProbabilityGrid(viewGrid, targets, AI_PROB_CONFIG) : Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0)));
+        const probabilityMap = precomputedMap || (targets.length > 0 ? calculateProbabilityGrid(viewGrid, targets, AI_PROB_CONFIG, getPlayerModel().placementPrior, getAiAreaContact()) : Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0)));
 
         const pGrid = document.getElementById('player-grid');
         for(let r=0; r<BOARD_SIZE; r++) {
@@ -1205,12 +1228,18 @@ import { VIEW_STATE } from './battle/ViewState.js';
         closeGameOverModal();
         myGridMap = createEmptyGrid();
         myShips.forEach(s => returnToDock(s));
+        // 清理对象已不存在但 DOM 还留在棋盘上的残留模型
+        document.querySelectorAll('#player-grid > .ship').forEach(el => el.remove());
         checkReady();
     }
 
+    let autoDeployTimer = null;
+
     function autoDeploy() {
+        if (autoDeployTimer) clearTimeout(autoDeployTimer);
         resetToDock();
-        setTimeout(() => {
+        autoDeployTimer = setTimeout(() => {
+            autoDeployTimer = null;
             // 使用 AI 部署模块生成稀疏分布的船只配置
             const placements = aiDeployShips(SHIP_TYPES, BOARD_SIZE);
             
@@ -1289,8 +1318,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
         const btn = document.getElementById('start-btn');
         btn.innerText = "开始战斗";
         btn.className = "btn-orange";
-        btn.disabled = true;
-        
+        btn.disabled = true;        
         const mbBtn = document.getElementById('mb-btn-start');
         if(mbBtn) mbBtn.disabled = true;
 
@@ -1378,8 +1406,10 @@ import { VIEW_STATE } from './battle/ViewState.js';
             while(cell.firstChild) cell.removeChild(cell.firstChild);
         });
 
-        // 2. 使用 AI 部署模块生成船只配置（稀疏分布策略）
-        const placements = aiDeployShips(SHIP_TYPES, BOARD_SIZE);
+        // 2. 使用 AI 部署模块生成船只配置（稀疏分布策略，轻度避开玩家历史搜索热区）
+        const placements = aiDeployShips(SHIP_TYPES, BOARD_SIZE, {
+            attention: getPlayerModel().shotAttention
+        });
         
         // 3. 初始化数据
         enemyShips = [];
@@ -1663,6 +1693,15 @@ import { VIEW_STATE } from './battle/ViewState.js';
         if (aiWorker) aiWorker.postMessage({ type: 'reset' });
     }
 
+    /** AI 的区域接触观测只在玩家仅剩 1 艘舰时有效 */
+    function getAiAreaContact() {
+        if (!aiAreaContact) return null;
+        const alive = myShips.filter(s => !s.sunk);
+        if (alive.length !== 1) return null;
+        if (aiAreaContact.shipId != null && aiAreaContact.shipId !== alive[0].id) return null;
+        return aiAreaContact;
+    }
+
     /** 决策上下文：只含可结构化克隆的公开信息，AI 目标船不携带坐标 */
     function buildAiDecisionContext() {
         const viewGrid = getAiViewGrid();
@@ -1691,6 +1730,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
             enemyShips: aiOwnShips,
             difficultyConfig: AI_PROB_CONFIG,
             playerViewGrid,
+            placementPrior: getPlayerModel().placementPrior,
+            areaContact: getAiAreaContact(),
             aiFaction: enemyFaction,
             playerFaction
         };
@@ -1857,11 +1898,13 @@ import { VIEW_STATE } from './battle/ViewState.js';
             if (isLastShipCellKnown(hunter, r, c)) continue;
 
             const zone = [];
+            const areaCells = [];
             for (let dr = -RECON_RADIUS; dr <= RECON_RADIUS; dr++) {
                 for (let dc = -RECON_RADIUS; dc <= RECON_RADIUS; dc++) {
                     const nr = r + dr;
                     const nc = c + dc;
                     if (!isInBounds(nr, nc)) continue;
+                    areaCells.push({ r: nr, c: nc });
                     const cell = document.querySelector(`#${gridId} .cell[data-r="${nr}"][data-c="${nc}"]`);
                     if (!cell) continue;
                     if (cell.classList.contains('hit')
@@ -1876,6 +1919,10 @@ import { VIEW_STATE } from './battle/ViewState.js';
                     }
                     zone.push({ r: nr, c: nc });
                 }
+            }
+
+            if (hunter === 'ai' && areaCells.length > 0) {
+                aiAreaContact = { shipId: last.id, cells: areaCells };
             }
 
             if (zone.length > 0) {
@@ -1920,6 +1967,11 @@ import { VIEW_STATE } from './battle/ViewState.js';
         currentWinner = who;
         gameState = 'END';
         clearAiTurnTimeout();
+        // 历史画像只在对局结束时学习，AI 对局中不读取隐藏信息
+        recordCompletedMatch({
+            ships: myShips.map(s => ({ len: s.len, r: s.r, c: s.c, v: s.v ?? s.vertical })),
+            shotCells: [...playerShotCells]
+        });
         const enemyGridEl = document.getElementById('enemy-grid');
         if (enemyGridEl) enemyGridEl.style.pointerEvents = 'none';
         revealEnemyShips(); // 游戏结束时显示敌方舰船
