@@ -1809,5 +1809,33 @@ export function getShipSvg(code, factionId = 'us') {
     return `<svg class="ship-svg" viewBox="0 0 ${L} ${B}" width="${L}" height="${B}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${svgDefs(id, P)}${body}</svg>`;
 }
 
+// 空袭掠海特效用的舰载机俯视图（与航母甲板上的机型同源）
+export function getPlaneSvg(factionId = 'us') {
+    const P = PALETTES[factionId] || PALETTES.us;
+    return `<svg class="plane-svg" viewBox="-6.4 -6.2 14 13.6" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${deckPlane(0, 0, 0, P)}</svg>`;
+}
+
+// 三机楔形编队：机模只画一遍，用 <use> 复用，缩小并排成小编队
+export function getPlaneSquadronSvg(factionId = 'us') {
+    const P = PALETTES[factionId] || PALETTES.us;
+    const id = `sqd-${factionId}-${++artSeq}`;
+    return `<svg class="plane-squadron-svg" viewBox="0 0 34 26" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">`
+        + `<defs><g id="${id}">${deckPlane(0, 0, 0, P)}</g></defs>`
+        + `<use href="#${id}" transform="translate(10 7) scale(0.9)"/>`
+        + `<use href="#${id}" transform="translate(10 19) scale(0.9)"/>`
+        + `<use href="#${id}" transform="translate(25 13)"/>`
+        + '</svg>';
+}
+
+// 编队图片按位图使用：同一阵营复用同一 data URL，浏览器只需解码/栅格化一次
+const squadronUrlCache = new Map();
+export function getPlaneSquadronDataUrl(factionId = 'us') {
+    const key = PALETTES[factionId] ? factionId : 'us';
+    if (!squadronUrlCache.has(key)) {
+        squadronUrlCache.set(key, 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(getPlaneSquadronSvg(key)));
+    }
+    return squadronUrlCache.get(key);
+}
+
 export const SHIP_ART_BEAM = HULL_BEAM;
 export const SHIP_ART_LAYOUTS = LAYOUTS;

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>舰船建模 × 实舰参考</title>
+<style>
+    :root { --paper: #efece4; --ink: #1c242b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0f161b; color: #d8e2e8; font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+    header { padding: 22px 28px 12px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+    h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: 2px; font-weight: 600; color: #e8eff3; }
+    header p { margin: 0; font-size: 12px; color: #8fa2ad; letter-spacing: 1px; }
+    .sheet { padding: 18px 24px 30px; }
+    .grid { display: grid; grid-template-columns: 112px repeat(7, 1fr); gap: 1px; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.14); }
+    .corner, .fhead, .rhead { background: #16212a; display: flex; align-items: center; justify-content: center; font-size: 12px; letter-spacing: 1px; }
+    .corner { color: #6f838f; font-size: 11px; }
+    .fhead { padding: 10px 4px; color: #cfdbe3; font-weight: 600; }
+    .fhead small { display: block; margin-top: 2px; font-size: 10px; color: #71848f; font-weight: 400; letter-spacing: 2px; }
+    .rhead { flex-direction: column; padding: 8px 4px; color: #b9c7d0; writing-mode: horizontal-tb; font-size: 12px; }
+    .rhead b { font-size: 15px; letter-spacing: 1px; color: #e2eaef; }
+    .rhead span { margin-top: 2px; font-size: 10px; color: #71848f; }
+    .cell { background: #131d24; padding: 10px 12px 12px; display: flex; flex-direction: column; }
+    .model { height: 134px; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 52%, #24343d 0%, #18242c 70%); border: 1px solid rgba(255,255,255,0.055); }
+    .model svg { width: 96%; height: auto; display: block; }
+    .ref { margin-top: 8px; height: 250px; background: var(--paper); display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid rgba(0,0,0,0.5); }
+    .ref img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .ref.none { background: repeating-linear-gradient(135deg, #1a252d 0 8px, #172129 8px 16px); color: #5b6f7a; font-size: 12px; letter-spacing: 2px; }
+    .cap { margin-top: 7px; font-size: 12px; color: #93a6b1; display: flex; justify-content: space-between; gap: 6px; white-space: nowrap; overflow: hidden; }
+    .cap b { color: #cdd9e0; font-weight: 500; }
+    .cap em { font-style: normal; color: #647983; font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+    .cap .vt { margin-left: 5px; padding: 1px 5px; border: 1px solid rgba(255,255,255,0.16); color: #93a6b1; font-size: 10px; white-space: nowrap; }
+    .foot { padding: 0 24px 26px; font-size: 11px; color: #647983; letter-spacing: 0.5px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<header>
+    <h1>舰船俯视建模 × 实舰线图对照</h1>
+    <p>上：游戏内俯视建模（当前代码）　下：实舰线图 / 识别图，含侧视与平面图　—　空白格表示该舰种尚无收集到参考图</p>
+</header>
+<div class="sheet"><div class="grid" id="grid"></div></div>
+<div class="foot">参考资料共 23 张实舰线图 / 识别图：美国 4、日本 4、德国 5、法国 3、意大利 5、苏联 2；英国 0。空白格为暂未收集到合规白底线稿的舰种（共 12 格）。参考图视角以原始图版为准，其中混有侧视线图与俯视平面图。</div>
+<script type="module">
+import { getShipSvg } from '/src/game/shipArt.js';
+
+const FACTIONS = [
+    ['us', '美国', '蓝钢舰队'],
+    ['ijn', '日本', '绯木联合'],
+    ['rn', '英国', '狮心舰队'],
+    ['km', '德国', '铁雾军团'],
+    ['fn', '法国', '鸢尾舰队'],
+    ['rm', '意大利', '苍鹰舰队'],
+    ['sn', '苏联', '赤潮舰队']
+];
+const CLASSES = [['BB', '战列舰'], ['CV', '航空母舰'], ['CL', '巡洋舰'], ['DD', '驱逐舰'], ['SS', '潜艇']];
+const REFS = {
+    us: { BB: ['美国_蓝钢舰队/战列舰_衣阿华级.png', '衣阿华级', '侧视'],
+          CV: ['美国_蓝钢舰队/航空母舰_埃塞克斯级.png', '埃塞克斯级', '俯视图纸'],
+          CL: ['美国_蓝钢舰队/轻巡洋舰_克利夫兰级.png', '克利夫兰级', '侧视'],
+          DD: ['美国_蓝钢舰队/驱逐舰_弗莱彻级.png', '弗莱彻级', '侧视'] },
+    ijn: { BB: ['日本_绯木联合/战列舰_大和级.png', '大和级', '建造图纸'],
+           CL: ['日本_绯木联合/巡洋舰_最上级.png', '最上级', '识别图'],
+           DD: ['日本_绯木联合/驱逐舰_阳炎级.png', '阳炎级', '轮廓线稿'],
+           SS: ['日本_绯木联合/潜艇_伊四百型.png', '伊四百型', '俯视'] },
+    rn: {},
+    km: { BB: ['德国_铁雾军团/战列舰_俾斯麦级.png', '俾斯麦级', '侧视'],
+          CV: ['德国_铁雾军团/航空母舰_齐柏林伯爵级.png', '齐柏林伯爵级', '多视图'],
+          CL: ['德国_铁雾军团/巡洋舰_希佩尔海军上将级.png', '希佩尔海军上将级', '侧视+俯视'],
+          DD: ['德国_铁雾军团/驱逐舰_1936A型.png', '1936A 型', '多视图'],
+          SS: ['德国_铁雾军团/潜艇_VII型.png', 'VII 型', '侧视+俯视'] },
+    fn: { BB: ['法国_鸢尾舰队/战列舰_黎塞留级.png', '黎塞留级', '侧视'],
+          DD: ['法国_鸢尾舰队/驱逐舰_空想级.png', '空想级', '侧视剪影'],
+          SS: ['法国_鸢尾舰队/潜艇_絮库夫号.png', '絮库夫号', '侧视线型图'] },
+    rm: { BB: ['意大利_苍鹰舰队/战列舰_维托里奥·维内托级.png', '维托里奥·维内托级', '侧视'],
+          CV: ['意大利_苍鹰舰队/航空母舰_天鹰号.png', '天鹰号', '侧视'],
+          CL: ['意大利_苍鹰舰队/巡洋舰_扎拉级.png', '扎拉级', '侧视'],
+          DD: ['意大利_苍鹰舰队/驱逐舰_士兵级.png', '士兵级', '侧视'],
+          SS: ['意大利_苍鹰舰队/潜艇_马可尼级.png', '马可尼级', '侧视'] },
+    sn: { DD: ['苏联_赤潮舰队/驱逐舰_愤怒级.png', '愤怒级', '俯视+侧视'],
+          SS: ['苏联_赤潮舰队/潜艇_Щ级.png', 'Щ 级', '侧视剪影'] }
+};
+
+const grid = document.getElementById('grid');
+grid.innerHTML = '<div class="corner">舰种 \\ 阵营</div>' +
+    FACTIONS.map(([, zh, fleet]) => `<div class="fhead">${zh}<small>${fleet}</small></div>`).join('');
+
+for (const [cls, clsZh] of CLASSES) {
+    grid.insertAdjacentHTML('beforeend', `<div class="rhead"><b>${cls}</b><span>${clsZh}</span></div>`);
+    for (const [fid] of FACTIONS) {
+        const ref = REFS[fid]?.[cls];
+        const refHtml = ref
+            ? `<div class="ref"><img src="${encodeURI('/参考资料/' + ref[0])}" alt="${ref[1]}"></div>`
+            : `<div class="ref none">无实图参考</div>`;
+        grid.insertAdjacentHTML('beforeend',
+            `<div class="cell"><div class="model">${getShipSvg(cls, fid)}</div>${refHtml}
+             <div class="cap"><b>${clsZh}</b><em>${ref ? `参考：${ref[1]}<span class="vt">${ref[2]}</span>` : '—'}</em></div></div>`);
+    }
+}
+</script>
+</body>
+</html>

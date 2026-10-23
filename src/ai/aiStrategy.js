@@ -1,296 +1,238 @@
-﻿/**
- * AI 策略模块 v2.3 - 基于信息论的统一决策框架（边际效用损失版）
- * 
- * 设计思想：信息增益最大化 (Max Information Gain) + 对称推演
- * - 将所有武器（主炮/空袭/声纳）统一评估为"信息获取 + 伤害输出"的组合
- * - 用信息熵作为统一度量，消除多个启发式超参数
- * - 唯一核心参数：alpha（探索权重）控制信息收集 vs 伤害输出的平衡
- * - 伤害溢出优化：记录已造成伤害，避免重复攻击已被"打穿"的格子
- * 
- * v2.3 改进（边际效用损失）：
- * - 风险评估与信息论框架统一：用 evaluateAction 计算能力价值
- * - 删除启发式的 calculateAbilityLoss 和 checkUsesEndangeredAbility
- * - 风险加成公式：finalScore = baseUtility × (1 + riskAwareness × normRiskBonus)
- * - 量纲统一：所有值归一化到 [0, 1]，乘法形式保证有界
- * 
- * v2.2 功能（保留）：
- * - 对称推演：复用现有框架模拟玩家攻击行为，预测己方舰船威胁
- * - 多步推演：向前看 k 步，累积评估各船的沉没概率
- * - 风险感知：当关键船只受威胁时，优先使用即将丧失的能力
- * 
+/**
+ * AI 策略模块 v3.0 - 统一信息论框架 + 阵营学说
+ *
+ * 设计思想：信息增益最大化 + 期望伤害 + 对称推演
+ * - 所有武器统一评估为「信息获取 + 伤害输出」的组合
+ * - 阵营学说同时作用于武器结算与 AI 倾向（同一套数据，无特殊 patch）
+ * - 难度差异只来自计算预算与理性程度（采样数 / 推演步数 / 随机率）
+ *
  * ============================================================================
  * 导出接口（公开 API）
  * ============================================================================
- * 
- * 【生命周期管理】
- * - resetAIState(): 重置 AI 内部状态，每局游戏开始前必须调用
- * 
- * 【决策接口】
- * - makeAIDecision(context): AI 决策主入口，返回攻击指令
- *   - context.viewGrid: AI 视角下的棋盘状态（0=未知，1=未命中，2=命中，3=摧毁，4=疑似，5=已沉没）
- *   - context.myShips: 玩家舰船列表（AI 的攻击目标）
- *   - context.enemyShips: 敌方舰船列表（用于判断 AI 自身能力）
- *   - context.difficultyConfig: 难度配置参数（含 alpha, randomness, riskAwareness）
- *   - context.playerViewGrid: [可选] 玩家视角的 AI 棋盘（用于对称推演，提升风险感知）
- *   - 返回值: { weapon: 'AP'|'HE'|'SONAR', r: number, c: number }
- * 
- * 【调试接口】
- * - calculateProbabilityGrid(viewGrid, targets): 计算概率热力图，供调试显示
- * 
+ *
+ * - AIDecisionEngine: 独立决策实例（自对弈/模拟时每方一个，互不污染状态）
+ * - makeAIDecision(context): 默认实例的决策入口
+ * - resetAIState(): 重置默认实例
+ * - calculateProbabilityGrid(viewGrid, targets, difficultyConfig): 调试热力图
+ *
+ * context 字段：
+ *   viewGrid        AI 视角棋盘（0未知 1未中 2命中 3摧毁 4疑似 5沉没）
+ *   myShips         目标舰船（只读取 id/len/maxHp/sunk，不含位置）
+ *   enemyShips      AI 自己的舰船（真实状态，用于能力与推演）
+ *   difficultyConfig { alpha, randomness, riskAwareness, level }
+ *   playerViewGrid  [可选] 玩家视角的 AI 棋盘（对称推演）
+ *   aiFaction       己方阵营
+ *   playerFaction   对方阵营
+ *
  * ============================================================================
- * 注意事项
- * ============================================================================
- * - AI 模块维护内部状态（伤害记录），不再是完全无状态
- * - 每局游戏开始前必须调用 resetAIState() 重置状态
- * - makeAIDecision() 返回的决策假定一定会被执行，AI 会据此更新内部状态
- * - 对称推演需要 playerViewGrid，若未提供则跳过风险计算（优雅降级）
  */
 
 import { BOARD_SIZE } from '../config/constants.js';
-
-// 导入共享的核心模块
 import {
     BeliefState,
     CellState,
-    MIN_PROB,
     checkAIAbilities,
     enumerateAllActions,
     evaluateAction,
     makeRandomDecision,
     findFallbackTarget,
     simulateMultiStepThreats,
-    calculateRiskBonus
+    calculateRiskBonus,
+    getActionCoverage
 } from './aiCore.js';
-
-
-
-// ============================================================================
-// 常量定义（特定于 aiStrategy）
-// ============================================================================
-
-/** 蒙特卡洛采样数量（实战默认值） */
-const SAMPLE_COUNT = 700;
-
-
+import { getAITuning } from './aiTuning.js';
 
 // ============================================================================
-// AI 内部状态（模块级）
+// 内部状态
 // ============================================================================
 
-/**
- * AI 已造成伤害记录
- * damageDealtGrid[r][c] = 该格子已承受的总伤害
- * 用于计算期望有效伤害，避免伤害溢出
- */
-let damageDealtGrid = null;
-
-/** 
- * 声呐历史记录：已使用的声呐中心点集合
- * TODO: 将来应使用真正的收益式方法解决此问题，而非硬约束
- * 理想方案应考虑：
- * 1. 声呐重复使用的信息增益会大幅降低（已知周围8格状态）
- * 2. 通过修改 _getSonarConditionalEntropy 计算已探测区域的边际效用
- * 3. 让评估函数自然避免低效行为，而非直接禁止
- */
-let sonarHistory = null;
-
-/**
- * 创建空的伤害记录网格
- */
 function createEmptyDamageGrid() {
     return Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
 }
 
 /**
- * 重置 AI 内部状态
- * 每局游戏开始前必须调用此函数
- * 
- * @export
+ * 独立 AI 决策引擎
+ * 自对弈时每方持有一个实例，伤害记录与声呐历史彼此隔离
  */
-export function resetAIState() {
-    damageDealtGrid = createEmptyDamageGrid();
-    sonarHistory = new Set();
-}
+export class AIDecisionEngine {
+    constructor() {
+        this.reset();
+    }
 
-/**
- * 记录 AI 攻击造成的伤害
- * 在 makeAIDecision 返回前调用，假设决策一定会被执行
- * 
- * @param {Object} action - 攻击行动 { weapon, r, c }
- * @param {Object} abilities - AI 能力（含 apDamage）
- */
-function recordDamageDealt(action, abilities) {
-    if (!damageDealtGrid) {
-        damageDealtGrid = createEmptyDamageGrid();
+    reset() {
+        this.damageDealtGrid = createEmptyDamageGrid();
+        this.sonarHistory = new Set();
     }
-    
-    const { weapon, r, c } = action;
-    
-    if (weapon === 'SONAR') {
-        return; // 声纳不造成伤害
-    }
-    
-    if (weapon === 'AP') {
-        // AP 单点攻击
-        if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE) {
-            damageDealtGrid[r][c] += abilities.apDamage;
-        }
-    } else if (weapon === 'HE') {
-        // HE X 型攻击，每格 1 点伤害
-        const offsets = [[0, 0], [-1, -1], [-1, 1], [1, -1], [1, 1]];
-        for (const [dr, dc] of offsets) {
-            const nr = r + dr;
-            const nc = c + dc;
-            if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                damageDealtGrid[nr][nc] += 1;
+
+    /**
+     * 记录本次决策预计造成的伤害（供后续回合的溢出估计）
+     */
+    recordDamageDealt(action, abilities, viewGrid = null) {
+        if (!this.damageDealtGrid) this.damageDealtGrid = createEmptyDamageGrid();
+        const { weapon, r, c } = action;
+        if (weapon === 'SONAR') return;
+
+        const cells = getActionCoverage(weapon, r, c, abilities);
+        for (const cell of cells) {
+            let amount = 1;
+            if (weapon === 'AP') {
+                const isSuspect = viewGrid?.[cell.r]?.[cell.c] === CellState.SUSPECT;
+                amount = isSuspect
+                    ? (abilities.apDamageVsSuspect ?? abilities.apDamage)
+                    : abilities.apDamage;
+            } else if (weapon === 'HE') {
+                amount = (cell.r === r && cell.c === c)
+                    ? (abilities.heCenterDamage ?? 1)
+                    : (abilities.heOuterDamage ?? 1);
             }
+            this.damageDealtGrid[cell.r][cell.c] += amount;
         }
     }
-}
 
-// ============================================================================
-// 主入口
-// ============================================================================
+    /**
+     * AI 决策主入口
+     */
+    decide(context) {
+        const {
+            viewGrid,
+            myShips,
+            enemyShips,
+            difficultyConfig,
+            playerViewGrid,
+            aiFaction = 'us',
+            playerFaction = 'us'
+        } = context;
 
-/**
- * AI 决策主入口（增强版：支持多步推演与风险感知）
- * 
- * @param {Object} context - 决策上下文
- * @param {Array<Array<number>>} context.viewGrid - AI 视角棋盘 (BOARD_SIZE x BOARD_SIZE)
- * @param {Array} context.myShips - 玩家舰船状态（AI 的攻击目标）
- * @param {Array} context.enemyShips - 敌方舰船状态（AI 自身的船）
- * @param {Object} context.difficultyConfig - 难度配置
- * @param {Array<Array<number>>} [context.playerViewGrid] - 玩家视角的 AI 棋盘（用于对称推演）
- * @returns {{ weapon: string, r: number, c: number }} 攻击指令
- */
-export function makeAIDecision(context) {
-    const { viewGrid, myShips, enemyShips, difficultyConfig, playerViewGrid } = context;
-    const { alpha = 0.5, randomness = 0, riskAwareness = 0 } = difficultyConfig;
+        const { alpha = 0.5, randomness = 0, riskAwareness = 0 } = difficultyConfig;
+        const tuning = difficultyConfig?.tuning
+            || getAITuning(difficultyConfig?.level || context.difficultyLevel || 'HARD');
 
-    // 1. 检查 AI 可用的武器能力
-    const abilities = checkAIAbilities(enemyShips);
-    
-    // 2. 获取存活的目标船只
-    const aliveTargets = myShips.filter(s => !s.sunk);
-    if (aliveTargets.length === 0) {
-        return findFallbackTarget(viewGrid);
-    }
-
-    // 3. 难度控制：随机扰动
-    if (Math.random() < randomness) {
-        return makeRandomDecision(viewGrid, abilities);
-    }
-
-    // 4. 构建置信状态（蒙特卡洛采样）
-    const beliefState = new BeliefState(aliveTargets, viewGrid);
-    
-    // 5. 枚举所有可用行动并过滤已使用的声呐点
-    let actions = enumerateAllActions(viewGrid, abilities);
-    
-    // 硬约束：移除已使用过的声呐中心点
-    // TODO: 将来应使用真正的收益式方法，让评估函数自然避免低效声呐
-    if (sonarHistory && sonarHistory.size > 0) {
-        actions = actions.filter(action => {
-            if (action.weapon === 'SONAR') {
-                const key = `${action.r},${action.c}`;
-                return !sonarHistory.has(key);
-            }
-            return true;
+        // 1. 己方能力（含学说；狼群战果取决于已击沉敌舰数）
+        const abilities = checkAIAbilities(enemyShips, aiFaction, playerFaction, {
+            sunkEnemyShips: myShips.filter(s => s.sunk).length
         });
-    }
-    
-    if (actions.length === 0) {
-        return findFallbackTarget(viewGrid);
-    }
 
-    // 6. 【增强】多步推演：评估各船的累积威胁
-    let shipThreats = null;
-    if (riskAwareness > 0 && playerViewGrid) {
-        shipThreats = simulateMultiStepThreats(
-            playerViewGrid, 
-            enemyShips, 
-            myShips, 
-            alpha
-        );
-    }
+        // 2. 存活目标
+        const aliveTargets = myShips.filter(s => !s.sunk);
+        if (aliveTargets.length === 0) {
+            return findFallbackTarget(viewGrid);
+        }
 
-    // 7. 找到最优行动
-    let bestAction = null;
-    let bestScore = -Infinity;
-    const candidates = [];
+        // 3. 难度控制：随机扰动
+        if (Math.random() < randomness) {
+            return makeRandomDecision(viewGrid, abilities);
+        }
 
-    for (const action of actions) {
-        // 基础评分（使用共享模块的 evaluateAction）
-        // 注意：此处调用不传 damageGrid，因为伤害记录由 aiStrategy 本地维护
-        const baseUtility = evaluateAction(
-            beliefState, 
-            action, 
-            abilities, 
-            alpha, 
-            damageDealtGrid,  // 传入本地伤害记录
-            Math.max(...aliveTargets.map(s => s.maxHp ?? 1))
-        );
-        
-        // 【增强】基于边际效用损失的风险调整（乘法形式）
-        // finalScore = baseUtility × (1 + riskAwareness × normRiskBonus)
-        // riskAwareness = 1 时，风险最多让效用翻倍
-        let score = baseUtility;
-        if (shipThreats && riskAwareness > 0) {
-            const normRiskBonus = calculateRiskBonus(
-                action, shipThreats, beliefState, abilities, enemyShips, alpha
+        // 4. 构建置信状态（蒙特卡洛采样）
+        const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount);
+
+        // 5. 枚举行动，过滤已用过的声呐点
+        let actions = enumerateAllActions(viewGrid, abilities);
+        if (this.sonarHistory.size > 0) {
+            actions = actions.filter(action => {
+                if (action.weapon === 'SONAR') {
+                    return !this.sonarHistory.has(`${action.r},${action.c}`);
+                }
+                return true;
+            });
+        }
+
+        if (actions.length === 0) {
+            return findFallbackTarget(viewGrid);
+        }
+
+        // 6. 对称推演：评估己方舰船受到的威胁
+        let shipThreats = null;
+        if (riskAwareness > 0 && playerViewGrid) {
+            shipThreats = simulateMultiStepThreats(
+                playerViewGrid,
+                enemyShips,
+                myShips,
+                alpha,
+                tuning.lookaheadSteps,
+                tuning.opponentSampleCount,
+                { opponentFaction: playerFaction, myFaction: aiFaction }
             );
-            score = baseUtility * (1 + riskAwareness * normRiskBonus);
         }
-        
-        if (score > bestScore + 1e-9) {
-            bestScore = score;
-            candidates.length = 0;
-            candidates.push(action);
-        } else if (Math.abs(score - bestScore) < 1e-9) {
-            candidates.push(action);
-        }
-    }
 
-    // 从并列最优中随机选择（增加不可预测性）
-    bestAction = candidates[Math.floor(Math.random() * candidates.length)];
-    
-    // 记录即将造成的伤害（假设决策一定会被执行）
-    recordDamageDealt(bestAction, abilities);
-    
-    // 记录声呐使用
-    if (bestAction.weapon === 'SONAR' && sonarHistory) {
-        const key = `${bestAction.r},${bestAction.c}`;
-        sonarHistory.add(key);
+        // 7. 找到最优行动
+        const maxShipHp = Math.max(...aliveTargets.map(s => s.maxHp ?? 1));
+        let bestScore = -Infinity;
+        const candidates = [];
+
+        for (const action of actions) {
+            const baseUtility = evaluateAction(
+                beliefState,
+                action,
+                abilities,
+                alpha,
+                this.damageDealtGrid,
+                maxShipHp
+            );
+
+            // finalScore = baseUtility × (1 + riskAwareness × normRiskBonus)
+            let score = baseUtility;
+            if (shipThreats && riskAwareness > 0) {
+                const normRiskBonus = calculateRiskBonus(
+                    action, shipThreats, beliefState, abilities, enemyShips, alpha
+                );
+                score = baseUtility * (1 + riskAwareness * normRiskBonus);
+            }
+
+            if (score > bestScore + 1e-9) {
+                bestScore = score;
+                candidates.length = 0;
+                candidates.push(action);
+            } else if (Math.abs(score - bestScore) < 1e-9) {
+                candidates.push(action);
+            }
+        }
+
+        const bestAction = candidates[Math.floor(Math.random() * candidates.length)];
+
+        // 8. 记账：预计伤害与声呐使用
+        this.recordDamageDealt(bestAction, abilities, viewGrid);
+        if (bestAction.weapon === 'SONAR') {
+            this.sonarHistory.add(`${bestAction.r},${bestAction.c}`);
+        }
+
+        return bestAction;
     }
-    
-    return bestAction;
 }
 
 // ============================================================================
-// 注：BeliefState、evaluateAction、checkAIAbilities 等核心函数
-// 已提取到 aiCore.js，此处复用共享逻辑
+// 默认实例（实战 AI）
 // ============================================================================
 
+const defaultEngine = new AIDecisionEngine();
 
+export function makeAIDecision(context) {
+    return defaultEngine.decide(context);
+}
+
+export function resetAIState() {
+    defaultEngine.reset();
+}
 
 // ============================================================================
-// 导出：供调试热力图使用（保持兼容）
+// 调试热力图
 // ============================================================================
 
 /**
- * 计算概率热力图
- * 保持与原接口兼容，供 game.js 调试功能使用
+ * 计算概率热力图，供 AI 视角调试显示
  */
 export function calculateProbabilityGrid(viewGrid, targets, difficultyConfig = null) {
     if (!targets || targets.length === 0) {
         return Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
     }
-    
+
     const aliveTargets = targets.filter(s => !s.sunk);
     if (aliveTargets.length === 0) {
         return Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
     }
-    
-    const beliefState = new BeliefState(aliveTargets, viewGrid);
+
+    const tuning = difficultyConfig?.tuning
+        || getAITuning(difficultyConfig?.level || 'HARD');
+    const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount);
     return beliefState.getProbabilityGrid();
 }

@@ -230,8 +230,8 @@
         .hit { background-color: rgba(236, 201, 75, 0.4) !important; position: relative; }
         .hit::after { content: '💥'; position: absolute; inset:0; display:flex; justify-content:center; align-items:center; font-size:18px; z-index: 102; }
         
-        /* 状态：毁坏 (X) */
-        .destroyed { background-color: rgba(229, 62, 62, 0.4) !important; position: relative; }
+        /* 状态：毁坏 (X)：底色只做薄红染色，避免盖住沉船舰型 */
+        .destroyed { background-color: rgba(190, 68, 54, 0.10) !important; position: relative; }
         .destroyed::after { content: '☠️'; position: absolute; inset:0; display:flex; justify-content:center; align-items:center; font-size:18px; z-index: 102; }
 
         /* 状态：疑似 (DETECT) - 玩家水听 */
@@ -412,7 +412,7 @@
             transform: rotate(90deg) translateY(-100%);
         }
 
-        .ship.sunk { filter: grayscale(100%) brightness(0.8); border: 1px solid red; }
+        /* 沉船外观由 ships.css 统一处理（保留舰体可辨识度） */
         @keyframes shake { 0%, 100% {transform: translateX(0);} 25% {transform: translateX(-5px);} 75% {transform: translateX(5px);} }
         .shake { animation: shake 0.2s ease-in-out 2; }
         
@@ -576,6 +576,15 @@
         .rules-ship-table th:nth-child(4) { width: 10%; }
         .rules-ship-table th:nth-child(5) { width: 14%; }
         .rules-ship-table th:nth-child(6) { width: 27%; }
+        .rules-doctrine-table th:nth-child(1) { width: 17%; }
+        .rules-doctrine-table th:nth-child(2) { width: 23%; }
+        .rules-doctrine-table th:nth-child(3) { width: 36%; }
+        .rules-doctrine-table th:nth-child(4) { width: 24%; }
+        .rules-doctrine-table .doc-en { font-size: 9px; letter-spacing: 0.08em; color: #7c6b46; }
+        .dossier .rules-doctrine-table tr.doc-row-player td { background: rgba(86, 140, 94, 0.12); }
+        .dossier .rules-doctrine-table tr.doc-row-player td:first-child { box-shadow: inset 2px 0 0 #4f8f5f; }
+        .dossier .rules-doctrine-table tr.doc-row-enemy td { background: rgba(166, 86, 63, 0.10); }
+        .dossier .rules-doctrine-table tr.doc-row-enemy td:first-child { box-shadow: inset 2px 0 0 #a3563f; }
         .rules-weapon-table th:nth-child(1) { width: 19%; }
         .rules-weapon-table th:nth-child(2) { width: 25%; }
         .rules-weapon-table th:nth-child(3) { width: 12%; }
@@ -703,55 +712,55 @@
         position: relative;
     }
     
-    /* 移动端默认隐藏所有棋盘盒子 */
+    /* 移动端单视图切换：两棋盘堆叠，非激活视图彻底隐藏，避免旧棋盘透出叠影 */
     .board-box { 
         grid-area: stack;
         width: 100%; 
         display: flex;
         flex: 1;
         justify-content: center;
-        padding-top: 20px;
+        /* 左侧留出行号空间，右侧留少量呼吸空间 */
+        padding: 20px 4px 0 24px;
         
-        /* 优化动画：不再隐藏旧视图，而是让其留在底层 */
-        /* 这样新视图淡入时，底部是旧视图而不是黑色背景，彻底消除闪烁 */
-        visibility: visible; 
+        visibility: hidden;
+        opacity: 0;
         z-index: 0;
-        opacity: 1;
         pointer-events: none; /* 非激活状态不可交互 */
     }
 
     /* 只有被激活的视图才显示 */
     .board-box.active-view {
         z-index: 10;
+        visibility: visible;
+        opacity: 1;
         pointer-events: auto;
     }
 
     /* 标题进入动画 */
     .board-box.active-view .board-title {
-        animation: titleEnter 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        animation: titleEnter 0.22s ease-out;
     }
     
-    /* 修复：非激活视图隐藏标题，防止文字重叠透视 */
+    /* 非激活视图的标题不参与渲染层叠 */
     .board-box:not(.active-view) .board-title {
         opacity: 0;
         visibility: hidden;
-        transition: opacity 0s; /* 瞬间隐藏 */
     }
 
-    /* 棋盘进入动画 */
+    /* 棋盘进入动画：只做轻微淡入，不做缩放位移，避免视口切换时的闪烁 */
     .board-box.active-view .grid {
-        animation: gridEnter 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        animation: gridEnter 0.22s ease-out;
         box-shadow: 0 10px 25px rgba(0,0,0,0.5); /* 增强阴影提升层次感 */
     }
 
     @keyframes titleEnter {
-        from { opacity: 0; transform: translateY(-10px); }
+        from { opacity: 0; transform: translateY(-6px); }
         to { opacity: 1; transform: translateY(0); }
     }
 
     @keyframes gridEnter {
-        from { opacity: 0; transform: scale(0.95) translateY(10px); }
-        to { opacity: 1; transform: scale(1) translateY(0); }
+        from { opacity: 0.65; }
+        to { opacity: 1; }
     }
 
     /* @keyframes fadeInView ... 移除 */
@@ -1146,23 +1155,53 @@
 /* ---------- 格子状态入场动画 ---------- */
 .hit::after { animation: marker-pop 0.3s cubic-bezier(0.2, 1.6, 0.4, 1); }
 .destroyed::after { animation: marker-pop 0.35s cubic-bezier(0.2, 1.6, 0.4, 1); }
-.miss::after { animation: miss-ripple 0.6s ease-out; }
+
+.hit::after, .destroyed::after {
+    will-change: transform, opacity;
+}
+
+.miss::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    margin: -5px 0 0 -5px;
+    border-radius: 50%;
+    border: 1px solid rgba(210, 230, 240, 0.55);
+    z-index: 101;
+    pointer-events: none;
+    will-change: transform, opacity;
+    animation: miss-ripple 0.7s ease-out forwards;
+}
 
 @keyframes marker-pop {
     from { transform: scale(0.2); opacity: 0; }
     to { transform: scale(1); opacity: 1; }
 }
 
+/* 仅使用 transform/opacity，避免 box-shadow 动画拖慢后半段 */
 @keyframes miss-ripple {
-    0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55); }
-    100% { box-shadow: 0 0 0 12px rgba(255, 255, 255, 0); }
+    0% { transform: scale(0.5); opacity: 0.75; }
+    100% { transform: scale(3.2); opacity: 0; }
 }
 
 /* ---------- 战斗特效 ---------- */
-.fx-hit, .fx-explosion, .fx-splash, .fx-ping, .fx-float, .fx-plane {
+.grid-fx-layer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 290;
+    contain: layout paint style;
+}
+
+.fx-hit, .fx-explosion, .fx-splash, .fx-ping, .fx-float, .fx-squadron {
     position: absolute;
     pointer-events: none;
     z-index: 300;
+    will-change: transform, opacity;
 }
 
 .fx-hit {
@@ -1248,40 +1287,56 @@
     100% { transform: translateY(-26px); opacity: 0; }
 }
 
-.fx-plane {
+.fx-squadron {
     z-index: 310;
-    width: 26px;
-    height: 12px;
     left: 0;
-    animation: fx-fly 1.1s ease-in forwards;
+    opacity: 0;
+    will-change: transform, opacity;
+    animation: fx-fly 1.25s linear forwards;
 }
 
-.fx-plane::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 5px;
-    width: 26px;
-    height: 2px;
-    background: #cbd5e0;
-    border-radius: 2px;
+.fx-squadron img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    user-select: none;
 }
 
-.fx-plane::after {
+/* 火箭齐射：5 枚火箭按十字落下 */
+.fx-rocket {
+    position: absolute;
+    z-index: 305;
+    width: 4px;
+    height: 14px;
+    pointer-events: none;
+    background: linear-gradient(180deg, #fff2c4, #e0a43c 40%, #7a3a12);
+    box-shadow: 0 0 6px rgba(240, 170, 80, 0.7);
+    opacity: 0;
+    will-change: transform, opacity;
+    animation: fx-rocket-fall 0.65s cubic-bezier(0.4, 0, 0.9, 0.6) forwards;
+}
+.fx-rocket::after {
     content: '';
     position: absolute;
-    left: 8px;
-    top: 0;
-    width: 6px;
-    height: 12px;
-    background: #a0aec0;
-    border-radius: 2px;
+    left: 50%;
+    top: -10px;
+    width: 2px;
+    height: 10px;
+    transform: translateX(-50%);
+    background: linear-gradient(180deg, transparent, rgba(220, 220, 220, 0.6));
+}
+@keyframes fx-rocket-fall {
+    0% { transform: translateY(0); opacity: 0; }
+    15% { opacity: 1; }
+    100% { transform: translateY(var(--fall, 48px)); opacity: 0; }
 }
 
 @keyframes fx-fly {
-    0% { transform: translateX(-50px) rotate(3deg); opacity: 0; }
-    15% { opacity: 1; }
-    100% { transform: translateX(560px) rotate(-2deg); opacity: 0; }
+    0% { transform: translateX(var(--fly-start, -100px)) rotate(2deg); opacity: 0; }
+    8% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { transform: translateX(var(--fly-end, 560px)) rotate(-1deg); opacity: 0; }
 }
 
 /* 沉船全屏闪光 */
@@ -1302,8 +1357,15 @@
 }
 
 /* 震屏 */
-.battlefield.shake-soft { animation: shake-s 0.4s ease-out; }
-.battlefield.shake-hard { animation: shake-h 0.5s ease-out; }
+/* 棋盘容器裁掉震屏溢出的绘制范围，避免位移动画撑出页面横向滚动条；
+   clip-margin 预留少量出血，保证震动时棋盘边缘与阴影不被削平。 */
+.battlefield {
+    overflow: hidden;
+    overflow: clip;
+    overflow-clip-margin: 12px;
+}
+.battlefield.shake-soft > .board-box { animation: shake-s 0.4s ease-out; will-change: transform; }
+.battlefield.shake-hard > .board-box { animation: shake-h 0.5s ease-out; will-change: transform; }
 
 @keyframes shake-s {
     0%, 100% { transform: translate(0, 0); }
@@ -1695,6 +1757,71 @@ header .icon-btn:hover {
 }
 .faction-select option { background: #131b20; color: #cfd8da; }
 
+/* ---------- 阵营学说速览 ---------- */
+.doctrine-readout {
+    display: grid;
+    gap: 4px;
+    margin: 8px 0 10px;
+}
+.dr-card {
+    position: relative;
+    padding: 6px 8px 6px 10px;
+    background: linear-gradient(180deg, rgba(30, 42, 48, 0.92), rgba(19, 27, 32, 0.92));
+    border: 1px solid #05080a;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.dr-card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--signal-green, #79c08f);
+    opacity: 0.75;
+}
+.dr-enemy::before { background: var(--signal-red, #d06853); }
+.dr-card.dr-random {
+    border-style: dashed;
+    background: linear-gradient(180deg, rgba(30, 42, 48, 0.55), rgba(19, 27, 32, 0.55));
+}
+.dr-card.dr-random::before {
+    background: repeating-linear-gradient(180deg, #7f939a 0 3px, transparent 3px 6px);
+}
+.dr-random .dr-name { color: #b9c6c9; }
+.dr-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.dr-side {
+    flex: 0 0 auto;
+    font-size: 8px;
+    letter-spacing: 0.14em;
+    color: #7f939a;
+}
+.dr-name {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: #dfe7e8;
+    white-space: nowrap;
+}
+.dr-en {
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 8px;
+    letter-spacing: 0.08em;
+    color: #6b7d83;
+}
+.dr-brief {
+    margin-top: 2px;
+    font-size: 9.5px;
+    line-height: 1.45;
+    color: #a9b8bc;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 /* ---------- 按钮：冲压金属 ---------- */
 button { font-family: var(--ui-font); letter-spacing: 0.08em; border-radius: 2px; }
 
@@ -1800,7 +1927,15 @@ button { font-family: var(--ui-font); letter-spacing: 0.08em; border-radius: 2px
 .wp-lamp { width: 5px; height: 5px; border-radius: 50%; background: #3a474c; box-shadow: inset 0 0 2px #000; }
 .weapon-btn.active .wp-lamp { background: var(--signal-amber); box-shadow: 0 0 6px rgba(224, 176, 80, 0.8); }
 .wp-name { font-size: 12px; letter-spacing: 0.16em; color: #d5dddf; }
-.wp-meta { font-size: 9px; letter-spacing: 0.08em; opacity: 0.7; }
+.wp-meta {
+    max-width: 100%;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    opacity: 0.7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 .weapon-btn:disabled { background: #141b1f; color: #5c6a6f; box-shadow: none; border-color: #0a0e11; filter: none; opacity: 1; }
 .weapon-btn:disabled .wp-name, .weapon-btn:disabled .wp-code { color: #5c6a6f; }
 
@@ -1889,6 +2024,19 @@ button { font-family: var(--ui-font); letter-spacing: 0.08em; border-radius: 2px
     box-shadow: 0 0 6px rgba(121, 192, 143, 0.5);
 }
 .board-title.enemy::before { background: var(--signal-red); border-radius: 50%; box-shadow: 0 0 6px rgba(208, 104, 83, 0.5); }
+.board-title .fleet-count {
+    margin-left: auto;
+    padding: 1px 6px;
+    border: 1px solid rgba(160, 190, 200, 0.18);
+    color: #8fa3a9;
+    letter-spacing: 0.12em;
+    white-space: nowrap;
+}
+.board-title .fleet-count.last {
+    color: var(--brass);
+    border-color: rgba(214, 193, 136, 0.55);
+    box-shadow: 0 0 8px rgba(214, 193, 136, 0.18);
+}
 .coord { color: #6f8b99; font: 10px var(--mono); letter-spacing: 0.05em; }
 
 .toggle-btn {
@@ -2025,15 +2173,33 @@ button { font-family: var(--ui-font); letter-spacing: 0.08em; border-radius: 2px
     inset: 20%;
     background: radial-gradient(circle at 50% 45%, #fff3cd 0 12%, #f2c063 30%, #c55a32 58%, transparent 66%);
     clip-path: polygon(50% 0, 60% 35%, 100% 50%, 60% 65%, 50% 100%, 40% 65%, 0 50%, 40% 35%);
-    filter: drop-shadow(0 0 3px rgba(240, 150, 60, 0.65));
 }
 .destroyed::after {
     content: '';
-    inset: 24%;
+    inset: 33%;
     background:
-        linear-gradient(45deg, transparent 44%, #8f2b22 44% 56%, transparent 56%),
-        linear-gradient(-45deg, transparent 44%, #8f2b22 44% 56%, transparent 56%);
-    filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.55));
+        linear-gradient(45deg, transparent 45%, rgba(255, 186, 166, 0.95) 45% 55%, transparent 55%),
+        linear-gradient(-45deg, transparent 45%, rgba(255, 186, 166, 0.95) 45% 55%, transparent 55%);
+}
+
+/* ---------- 声纳接触：已知有舰、但未造成伤害 ---------- */
+.cell.hit.contact {
+    background-color: rgba(96, 196, 174, 0.16) !important;
+    box-shadow: inset 0 0 0 1px rgba(120, 214, 192, 0.5);
+}
+.cell.hit.contact::after {
+    content: '';
+    inset: 28%;
+    border: 2px solid rgba(146, 230, 208, 0.9);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(146, 230, 208, 0.55) 0 22%, rgba(146, 230, 208, 0.12) 55%, transparent 70%);
+    clip-path: none;
+    z-index: 102;
+    animation: contact-pulse 1.8s ease-in-out infinite;
+}
+@keyframes contact-pulse {
+    0%, 100% { transform: scale(0.9); opacity: 0.72; }
+    50% { transform: scale(1.05); opacity: 1; }
 }
 .detect::after, .ai-detect::after {
     content: '?';
@@ -2051,14 +2217,23 @@ button { font-family: var(--ui-font); letter-spacing: 0.08em; border-radius: 2px
 }
 
 .pulse-highlight {
-    animation: pulse-brass 2s infinite;
+    position: relative;
     background-color: rgba(194, 162, 75, 0.55) !important;
     border-color: #ead08a !important;
 }
-@keyframes pulse-brass {
-    0% { box-shadow: 0 0 0 0 rgba(194, 162, 75, 0.65); transform: scale(1); }
-    70% { box-shadow: 0 0 0 6px rgba(194, 162, 75, 0); transform: scale(1.08); }
-    100% { box-shadow: 0 0 0 0 rgba(194, 162, 75, 0); transform: scale(1); }
+.pulse-highlight::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border: 1px solid rgba(234, 208, 138, 0.75);
+    border-radius: inherit;
+    pointer-events: none;
+    animation: pulse-ring 2s ease-out infinite;
+}
+@keyframes pulse-ring {
+    0% { transform: scale(0.94); opacity: 0.75; }
+    70% { transform: scale(1.12); opacity: 0; }
+    100% { transform: scale(0.94); opacity: 0; }
 }
 
 /* ---------- 模态框与档案纸 ---------- */

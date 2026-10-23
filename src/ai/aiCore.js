@@ -25,9 +25,17 @@
  */
 
 import { BOARD_SIZE } from '../config/constants.js';
-import { APWeapon } from '../game/weapons/APWeapon.js';
-import { HEWeapon } from '../game/weapons/HEWeapon.js';
-import { SonarWeapon } from '../game/weapons/SonarWeapon.js';
+import {
+    getAPDamage,
+    getAPMaxDamage,
+    getAPMaxPenetrations,
+    applyAPDefense,
+    applyHEDefense,
+    getHEProfile,
+    getHEOffsets,
+    getSonarProfile,
+    getAIBias
+} from '../data/doctrines.js';
 
 // ============================================================================
 // 常量定义
@@ -49,12 +57,60 @@ export const MIN_PROB = 1e-10;
 /** 默认蒙特卡洛采样数量 */
 export const DEFAULT_SAMPLE_COUNT = 700;
 
-// 创建武器实例用于获取范围
-const weaponInstances = {
-    AP: new APWeapon(),
-    HE: new HEWeapon(),
-    SONAR: new SonarWeapon()
-};
+function inBounds(r, c) {
+    return r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE;
+}
+
+/**
+ * 某武器在给定中心覆盖的格子（按学说形状/半径）
+ */
+export function getActionCoverage(weapon, r, c, abilities = null) {
+    if (weapon === 'HE') {
+        const shape = abilities?.heShape || 'x';
+        return getHEOffsets(shape)
+            .map(([dr, dc]) => ({ r: r + dr, c: c + dc }))
+            .filter(cell => inBounds(cell.r, cell.c));
+    }
+    if (weapon === 'SONAR') {
+        const radius = abilities?.sonarRadius ?? 1;
+        const cells = [];
+        for (let dr = -radius; dr <= radius; dr++) {
+            for (let dc = -radius; dc <= radius; dc++) {
+                if (inBounds(r + dr, c + dc)) cells.push({ r: r + dr, c: c + dc });
+            }
+        }
+        return cells;
+    }
+    return inBounds(r, c) ? [{ r, c }] : [];
+}
+
+/**
+ * 范围内是否还有未知海域（用于判断水听是否值得再扫）
+ */
+function hasUnknownInArea(viewGrid, r, c, radius) {
+    for (let dr = -radius; dr <= radius; dr++) {
+        for (let dc = -radius; dc <= radius; dc++) {
+            const nr = r + dr;
+            const nc = c + dc;
+            if (inBounds(nr, nc) && viewGrid[nr][nc] === CellState.UNKNOWN) return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * 攻击覆盖中是否还有可打击/可侦察的格子
+ */
+function coverageHasPotential(viewGrid, weapon, r, c, abilities) {
+    const cells = getActionCoverage(weapon, r, c, abilities);
+    for (const cell of cells) {
+        const state = viewGrid[cell.r][cell.c];
+        if (state !== CellState.MISS && state !== CellState.SUNK && state !== CellState.DESTROYED) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // ============================================================================
 // 置信状态管理（蒙特卡洛采样）
@@ -78,6 +134,9 @@ export class BeliefState {
         
         // 预计算约束信息
         this.constraints = this._buildConstraints();
+        this._mustHitIndices = this.constraints.mustHit.map(({ r, c }) => r * this.boardSize + c);
+        this._hitMask = new Uint8Array(this.boardSize * this.boardSize);
+        for (const idx of this._mustHitIndices) this._hitMask[idx] = 1;
         
         // 检查是否为空盘面（第一回合）
         this.isFirstTurn = this._checkIfFirstTurn();
@@ -87,6 +146,10 @@ export class BeliefState {
         if (this.isFirstTurn) {
             this.samples = [];
         } else {
+            this._placementCache = this._buildPlacementCache();
+            this._sortedShips = [...this.ships].sort((a, b) => b.len - a.len);
+            this._occupied = new Uint8Array(this.boardSize * this.boardSize);
+            this._coveredHits = new Set();
             this.samples = this._sampleConfigurations(sampleCount);
         }
         
@@ -158,26 +221,78 @@ export class BeliefState {
     }
 
     /**
+     * 预计算每种舰长的全部合法放置
+     * 视角在单次采样内不变，只有占用格会随采样变化
+     */
+    _buildPlacementCache() {
+        const cache = new Map();
+        const lengths = new Set(this.ships.map(s => s.len));
+        
+        for (const len of lengths) {
+            const placements = [];
+            for (let vertical = 0; vertical <= 1; vertical++) {
+                const isVertical = vertical === 1;
+                const maxR = isVertical ? this.boardSize - len : this.boardSize - 1;
+                const maxC = isVertical ? this.boardSize - 1 : this.boardSize - len;
+                
+                for (let r = 0; r <= maxR; r++) {
+                    for (let c = 0; c <= maxC; c++) {
+                        const cells = [];
+                        let valid = true;
+                        let weight = 1;
+                        
+                        for (let i = 0; i < len; i++) {
+                            const nr = isVertical ? r + i : r;
+                            const nc = isVertical ? c : c + i;
+                            const state = this.viewGrid[nr][nc];
+                            
+                            if (state === CellState.MISS || state === CellState.SUNK) {
+                                valid = false;
+                                break;
+                            }
+                            
+                            if (state === CellState.HIT || state === CellState.DESTROYED) weight += 10;
+                            else if (state === CellState.SUSPECT) weight += 1.25;
+                            cells.push(nr * this.boardSize + nc);
+                        }
+                        
+                        if (valid) placements.push({ cells, weight });
+                    }
+                }
+            }
+            cache.set(len, {
+                placements,
+                viable: new Int32Array(placements.length),
+                cumulative: new Float64Array(placements.length)
+            });
+        }
+        
+        return cache;
+    }
+
+    /**
      * 采样单个配置：逐船随机放置
      */
     _sampleOneConfiguration() {
-        const occupied = new Set();
+        const occupied = this._occupied;
+        const coveredHits = this._coveredHits;
+        occupied.fill(0);
+        coveredHits.clear();
         const config = [];
         
-        // 按船只长度降序排列，大船先放
-        const sortedShips = [...this.ships].sort((a, b) => b.len - a.len);
-        
-        for (const ship of sortedShips) {
+        for (const ship of this._sortedShips) {
             const placement = this._sampleShipPlacement(ship, occupied);
             if (!placement) {
                 return null; // 放置失败，整个配置作废
             }
-            config.push(placement);
-            placement.cells.forEach(cell => occupied.add(`${cell.r},${cell.c}`));
+            config.push({ shipId: ship.id, cells: placement.cells });
+            for (const idx of placement.cells) {
+                occupied[idx] = 1;
+                if (this._hitMask[idx]) coveredHits.add(idx);
+            }
         }
         
-        // 验证配置是否满足 mustHit 约束
-        if (!this._validateMustHit(config)) {
+        if (!this._validateMustHit(coveredHits)) {
             return null;
         }
         
@@ -186,100 +301,59 @@ export class BeliefState {
 
     /**
      * 为单艘船采样一个合法放置位置
+     * 单次遍历可行放置并累积权重，再按累计权重抽样
      */
     _sampleShipPlacement(ship, occupied) {
-        const validPlacements = [];
-        
-        // 枚举所有可能的放置
-        for (let vertical = 0; vertical <= 1; vertical++) {
-            const isVertical = vertical === 1;
-            const maxR = isVertical ? this.boardSize - ship.len : this.boardSize - 1;
-            const maxC = isVertical ? this.boardSize - 1 : this.boardSize - ship.len;
-            
-            for (let r = 0; r <= maxR; r++) {
-                for (let c = 0; c <= maxC; c++) {
-                    const cells = [];
-                    let valid = true;
-                    let hitCount = 0;
-                    let suspectCount = 0;
-                    
-                    for (let i = 0; i < ship.len; i++) {
-                        const nr = isVertical ? r + i : r;
-                        const nc = isVertical ? c : c + i;
-                        const key = `${nr},${nc}`;
-                        
-                        // 检查是否与已放置船只重叠
-                        if (occupied.has(key)) {
-                            valid = false;
-                            break;
-                        }
-                        
-                        const state = this.viewGrid[nr][nc];
-                        
-                        // 不能穿越 miss 或已沉没的船
-                        if (state === CellState.MISS || state === CellState.SUNK) {
-                            valid = false;
-                            break;
-                        }
-                        
-                        cells.push({ r: nr, c: nc });
-                        
-                        if (state === CellState.HIT || state === CellState.DESTROYED) {
-                            hitCount++;
-                        }
-                        if (state === CellState.SUSPECT) {
-                            suspectCount++;
-                        }
-                    }
-                    
-                    if (valid) {
-                        // 权重：命中点越多权重越高，疑似点也有加成
-                        const weight = 1 + hitCount * 10 + suspectCount * 1.25;
-                        validPlacements.push({ cells, weight, shipId: ship.id });
-                    }
-                }
-            }
-        }
-        
-        if (validPlacements.length === 0) {
+        const entry = this._placementCache.get(ship.len);
+        if (!entry || entry.placements.length === 0) {
             return null;
         }
         
-        // 加权随机选择
-        const totalWeight = validPlacements.reduce((sum, p) => sum + p.weight, 0);
-        let rand = Math.random() * totalWeight;
+        const { placements, viable, cumulative } = entry;
+        let count = 0;
+        let totalWeight = 0;
         
-        for (const placement of validPlacements) {
-            rand -= placement.weight;
-            if (rand <= 0) {
-                return placement;
+        for (let i = 0; i < placements.length; i++) {
+            const cells = placements[i].cells;
+            let blocked = false;
+            for (let j = 0; j < cells.length; j++) {
+                if (occupied[cells[j]]) {
+                    blocked = true;
+                    break;
+                }
             }
+            if (blocked) continue;
+            
+            totalWeight += placements[i].weight;
+            cumulative[count] = totalWeight;
+            viable[count] = i;
+            count++;
         }
         
-        return validPlacements[validPlacements.length - 1];
+        if (count === 0) {
+            return null;
+        }
+        
+        const rand = Math.random() * totalWeight;
+        let lo = 0;
+        let hi = count - 1;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (cumulative[mid] < rand) lo = mid + 1;
+            else hi = mid;
+        }
+        
+        return placements[viable[lo]];
     }
 
     /**
      * 验证配置是否覆盖所有 mustHit 点
      */
-    _validateMustHit(config) {
-        const coveredHits = new Set();
-        
-        for (const placement of config) {
-            for (const cell of placement.cells) {
-                const state = this.viewGrid[cell.r][cell.c];
-                if (state === CellState.HIT || state === CellState.DESTROYED) {
-                    coveredHits.add(`${cell.r},${cell.c}`);
-                }
-            }
+    _validateMustHit(coveredHits) {
+        if (coveredHits.size < this._mustHitIndices.length) return false;
+        for (const idx of this._mustHitIndices) {
+            if (!coveredHits.has(idx)) return false;
         }
-        
-        for (const hit of this.constraints.mustHit) {
-            if (!coveredHits.has(`${hit.r},${hit.c}`)) {
-                return false;
-            }
-        }
-        
         return true;
     }
 
@@ -310,10 +384,11 @@ export class BeliefState {
         }
         
         // 统计每个格子在采样中出现的频率
+        const boardSize = this.boardSize;
         for (const config of this.samples) {
             for (const placement of config) {
-                for (const cell of placement.cells) {
-                    grid[cell.r][cell.c]++;
+                for (const idx of placement.cells) {
+                    grid[Math.floor(idx / boardSize)][idx % boardSize]++;
                 }
             }
         }
@@ -372,45 +447,55 @@ export class BeliefState {
 
     /**
      * 计算执行某行动后的条件熵（近似）
+     * @param {Object} action - 行动
+     * @param {Object} [abilities] - 能力状态（决定水听半径 / 空袭形状）
      */
-    getConditionalEntropy(action) {
+    getConditionalEntropy(action, abilities = null) {
         const { weapon, r, c } = action;
         const probGrid = this.getProbabilityGrid();
         
         if (weapon === 'SONAR') {
-            return this._getSonarConditionalEntropy(r, c, probGrid);
+            return this._getSonarConditionalEntropy(
+                r, c, probGrid,
+                abilities?.sonarRadius ?? 1,
+                abilities?.sonarReveal ?? 'center'
+            );
         } else {
             // AP 和 HE 都是攻击类武器
-            return this._getAttackConditionalEntropy(action, probGrid);
+            return this._getAttackConditionalEntropy(action, probGrid, abilities);
         }
     }
 
     /**
      * 声纳的条件熵计算
-     * 声纳揭示 3x3 区域的信息
+     * - 有信号概率由区域内至少一艘未暴露舰船决定
+     * - 无信号：清空整片区域
+     * - 有信号：center 只揭示中心格；nearest 标定区域内最可能/最近接触
      */
-    _getSonarConditionalEntropy(r, c, probGrid) {
-        // 声纳结果分两种情况：有船 / 无船
-        // 中心点概率
-        const centerProb = (r >= 0 && r < this.boardSize && c >= 0 && c < this.boardSize) 
+    _getSonarConditionalEntropy(r, c, probGrid, radius = 1, reveal = 'center') {
+        const centerState = (r >= 0 && r < this.boardSize && c >= 0 && c < this.boardSize)
+            ? this.viewGrid[r][c] : CellState.MISS;
+        const centerProb = (r >= 0 && r < this.boardSize && c >= 0 && c < this.boardSize)
             ? probGrid[r][c] : 0;
         
-        // 计算 3x3 区域的总不确定性
         let areaEntropy = 0;
         let unknownCount = 0;
+        let noShipProb = 1;
+        let maxCellEntropy = 0;
         
-        for (let i = -1; i <= 1; i++) {
-            for (let j = -1; j <= 1; j++) {
+        for (let i = -radius; i <= radius; i++) {
+            for (let j = -radius; j <= radius; j++) {
                 const nr = r + i;
                 const nc = c + j;
                 if (nr >= 0 && nr < this.boardSize && nc >= 0 && nc < this.boardSize) {
                     const state = this.viewGrid[nr][nc];
-                    if (state === CellState.UNKNOWN){// || state === CellState.SUSPECT) {
+                    if (state === CellState.UNKNOWN){
                         const p = probGrid[nr][nc];
-                        if (p > MIN_PROB && p < 1 - MIN_PROB) {
-                            areaEntropy += -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
-                            unknownCount++;
-                        }
+                        const cellEntropy = this._cellEntropy(p);
+                        areaEntropy += cellEntropy;
+                        maxCellEntropy = Math.max(maxCellEntropy, cellEntropy);
+                        noShipProb *= (1 - p);
+                        unknownCount++;
                     }
                 }
             }
@@ -420,28 +505,29 @@ export class BeliefState {
             return this.getEntropy(); // 无信息增益
         }
         
-        // 简化模型：声纳成功时消除中心点的不确定性，失败时消除整个区域
         const currentEntropy = this.getEntropy();
+        const signalProb = 1 - Math.max(0, noShipProb);
         
-        // 期望条件熵 = P(有船) * (当前熵 - 中心熵) + P(无船) * (当前熵 - 区域熵)
-        const centerEntropy = this._cellEntropy(centerProb);
+        // 有信号时只揭示一个接触格；其余格仅标记疑似，不消除概率
+        const revealEntropy = reveal === 'nearest'
+            ? maxCellEntropy
+            : (centerState === CellState.UNKNOWN ? this._cellEntropy(centerProb) : 0);
         
-        const expectedEntropy = centerProb * (currentEntropy - centerEntropy) 
-                        + (1 - centerProb) * (currentEntropy - areaEntropy);
+        const expectedEntropy = signalProb * (currentEntropy - revealEntropy)
+                        + (1 - signalProb) * (currentEntropy - areaEntropy);
         
-        // 确保条件熵非负
-        return Math.max(0, currentEntropy - Math.max(0, currentEntropy - expectedEntropy));
+        return Math.max(0, Math.min(currentEntropy, expectedEntropy));
     }
 
     /**
      * 攻击类武器的条件熵计算
      */
-    _getAttackConditionalEntropy(action, probGrid) {
+    _getAttackConditionalEntropy(action, probGrid, abilities = null) {
         const { weapon, r, c } = action;
         const currentEntropy = this.getEntropy();
         
         // 获取攻击覆盖的格子
-        const cells = this._getWeaponCoverage(weapon, r, c);
+        const cells = this._getWeaponCoverage(weapon, r, c, abilities);
         
         // 计算这些格子的总熵
         let coveredEntropy = 0;
@@ -469,15 +555,10 @@ export class BeliefState {
     }
 
     /**
-     * 获取武器覆盖的格子
-     * 使用武器类的 previewArea 方法，保持一致性
+     * 获取武器覆盖的格子（按学说形状与半径）
      */
-    _getWeaponCoverage(weapon, r, c) {
-        const instance = weaponInstances[weapon];
-        if (instance) {
-            return instance.previewArea({ r, c }).cells;
-        }
-        return [{ r, c }];
+    _getWeaponCoverage(weapon, r, c, abilities = null) {
+        return getActionCoverage(weapon, r, c, abilities);
     }
 }
 
@@ -489,10 +570,11 @@ export class BeliefState {
  * 统一评估行动的效用值
  * 
  * utility = alpha * 归一化信息增益 + (1 - alpha) * 归一化期望伤害
+ * 再乘以阵营学说倾向（武器偏好、补刀/疑似目标亲和）
  * 
  * @param {BeliefState} beliefState - 置信状态
  * @param {Object} action - 行动 { weapon, r, c }
- * @param {Object} abilities - 能力 { canUseAir, canUseSonar, apDamage }
+ * @param {Object} abilities - 能力（包含学说档案）
  * @param {number} alpha - 探索权重 [0, 1]
  * @param {number[][]} [damageGrid] - 已造成伤害记录（可选）
  * @param {number} [maxShipHp] - 最大船只血量（用于伤害溢出计算，可选）
@@ -504,7 +586,7 @@ export function evaluateAction(beliefState, action, abilities, alpha, damageGrid
     
     // 1. 计算信息增益
     const currentEntropy = beliefState.getEntropy();
-    const conditionalEntropy = beliefState.getConditionalEntropy(action);
+    const conditionalEntropy = beliefState.getConditionalEntropy(action, abilities);
     const infoGain = Math.max(0, currentEntropy - conditionalEntropy);
     
     // 归一化信息增益（除以当前总熵）
@@ -513,19 +595,41 @@ export function evaluateAction(beliefState, action, abilities, alpha, damageGrid
     // 2. 计算期望伤害
     // 如果未提供 maxShipHp，从 beliefState 中获取
     const effectiveMaxHp = maxShipHp ?? Math.max(...beliefState.ships.map(s => s.maxHp ?? 1));
-    const expectedDamage = calculateExpectedDamage(action, probGrid, abilities, damageGrid, effectiveMaxHp);
+    const expectedDamage = calculateExpectedDamage(
+        action, probGrid, abilities, damageGrid, effectiveMaxHp, beliefState.viewGrid
+    );
     
     // 归一化期望伤害（除以最大可能伤害）
-    const maxDamage = weapon === 'HE' ? 5 : (weapon === 'AP' ? abilities.apDamage : 0);
+    const maxDamage = weapon === 'HE'
+        ? Math.max(1, abilities.heProfile?.maxDamage ?? 5)
+        : (weapon === 'AP' ? Math.max(1, abilities.apMaxDamage ?? abilities.apDamage ?? 1) : 0);
     const normDamage = maxDamage > 0 ? expectedDamage / maxDamage : 0;
     
     // 3. 综合评分
     // 声纳不造成伤害，但信息价值高
-    if (weapon === 'SONAR') {
-        return alpha * normInfoGain;
+    let utility = weapon === 'SONAR'
+        ? alpha * normInfoGain
+        : alpha * normInfoGain + (1 - alpha) * normDamage;
+    
+    // 4. 阵营学说倾向（只使用公开视野中的格子状态）
+    const bias = abilities?.weaponBias?.[weapon] ?? 1;
+    utility *= bias;
+    
+    const hitAffinity = abilities?.hitAffinity ?? 0;
+    const suspectAffinity = abilities?.suspectAffinity ?? 0;
+    if (weapon !== 'SONAR' && (hitAffinity > 0 || suspectAffinity > 0)) {
+        let hitCells = 0;
+        let suspectCells = 0;
+        for (const cell of getActionCoverage(weapon, r, c, abilities)) {
+            const state = beliefState.viewGrid[cell.r][cell.c];
+            if (state === CellState.HIT || state === CellState.DESTROYED) hitCells++;
+            else if (state === CellState.SUSPECT) suspectCells++;
+        }
+        utility *= 1 + hitAffinity * Math.min(hitCells, 2)
+                       + suspectAffinity * Math.min(suspectCells, 2);
     }
     
-    return alpha * normInfoGain + (1 - alpha) * normDamage;
+    return utility;
 }
 
 /**
@@ -540,12 +644,13 @@ export function evaluateAction(beliefState, action, abilities, alpha, damageGrid
  * 
  * @param {Object} action - 攻击行动
  * @param {Array<Array<number>>} probGrid - 概率网格
- * @param {Object} abilities - AI 能力
+ * @param {Object} abilities - AI 能力（含学说伤害档案）
  * @param {Array<Array<number>>} [damageGrid] - 已造成伤害记录（可选）
  * @param {number} maxShipHp - 当前存活船只的最大血量
+ * @param {Array<Array<number>>} [viewGrid] - 视角网格（用于雷达锁定判定）
  * @returns {number} 期望有效伤害
  */
-export function calculateExpectedDamage(action, probGrid, abilities, damageGrid = null, maxShipHp) {
+export function calculateExpectedDamage(action, probGrid, abilities, damageGrid = null, maxShipHp, viewGrid = null) {
     const { weapon, r, c } = action;
     
     if (weapon === 'SONAR') {
@@ -553,22 +658,28 @@ export function calculateExpectedDamage(action, probGrid, abilities, damageGrid 
     }
     
     let expectedDamage = 0;
-    const baseDamage = weapon === 'AP' ? abilities.apDamage : 1;
     
     if (weapon === 'AP') {
-        // 单点攻击
+        // 单点攻击（雷达火控对疑似目标有额外伤害）
+        // 穿甲传导收益不额外计入：连续穿甲是上限，不是每发都能吃满
         if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE) {
-            const effectiveDamage = getEffectiveDamage(r, c, baseDamage, damageGrid, maxShipHp);
-            expectedDamage = probGrid[r][c] * effectiveDamage;
+            const isSuspect = viewGrid?.[r]?.[c] === CellState.SUSPECT;
+            const baseDamage = isSuspect
+                ? (abilities.apDamageVsSuspect ?? abilities.apDamage)
+                : abilities.apDamage;
+            expectedDamage = probGrid[r][c] * baseDamage;
         }
     } else if (weapon === 'HE') {
-        // X 型攻击
-        const offsets = [[0, 0], [-1, -1], [-1, 1], [1, -1], [1, 1]];
+        // 学说形状攻击（X 型 / 十字型），中心伤害可被学说强化
+        const offsets = getHEOffsets(abilities.heShape || 'x');
+        const centerDamage = abilities.heCenterDamage ?? 1;
+        const outerDamage = abilities.heOuterDamage ?? 1;
         for (const [dr, dc] of offsets) {
             const nr = r + dr;
             const nc = c + dc;
             if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                const effectiveDamage = getEffectiveDamage(nr, nc, 1, damageGrid, maxShipHp);
+                const cellDamage = (dr === 0 && dc === 0) ? centerDamage : outerDamage;
+                const effectiveDamage = getEffectiveDamage(nr, nc, cellDamage, damageGrid, maxShipHp);
                 expectedDamage += probGrid[nr][nc] * effectiveDamage;
             }
         }
@@ -607,26 +718,63 @@ function getEffectiveDamage(r, c, weaponDamage, damageGrid, maxShipHp) {
 // ============================================================================
 
 /**
- * 检查 AI 可用的武器能力
+ * 检查 AI 可用的武器能力（含阵营学说）
  * 
- * @param {Ship[]} ships - 舰船列表
- * @returns {Object} { canUseAir: boolean, canUseSonar: boolean, apDamage: number }
+ * @param {Ship[]} ships - 己方舰船列表
+ * @param {string} [factionId='us'] - 己方阵营
+ * @param {string|null} [opponentFaction=null] - 敌方阵营（用于规避类减伤）
+ * @param {Object} [options]
+ * @param {number} [options.sunkEnemyShips=0] - 已击沉敌舰数（狼群战果）
+ * @returns {Object} 能力与学说档案
  */
-export function checkAIAbilities(ships) {
+export function checkAIAbilities(ships, factionId = 'us', opponentFaction = null, options = {}) {
+    const sunkEnemyShips = options.sunkEnemyShips || 0;
     const aiCV = ships.some(s => s.code === 'CV' && !s.sunk);
     const aiCL = ships.some(s => s.code === 'CL' && !s.sunk);
     const aiBB = ships.some(s => s.code === 'BB' && !s.sunk);
     const aiSS = ships.some(s => s.code === 'SS' && !s.sunk);
     const aiDD = ships.some(s => s.code === 'DD' && !s.sunk);
     
-    let aiAPDamage = 1;
-    if (aiBB) aiAPDamage = 3;
-    else if (aiSS || aiCL) aiAPDamage = 2;
-
+    const heProfile = getHEProfile(factionId, ships);
+    const heCenterDamage = opponentFaction
+        ? applyHEDefense(opponentFaction, heProfile.centerDamage)
+        : heProfile.centerDamage;
+    const sonarProfile = getSonarProfile(factionId);
+    const bias = getAIBias(factionId) || {};
+    const rawAP = getAPDamage(factionId, ships, { sunkEnemyShips });
+    const rawAPSuspect = getAPMaxDamage(factionId, ships, { sunkEnemyShips });
+    const apDamage = opponentFaction ? applyAPDefense(opponentFaction, rawAP) : rawAP;
+    const apDamageVsSuspect = opponentFaction
+        ? applyAPDefense(opponentFaction, rawAPSuspect)
+        : rawAPSuspect;
+    
     return {
-        canUseAir: aiCV,
+        factionId,
+        opponentFaction,
+        sunkEnemyShips,
+        canUseAir: heProfile.available,
         canUseSonar: aiDD || aiSS,
-        apDamage: aiAPDamage
+        apDamage,
+        apDamageVsSuspect,
+        apMaxDamage: Math.max(apDamage, apDamageVsSuspect),
+        apSuspectBonus: Math.max(0, apDamageVsSuspect - apDamage),
+        apMaxPenetrations: getAPMaxPenetrations(factionId, ships),
+        heProfile,
+        heShape: heProfile.shape,
+        heCenterDamage,
+        heOuterDamage: heProfile.outerDamage,
+        sonarRadius: sonarProfile.radius,
+        sonarReveal: sonarProfile.reveal,
+        apPenetrates: true,
+        weaponBias: bias.weaponBias || { AP: 1, HE: 1, SONAR: 1 },
+        hitAffinity: bias.hitAffinity || 0,
+        suspectAffinity: bias.suspectAffinity || 0,
+        // 兼容旧字段
+        aiCV,
+        aiCL,
+        aiBB,
+        aiSS,
+        aiDD
     };
 }
 
@@ -636,6 +784,9 @@ export function checkAIAbilities(ships) {
 
 /**
  * 枚举所有可用行动
+ * - 主炮可打未知/命中/疑似格
+ * - 空袭中心可落在水面（用于覆盖周围未知格）
+ * - 水听只在扫描范围内仍有未知海域时考虑
  * 
  * @param {number[][]} viewGrid - 视角网格
  * @param {Object} abilities - 能力状态
@@ -643,20 +794,31 @@ export function checkAIAbilities(ships) {
  */
 export function enumerateAllActions(viewGrid, abilities) {
     const actions = [];
+    const radius = abilities?.sonarRadius ?? 1;
     
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
             const state = viewGrid[r][c];
             
-            // 跳过已确定的无效点
-            if (state === CellState.MISS || state === CellState.SUNK) {
+            if (state === CellState.SUNK) {
                 continue;
             }
             
-            // 已摧毁的点也跳过（除非是 HE 可能覆盖到）
+            // 水听：扫描圈内仍有未知海域才值得
+            if (abilities.canUseSonar && hasUnknownInArea(viewGrid, r, c, radius)) {
+                actions.push({ weapon: 'SONAR', r, c });
+            }
+            
+            if (state === CellState.MISS) {
+                // 空袭中心可以落在已探明水面，覆盖周围未知格
+                if (abilities.canUseAir && coverageHasPotential(viewGrid, 'HE', r, c, abilities)) {
+                    actions.push({ weapon: 'HE', r, c });
+                }
+                continue;
+            }
+            
             if (state === CellState.DESTROYED) {
-                // 只有 HE 的中心可以是已摧毁点（用于打击周围）
-                if (abilities.canUseAir) {
+                if (abilities.canUseAir && coverageHasPotential(viewGrid, 'HE', r, c, abilities)) {
                     actions.push({ weapon: 'HE', r, c });
                 }
                 continue;
@@ -665,14 +827,9 @@ export function enumerateAllActions(viewGrid, abilities) {
             // 主炮：始终可用
             actions.push({ weapon: 'AP', r, c });
             
-            // 空袭：需要 CV 存活
-            if (abilities.canUseAir) {
+            // 空袭：需要航母存活（部分学说无需航母）
+            if (abilities.canUseAir && coverageHasPotential(viewGrid, 'HE', r, c, abilities)) {
                 actions.push({ weapon: 'HE', r, c });
-            }
-            
-            // 声纳：需要 DD 存活，且优先扫描未知区域
-            if (abilities.canUseSonar && (state === CellState.UNKNOWN || state === CellState.SUSPECT)) {
-                actions.push({ weapon: 'SONAR', r, c });
             }
         }
     }
@@ -689,22 +846,6 @@ export const DEFAULT_OPPONENT_SAMPLE_COUNT = 50;
 
 /** 向前推演步数 */
 export const DEFAULT_LOOKAHEAD_STEPS = 3;
-
-/**
- * 获取武器覆盖范围
- * 
- * @param {string} weapon - 武器类型 'AP' | 'HE' | 'SONAR'
- * @param {number} r - 中心行
- * @param {number} c - 中心列
- * @returns {{ r: number, c: number }[]} 覆盖的格子数组
- */
-function getWeaponCoverage(weapon, r, c) {
-    const instance = weaponInstances[weapon];
-    if (instance) {
-        return instance.previewArea({ r, c }).cells;
-    }
-    return [{ r, c }];
-}
 
 /**
  * 获取船只占用的格子
@@ -739,11 +880,17 @@ function getShipCells(ship) {
  * @param {number} alpha - 探索权重
  * @param {number} [steps=DEFAULT_LOOKAHEAD_STEPS] - 推演步数
  * @param {number} [sampleCount=DEFAULT_OPPONENT_SAMPLE_COUNT] - 对手采样数量
+ * @param {Object} [options]
+ * @param {string} [options.opponentFaction='us'] - 对手阵营（学说）
+ * @param {string} [options.myFaction='us'] - 我方阵营（用于规避减伤）
  * @returns {Map<string, { totalExpectedDamage: number, sinkProbability: number, remainingHp: number }>}
  * @export
  */
-export function simulateMultiStepThreats(opponentViewGrid, myShips, opponentShips, alpha, steps = DEFAULT_LOOKAHEAD_STEPS, sampleCount = DEFAULT_OPPONENT_SAMPLE_COUNT) {
-    const opponentAbilities = checkAIAbilities(opponentShips);
+export function simulateMultiStepThreats(opponentViewGrid, myShips, opponentShips, alpha, steps = DEFAULT_LOOKAHEAD_STEPS, sampleCount = DEFAULT_OPPONENT_SAMPLE_COUNT, options = {}) {
+    const { opponentFaction = 'us', myFaction = 'us' } = options;
+    const opponentAbilities = checkAIAbilities(opponentShips, opponentFaction, myFaction, {
+        sunkEnemyShips: myShips.filter(s => s.sunk).length
+    });
     const aliveTargets = myShips.filter(s => !s.sunk);
     if (aliveTargets.length === 0) return new Map();
     
@@ -787,7 +934,7 @@ export function simulateMultiStepThreats(opponentViewGrid, myShips, opponentShip
         if (!bestAction) break;
         
         // 累积该攻击对各船的威胁
-        accumulateThreat(bestAction, probGrid, opponentAbilities, myShips, threats);
+        accumulateThreat(bestAction, probGrid, opponentAbilities, myShips, threats, simViewGrid);
         
         // 更新模拟状态
         updateSimulatedState(simViewGrid, bestAction, opponentAbilities, probGrid);
@@ -815,15 +962,15 @@ export function simulateMultiStepThreats(opponentViewGrid, myShips, opponentShip
  * @param {Object} abilities - 攻击方能力
  * @param {Ship[]} targetShips - 被攻击方的船只
  * @param {Map} threats - 威胁累积 Map
+ * @param {number[][]} [viewGrid] - 攻击方视角（判定雷达锁定加成）
  */
-function accumulateThreat(action, probGrid, abilities, targetShips, threats) {
+function accumulateThreat(action, probGrid, abilities, targetShips, threats, viewGrid = null) {
     const { weapon, r, c } = action;
     
     // 声纳不造成伤害
     if (weapon === 'SONAR') return;
     
-    const cells = getWeaponCoverage(weapon, r, c);
-    const dmg = weapon === 'AP' ? abilities.apDamage : 1;
+    const cells = getActionCoverage(weapon, r, c, abilities);
     
     for (const cell of cells) {
         if (cell.r < 0 || cell.r >= BOARD_SIZE || cell.c < 0 || cell.c >= BOARD_SIZE) continue;
@@ -837,8 +984,19 @@ function accumulateThreat(action, probGrid, abilities, targetShips, threats) {
             if (isOnShip) {
                 const threat = threats.get(ship.id);
                 if (threat) {
+                    let cellDamage = 1;
+                    if (weapon === 'AP') {
+                        const isSuspect = viewGrid?.[cell.r]?.[cell.c] === CellState.SUSPECT;
+                        cellDamage = isSuspect
+                            ? (abilities.apDamageVsSuspect ?? abilities.apDamage)
+                            : abilities.apDamage;
+                    } else if (weapon === 'HE') {
+                        cellDamage = (cell.r === r && cell.c === c)
+                            ? (abilities.heCenterDamage ?? 1)
+                            : (abilities.heOuterDamage ?? 1);
+                    }
                     // 期望伤害 = 对手攻击该格的概率 × 伤害
-                    threat.totalExpectedDamage += probGrid[cell.r][cell.c] * dmg;
+                    threat.totalExpectedDamage += probGrid[cell.r][cell.c] * cellDamage;
                 }
             }
         }
@@ -856,7 +1014,59 @@ function accumulateThreat(action, probGrid, abilities, targetShips, threats) {
  */
 function updateSimulatedState(simViewGrid, action, abilities, probGrid) {
     const { weapon, r, c } = action;
-    const cells = getWeaponCoverage(weapon, r, c);
+    
+    if (weapon === 'SONAR') {
+        const radius = abilities.sonarRadius ?? 1;
+        
+        if (abilities.sonarReveal === 'nearest') {
+            // 最近接触：区域内最可能的未暴露格显形，其余标记疑似
+            let contact = null;
+            for (let dr = -radius; dr <= radius; dr++) {
+                for (let dc = -radius; dc <= radius; dc++) {
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (!inBounds(nr, nc) || simViewGrid[nr][nc] !== CellState.UNKNOWN) continue;
+                    if (!contact || probGrid[nr][nc] > contact.p) {
+                        contact = { r: nr, c: nc, p: probGrid[nr][nc] };
+                    }
+                }
+            }
+            if (contact && contact.p > 0.5) {
+                simViewGrid[contact.r][contact.c] = CellState.HIT;
+            } else if (simViewGrid[r][c] === CellState.UNKNOWN) {
+                simViewGrid[r][c] = probGrid[r][c] > 0.5 ? CellState.HIT : CellState.MISS;
+            }
+            for (let dr = -radius; dr <= radius; dr++) {
+                for (let dc = -radius; dc <= radius; dc++) {
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (!inBounds(nr, nc)) continue;
+                    if (simViewGrid[nr][nc] === CellState.UNKNOWN) {
+                        simViewGrid[nr][nc] = CellState.SUSPECT;
+                    }
+                }
+            }
+            return;
+        }
+        
+        // 中心按概率揭示，周围未知标记为疑似
+        if (simViewGrid[r][c] === CellState.UNKNOWN) {
+            simViewGrid[r][c] = probGrid[r][c] > 0.5 ? CellState.HIT : CellState.MISS;
+        }
+        for (let dr = -radius; dr <= radius; dr++) {
+            for (let dc = -radius; dc <= radius; dc++) {
+                const nr = r + dr;
+                const nc = c + dc;
+                if ((dr === 0 && dc === 0) || !inBounds(nr, nc)) continue;
+                if (simViewGrid[nr][nc] === CellState.UNKNOWN) {
+                    simViewGrid[nr][nc] = CellState.SUSPECT;
+                }
+            }
+        }
+        return;
+    }
+    
+    const cells = getActionCoverage(weapon, r, c, abilities);
     
     for (const cell of cells) {
         if (cell.r >= 0 && cell.r < BOARD_SIZE && cell.c >= 0 && cell.c < BOARD_SIZE) {
@@ -894,9 +1104,14 @@ function isActionAvailable(action, abilities) {
  * @param {Object} lostShip - 假设沉没的船
  * @returns {Object} 沉没后的能力
  */
-function simulateAbilitiesAfterLoss(ships, lostShip) {
+function simulateAbilitiesAfterLoss(ships, lostShip, abilities = null) {
     const remaining = ships.filter(s => s.id !== lostShip.id && !s.sunk);
-    return checkAIAbilities(remaining);
+    return checkAIAbilities(
+        remaining,
+        abilities?.factionId || 'us',
+        abilities?.opponentFaction || null,
+        { sunkEnemyShips: abilities?.sunkEnemyShips || 0 }
+    );
 }
 
 /**
@@ -929,7 +1144,7 @@ export function calculateRiskBonus(action, shipThreats, beliefState, abilities, 
         highThreatCount++;
         
         // 模拟该船沉没后的能力
-        const afterAbilities = simulateAbilitiesAfterLoss(myShips, ship);
+        const afterAbilities = simulateAbilitiesAfterLoss(myShips, ship, abilities);
         
         // 计算该行动在能力降级后的效用损失
         // 这里使用 evaluateAction，不传伤害记录（风险计算不需要）

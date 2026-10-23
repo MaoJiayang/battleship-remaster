@@ -57,7 +57,7 @@ export class ShipState {
         this.sunk = ship.sunk;
         this.r = ship.r ?? -1;
         this.c = ship.c ?? -1;
-        this.vertical = ship.vertical ?? false;
+        this.vertical = ship.vertical ?? ship.v ?? false;
     }
 }
 

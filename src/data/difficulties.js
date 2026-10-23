@@ -89,11 +89,11 @@ export const DIFFICULTY_SETTINGS = {
     },
     HARD: {
         // alpha: 探索权重 - 平衡探索与利用
-        alpha: 0.71,
+        alpha: 0.76,
         // randomness: 随机决策概率 - 完全理性（从不随机）
         randomness: 0.0,
         // riskAwareness: 风险意识强度 - 较强风险意识，会抢用濒危能力
-        riskAwareness: 0.3
+        riskAwareness: 0.46
     }
 };
 

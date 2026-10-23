@@ -15,10 +15,6 @@
 import { BOARD_SIZE } from '../config/constants.js';
 import { SHIP_TYPES } from '../data/ships.js';
 import { deployShips } from './aiDeployment.js';
-import { APWeapon } from '../game/weapons/APWeapon.js';
-import { HEWeapon } from '../game/weapons/HEWeapon.js';
-import { SonarWeapon } from '../game/weapons/SonarWeapon.js';
-
 // 导入共享的核心模块
 import {
     BeliefState,
@@ -30,6 +26,7 @@ import {
     findFallbackTarget,
     simulateMultiStepThreats,
     calculateRiskBonus,
+    getActionCoverage,
     DEFAULT_OPPONENT_SAMPLE_COUNT,
     DEFAULT_LOOKAHEAD_STEPS
 } from './aiCore.js';
@@ -43,16 +40,6 @@ const MAX_TURNS = 70;
 
 /** 蒙特卡洛采样数量（模拟时使用较小值以提高速度） */
 const SAMPLE_COUNT = 60;
-
-// ============================================================================
-// 武器实例（用于获取攻击范围）
-// ============================================================================
-
-const weaponInstances = {
-    AP: new APWeapon(),
-    HE: new HEWeapon(),
-    SONAR: new SonarWeapon()
-};
 
 // ============================================================================
 // 核心模拟引擎
@@ -383,12 +370,8 @@ export class SimulationEngine {
     /**
      * 获取武器覆盖范围
      */
-    _getWeaponCoverage(weapon, r, c) {
-        const instance = weaponInstances[weapon];
-        if (instance) {
-            return instance.previewArea({ r, c }).cells;
-        }
-        return [{ r, c }];
+    _getWeaponCoverage(weapon, r, c, abilities = null) {
+        return getActionCoverage(weapon, r, c, abilities);
     }
     
     /**
@@ -409,7 +392,7 @@ export class SimulationEngine {
         
         if (weapon === 'SONAR') {
             // 声纳扫描
-            const sonarResult = this._executeSonar(r, c, enemyGrid, viewGrid);
+            const sonarResult = this._executeSonar(r, c, enemyGrid, viewGrid, abilities);
             historyEntry.result.detected = sonarResult.detected;
             
             // 记录受影响的格子
@@ -428,50 +411,60 @@ export class SimulationEngine {
             }
         } else {
             // 攻击类武器
-            const cells = this._getWeaponCoverage(weapon, r, c);
-            const damage = weapon === 'AP' ? abilities.apDamage : 1;
+            const cells = this._getWeaponCoverage(weapon, r, c, abilities);
             
             for (const cell of cells) {
-                if (cell.r >= 0 && cell.r < BOARD_SIZE && cell.c >= 0 && cell.c < BOARD_SIZE) {
-                    const result = this._resolveHit(cell.r, cell.c, damage, enemyGrid, enemyShips);
-                    
-                    // 更新视图
-                    if (result.cellState) {
-                        viewGrid[cell.r][cell.c] = result.cellState;
-                    }
-                    
-                    // 记录受影响的格子
+                if (cell.r < 0 || cell.r >= BOARD_SIZE || cell.c < 0 || cell.c >= BOARD_SIZE) continue;
+                
+                const isCenter = cell.r === r && cell.c === c;
+                let damage;
+                if (weapon === 'AP') {
+                    const isSuspect = viewGrid[cell.r][cell.c] === CellState.SUSPECT;
+                    damage = isSuspect
+                        ? (abilities.apDamageVsSuspect ?? abilities.apDamage)
+                        : abilities.apDamage;
+                } else {
+                    damage = isCenter
+                        ? (abilities.heCenterDamage ?? 1)
+                        : (abilities.heOuterDamage ?? 1);
+                }
+                const penetrate = weapon === 'AP'
+                    || (weapon === 'HE' && isCenter && damage > 1);
+                const maxPenetrations = weapon === 'AP'
+                    ? (abilities.apMaxPenetrations ?? 1)
+                    : 1;
+                const result = this._resolveHit(cell.r, cell.c, damage, enemyGrid, enemyShips, penetrate, maxPenetrations);
+                
+                // 更新视图 / 伤害记录（穿甲会连带揭示相邻舱室）
+                for (const hitCell of result.cells) {
+                    viewGrid[hitCell.r][hitCell.c] = hitCell.state;
                     historyEntry.affectedCells.push({
-                        row: cell.r,
-                        col: cell.c,
-                        state: result.cellState
+                        row: hitCell.r,
+                        col: hitCell.c,
+                        state: hitCell.state
                     });
+                    damageGrid[hitCell.r][hitCell.c] += hitCell.dealt;
+                }
+                
+                if (result.hit) {
+                    historyEntry.result.hits++;
+                    historyEntry.result.damage += result.damage;
                     
-                    // 更新伤害记录
-                    damageGrid[cell.r][cell.c] += damage;
-                    
-                    // 更新统计
-                    if (result.hit) {
-                        historyEntry.result.hits++;
-                        historyEntry.result.damage += result.damage;
-                        
-                        if (side === 'A') {
-                            this.stats.hitsA++;
-                            this.stats.damageA += result.damage;
-                        } else {
-                            this.stats.hitsB++;
-                            this.stats.damageB += result.damage;
-                        }
+                    if (side === 'A') {
+                        this.stats.hitsA++;
+                        this.stats.damageA += result.damage;
+                    } else {
+                        this.stats.hitsB++;
+                        this.stats.damageB += result.damage;
                     }
-                    
-                    // 标记沉没船只
-                    if (result.sunk) {
-                        this._markSunkShip(result.ship, viewGrid);
-                        historyEntry.sunkShips.push({
-                            code: result.ship.code,
-                            name: result.ship.name
-                        });
-                    }
+                }
+                
+                if (result.sunk) {
+                    this._markSunkShip(result.ship, viewGrid);
+                    historyEntry.sunkShips.push({
+                        code: result.ship.code,
+                        name: result.ship.name
+                    });
                 }
             }
         }
@@ -483,37 +476,90 @@ export class SimulationEngine {
     /**
      * 解析命中结果
      */
-    _resolveHit(r, c, damage, grid, ships) {
+    _resolveHit(r, c, damage, grid, ships, penetrate = false, maxPenetrations = 1) {
         const cell = grid[r][c];
         
         if (cell.hit && cell.shipId === -1) {
-            return { hit: false, cellState: null, damage: 0 };
+            return { hit: false, cellState: null, damage: 0, cells: [] };
         }
         
         cell.hit = true;
         
-        if (cell.shipId !== -1) {
-            const ship = ships[cell.shipId];
-            const segIdx = cell.segmentIndex;
-            
-            if (ship.hp[segIdx] <= 0) {
-                return { hit: true, cellState: CellState.DESTROYED, damage: 0, ship };
-            }
-            
-            const actualDamage = Math.min(damage, ship.hp[segIdx]);
-            ship.hp[segIdx] -= damage;
-            
-            const cellState = ship.hp[segIdx] <= 0 ? CellState.DESTROYED : CellState.HIT;
-            const isSunk = ship.hp.every(h => h <= 0) && !ship.sunk;
-            
-            if (isSunk) {
-                ship.sunk = true;
-            }
-            
-            return { hit: true, cellState, damage: actualDamage, sunk: isSunk, ship };
-        } else {
-            return { hit: false, cellState: CellState.MISS, damage: 0 };
+        if (cell.shipId === -1) {
+            return {
+                hit: false,
+                cellState: CellState.MISS,
+                damage: 0,
+                cells: [{ r, c, state: CellState.MISS, dealt: 0 }]
+            };
         }
+        
+        const ship = ships[cell.shipId];
+        const segIdx = cell.segmentIndex;
+        
+        if (ship.hp[segIdx] <= 0) {
+            return { hit: true, cellState: CellState.DESTROYED, damage: 0, ship, cells: [] };
+        }
+        
+        // 与 HitResolver 保持一致：默认向两侧相邻舱室各传 1 舱，连续穿甲沿舰体向两端延伸
+        const limit = Math.max(1, maxPenetrations);
+        const order = [segIdx];
+        if (penetrate) {
+            if (limit > 1) {
+                for (let d = 1; d < ship.len; d++) {
+                    if (segIdx + d < ship.len) order.push(segIdx + d);
+                    if (segIdx - d >= 0) order.push(segIdx - d);
+                }
+            } else {
+                if (segIdx + 1 < ship.len) order.push(segIdx + 1);
+                if (segIdx - 1 >= 0) order.push(segIdx - 1);
+            }
+        }
+        
+        let remaining = Math.max(0, damage);
+        let actualDamage = 0;
+        let penetrated = 0;
+        const cells = [];
+        
+        for (let k = 0; k < order.length && remaining > 0; k++) {
+            if (k > 0 && penetrated >= limit) break;
+            const idx = order[k];
+            if (ship.hp[idx] <= 0) continue;
+            const applied = Math.min(ship.hp[idx], remaining);
+            ship.hp[idx] -= applied;
+            remaining -= applied;
+            actualDamage += applied;
+            
+            const target = k === 0 ? { r, c } : this._segmentCell(ship, idx);
+            if (k > 0) {
+                penetrated++;
+                grid[target.r][target.c].hit = true;
+            }
+            cells.push({
+                r: target.r,
+                c: target.c,
+                state: ship.hp[idx] <= 0 ? CellState.DESTROYED : CellState.HIT,
+                dealt: applied,
+                secondary: k > 0
+            });
+        }
+        
+        const cellState = cells[0]?.state ?? CellState.DESTROYED;
+        const isSunk = ship.hp.every(h => h <= 0) && !ship.sunk;
+        
+        if (isSunk) {
+            ship.sunk = true;
+        }
+        
+        return { hit: true, cellState, damage: actualDamage, sunk: isSunk, ship, cells };
+    }
+    
+    _segmentCell(ship, idx) {
+        const isVertical = ship.v ?? ship.vertical ?? false;
+        return {
+            r: isVertical ? ship.r + idx : ship.r,
+            c: isVertical ? ship.c : ship.c + idx
+        };
     }
     
     /**
@@ -522,61 +568,53 @@ export class SimulationEngine {
      * - 有信号：中心点揭示真实状态（HIT/MISS），周围8格标记SUSPECT
      * - 无信号：全部9格标记MISS
      */
-    _executeSonar(r, c, enemyGrid, viewGrid) {
+    _executeSonar(r, c, enemyGrid, viewGrid, abilities = null) {
+        const radius = abilities?.sonarRadius ?? 1;
+        const reveal = abilities?.sonarReveal || 'center';
+        const scanCells = [];
         let detected = false;
+        let nearest = null;
         
-        // 扫描3x3区域检测是否有未暴露的船只
-        for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) {
+        // 扫描区域检测是否有未暴露的船只
+        for (let dr = -radius; dr <= radius; dr++) {
+            for (let dc = -radius; dc <= radius; dc++) {
                 const nr = r + dr;
                 const nc = c + dc;
+                if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
+                scanCells.push({ r: nr, c: nc });
                 
-                if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                    if (enemyGrid[nr][nc].shipId !== -1 && viewGrid[nr][nc] === CellState.UNKNOWN) {
-                        detected = true;
-                        break;
+                const cell = enemyGrid[nr][nc];
+                if (cell.shipId !== -1 && !cell.hit) {
+                    detected = true;
+                    const dist2 = dr * dr + dc * dc;
+                    if (!nearest || dist2 < nearest.dist2) {
+                        nearest = { r: nr, c: nc, dist2 };
                     }
                 }
             }
-            if (detected) break;
         }
         
         if (detected) {
-            // 有信号：中心点揭示真实状态，周围8格标记疑似
-            // 中心点处理
-            if (viewGrid[r][c] === CellState.UNKNOWN) {
-                if (enemyGrid[r][c].shipId !== -1) {
-                    viewGrid[r][c] = CellState.HIT;
-                } else {
-                    viewGrid[r][c] = CellState.MISS;
-                }
+            // 有信号：揭示中心点，RN 标定最近接触；其余未知格标记疑似
+            const revealCell = reveal === 'nearest' && nearest ? nearest : { r, c };
+            const targetCell = enemyGrid[revealCell.r][revealCell.c];
+            if (viewGrid[revealCell.r][revealCell.c] === CellState.UNKNOWN) {
+                targetCell.hit = true;
+                viewGrid[revealCell.r][revealCell.c] =
+                    targetCell.shipId !== -1 ? CellState.HIT : CellState.MISS;
             }
             
-            // 周围8格标记疑似
-            for (let dr = -1; dr <= 1; dr++) {
-                for (let dc = -1; dc <= 1; dc++) {
-                    if (dr === 0 && dc === 0) continue; // 跳过中心点
-                    
-                    const nr = r + dr;
-                    const nc = c + dc;
-                    if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                        if (viewGrid[nr][nc] === CellState.UNKNOWN) {
-                            viewGrid[nr][nc] = CellState.SUSPECT;
-                        }
-                    }
+            for (const { r: nr, c: nc } of scanCells) {
+                if (nr === revealCell.r && nc === revealCell.c) continue;
+                if (viewGrid[nr][nc] === CellState.UNKNOWN) {
+                    viewGrid[nr][nc] = CellState.SUSPECT;
                 }
             }
         } else {
-            // 无信号：全部标记为MISS
-            for (let dr = -1; dr <= 1; dr++) {
-                for (let dc = -1; dc <= 1; dc++) {
-                    const nr = r + dr;
-                    const nc = c + dc;
-                    if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                        if (viewGrid[nr][nc] === CellState.UNKNOWN) {
-                            viewGrid[nr][nc] = CellState.MISS;
-                        }
-                    }
+            for (const { r: nr, c: nc } of scanCells) {
+                if (viewGrid[nr][nc] === CellState.UNKNOWN) {
+                    enemyGrid[nr][nc].hit = true;
+                    viewGrid[nr][nc] = CellState.MISS;
                 }
             }
         }

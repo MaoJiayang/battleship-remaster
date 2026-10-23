@@ -39,11 +39,12 @@ export class WeaponService {
     /**
      * 获取预览范围
      * @param {Object} target - { r, c }
+     * @param {Object} [context] - 攻击方上下文（用于读取阵营学说）
      * @returns {Object} { cells: [{r, c}] }
      */
-    getPreviewArea(target) {
+    getPreviewArea(target, context = null) {
         const weapon = this.getCurrentWeapon();
-        return weapon ? weapon.previewArea(target) : { cells: [] };
+        return weapon ? weapon.previewArea(target, context) : { cells: [] };
     }
     
     /**

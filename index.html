@@ -9,11 +9,11 @@
   <header>
     <div class="hdr-side hdr-left">
       <span class="stamp">RESTRICTED</span>
-      <span class="hdr-meta">ATLANTIC · 1943</span>
+      <span class="hdr-meta">ATLANTIC 1943</span>
     </div>
     <div class="hdr-title">
       <h1>指挥官：决战大洋</h1>
-      <span class="hdr-sub">NAVAL COMMAND · SURFACE ACTION</span>
+      <span class="hdr-sub">NAVAL COMMAND / SURFACE ACTION</span>
     </div>
     <div class="hdr-side hdr-right">
       <button id="btn-sound" class="icon-btn sound-btn" data-state="on" aria-label="音效开关" title="音效开关 (M)">
@@ -34,10 +34,11 @@
       </div>
       <span class="close-btn" data-action="toggle-help">&times;</span>
       <h2 class="doc-title">作战手册</h2>
-      <p class="doc-sub">RULES OF ENGAGEMENT · 1943</p>
+      <p class="doc-sub">RULES OF ENGAGEMENT 1943</p>
 
       <h3>01 / 胜利条件</h3>
       <p>率先击沉敌方全部 5 艘舰船的一方获胜。</p>
+      <p><b>追击阶段</b>：一方仅剩最后 1 艘舰船时，对方在下个己方回合获得一次接触标定，在最后 1 艘敌舰所在海域标出一片 3×3 疑似接触区；此后每隔 3 个己方回合刷新标定。双方规则相同。</p>
 
       <h3>02 / 舰船属性</h3>
       <table class="rules-table rules-ship-table">
@@ -50,12 +51,20 @@
       <h3>03 / 武器系统</h3>
       <table class="rules-table rules-weapon-table">
         <tr><th>武器</th><th>范围</th><th>伤害</th><th>说明</th></tr>
-        <tr><td><b>主炮</b></td><td>单点</td><td>1~3</td><td>基础攻击。伤害取决于存活舰船（BB=3，CL/SS=2，其他=1）。</td></tr>
-        <tr><td><b>空袭</b></td><td>X 型 · 5 格</td><td>1</td><td>需航母（CV）存活。对中心及四角造成伤害。</td></tr>
-        <tr><td><b>水听</b></td><td>3×3 区域</td><td>0</td><td>需驱逐（DD）或潜艇（SS）存活。探测区域内是否有船，若有则显示中心真实状态并标记周围为疑似。</td></tr>
+        <tr><td><b>主炮</b></td><td>单点</td><td>1~5</td><td>基础攻击。伤害取决于存活舰船（BB=3，CL/SS=2，其他=1），受阵营学说修正。穿甲：溢出伤害仅传导至同一舰体的相邻舱室，默认最多再穿 1 舱。</td></tr>
+        <tr><td><b>空袭</b></td><td>X 型 / 十字，5 格</td><td>1~3</td><td>通常需航母（CV）存活。中心直击伤害 ≥2 时会传导至相邻舱室，并揭示受创舱室。</td></tr>
+        <tr><td><b>水听</b></td><td>3×3</td><td>0</td><td>需驱逐（DD）或潜艇（SS）存活。探测区域内是否有船，若有则显示接触格并标记周围为疑似；无信号则清空整片海域。</td></tr>
       </table>
 
-      <h3>04 / 状态标识</h3>
+      <h3>04 / 阵营学说</h3>
+      <table class="rules-table rules-doctrine-table">
+        <thead>
+          <tr><th>阵营</th><th>学说</th><th>机制</th><th>AI 倾向</th></tr>
+        </thead>
+        <tbody id="rules-doctrine-table-body"></tbody>
+      </table>
+
+      <h3>05 / 状态标识</h3>
       <ul class="legend">
         <li><span class="lg lg-sea"></span><b>空白</b>：未知海域。</li>
         <li><span class="lg lg-miss"></span><b>水花</b>：未命中。</li>
@@ -64,13 +73,13 @@
         <li><span class="lg lg-dead"></span><b>击沉</b>：该格血量归零。</li>
       </ul>
 
-      <h3>05 / 指挥提示</h3>
+      <h3>06 / 指挥提示</h3>
       <ul class="hints">
         <li>桌面快捷键：<kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 切换武器，<kbd>R</kbd> 切换部署方向，<kbd>H</kbd> 帮助，<kbd>M</kbd> 音效。</li>
         <li>移动端长按格位可预览攻击范围。</li>
         <li>连续命中会记录连击，命中率计入战后战报。</li>
       </ul>
-      <div class="doc-foot">DESTROY AFTER READING · 阅后销毁</div>
+      <div class="doc-foot">DESTROY AFTER READING（阅后销毁）</div>
     </div>
   </div>
 
@@ -87,7 +96,7 @@
         <button class="btn-steel" data-action="view-battlefield">查看战场</button>
         <button class="btn-brass" data-action="restart-game">重新开始</button>
       </div>
-      <div class="doc-foot">HQ · NAVAL OPERATIONS · 1943</div>
+      <div class="doc-foot">HQ NAVAL OPERATIONS 1943</div>
     </div>
   </div>
 
@@ -147,17 +156,17 @@
           <button class="weapon-btn active" id="btn-ap" data-weapon="AP">
             <span class="wp-top"><span class="wp-code">AP</span><span class="wp-lamp"></span></span>
             <span class="wp-name">主炮</span>
-            <span class="wp-meta" id="ap-desc">单点 · 3 伤</span>
+            <span class="wp-meta" id="ap-desc">单点 3 伤</span>
           </button>
           <button class="weapon-btn" id="btn-he" data-weapon="HE">
             <span class="wp-top"><span class="wp-code">AIR</span><span class="wp-lamp"></span></span>
             <span class="wp-name">空袭</span>
-            <span class="wp-meta">范围 · 1 伤</span>
+            <span class="wp-meta" id="he-desc">范围 1 伤</span>
           </button>
           <button class="weapon-btn" id="btn-sonar" data-weapon="SONAR">
             <span class="wp-top"><span class="wp-code">SNR</span><span class="wp-lamp"></span></span>
             <span class="wp-name">水听</span>
-            <span class="wp-meta">侦查 · 3×3</span>
+            <span class="wp-meta" id="sonar-desc">侦查 3×3</span>
           </button>
         </div>
 
@@ -182,11 +191,13 @@
           </div>
         </div>
 
+        <div id="doctrine-readout" class="doctrine-readout" aria-live="polite"></div>
+
         <div class="diff-label">AI 难度 <span>THREAT</span></div>
         <div class="difficulty-bar" id="diff-bar">
           <button class="diff-btn" data-difficulty="EASY">新兵 (简单)</button>
-          <button class="diff-btn" data-difficulty="NORMAL">舰长 (困难)</button>
-          <button class="diff-btn active" data-difficulty="HARD">提督 (冷酷)</button>
+          <button class="diff-btn" data-difficulty="NORMAL">舰长 (中等)</button>
+          <button class="diff-btn" data-difficulty="HARD">提督 (困难)</button>
         </div>
 
         <div class="btn-row">
@@ -209,7 +220,7 @@
             <div id="player-grid" class="grid"></div>
           </div>
           <div class="board-box" id="enemy-board-box">
-            <div class="board-title enemy">敌方海域 <span>ATTACK</span></div>
+            <div class="board-title enemy">敌方海域 <span>ATTACK</span><span class="fleet-count" id="enemy-remaining">存活 5</span></div>
             <div id="enemy-grid" class="grid"></div>
           </div>
         </div>

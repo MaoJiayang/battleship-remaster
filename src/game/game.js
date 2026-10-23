@@ -2,6 +2,7 @@ import { BOARD_SIZE, CELL_SIZE as DEFAULT_CELL_SIZE, INTERACTION_TIMING } from "
 import { SHIP_TYPES } from "../data/ships";
 import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
 import { makeAIDecision, calculateProbabilityGrid, resetAIState } from '../ai/aiStrategy.js';
+import AiDecisionWorker from '../ai/aiWorker.js?worker&inline';
 import { deployShips as aiDeployShips } from '../ai/aiDeployment.js';
 
 // 武器系统导入
@@ -11,25 +12,29 @@ import { BattleRenderer } from './battle/BattleRenderer.js';
 import { APWeapon } from './weapons/APWeapon.js';
 import { HEWeapon } from './weapons/HEWeapon.js';
 import { SonarWeapon } from './weapons/SonarWeapon.js';
-import { ShipState, isInBounds } from './weapons/WeaponTypes.js';
+import { ShipState, isInBounds, EventType } from './weapons/WeaponTypes.js';
 import { sfx } from '../audio/sfx.js';
-import { FACTIONS } from '../data/factions.js';
-import { getShipSvg } from './shipArt.js';
+import { FACTIONS, RANDOM_FACTION, pickRandomEnemyFaction } from '../data/factions.js';
+import { getShipSvg, getPlaneSquadronDataUrl } from './shipArt.js';
+import {
+    DOCTRINES,
+    getDoctrine,
+    getAPDamage as getFactionAPDamage,
+    getAPMaxPenetrations,
+    getHEProfile,
+    getSonarProfile
+} from '../data/doctrines.js';
+import { VIEW_STATE } from './battle/ViewState.js';
 
     // === 动态尺寸获取 ===
     function getCellSize() {
+        // offsetWidth 不受视图切换动画的 transform 影响，避免特效/船只错位
         const cell = document.querySelector('.cell');
-        let size = cell ? cell.getBoundingClientRect().width : 0;
-        
-        // 如果获取失败 (例如元素隐藏)，尝试根据 CSS 逻辑估算
-        if (!size || size === 0) {
-            if (window.innerWidth <= 768) {
-                // 对应 CSS: clamp(26px, 8.5vw, 34px)
-                const vw = window.innerWidth * 0.085;
-                size = Math.max(26, Math.min(vw, 34));
-            } else {
-                size = DEFAULT_CELL_SIZE;
-            }
+        let size = cell ? cell.offsetWidth : 0;
+
+        if (!size) {
+            const cssSize = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size'));
+            size = cssSize || DEFAULT_CELL_SIZE;
         }
         return size;
     }
@@ -66,23 +71,45 @@ import { getShipSvg } from './shipArt.js';
     let showAiDebug = false;
     let currentWinner = null;
     let aiTurnTimeout = null;
+    let aiTurnToken = 0;              // 作废在途 AI 决策（重开/重开局面）
+    let aiWorker = null;
+    let aiDecisionSeq = 0;
+    const pendingAiDecisions = new Map();
 
     // 战斗统计与连击
     let battleStats = null;
     let playerStreak = 0;
 
-    // 阵营选择
+    // 追击阶段：一方仅剩最后 1 艘舰艇时，对方在下个己方回合获得接触区，之后每 3 回合刷新
+    const ENDGAME_PING_INTERVAL = 3;
+    const ENDGAME_FIRST_DELAY = 2;
+    const RECON_RADIUS = 1;
+    const endgameHunt = {
+        player: { turns: 0, first: true },
+        ai: { turns: 0, first: true }
+    };
+    const aiReconCells = new Set();
+
+    // 阵营选择（敌方可选“随机”：按集团对立逻辑每局重新抽取）
     let playerFaction = localStorage.getItem('playerFaction') || 'us';
-    let enemyFaction = localStorage.getItem('enemyFaction') || 'ijn';
+    let enemyFactionRandom = localStorage.getItem('enemyFactionRandom') === '1';
+    let enemyFaction = enemyFactionRandom
+        ? pickRandomEnemyFaction(playerFaction)
+        : (localStorage.getItem('enemyFaction') || 'ijn');
 
     function resetBattleStats() {
         battleStats = {
             turns: 0,
             maxStreak: 0,
-            player: { shots: 0, hits: 0 },
-            ai: { shots: 0, hits: 0 }
+            player: { shots: 0, hits: 0, damage: 0 },
+            ai: { shots: 0, hits: 0, damage: 0 }
         };
         playerStreak = 0;
+        endgameHunt.player.turns = 0;
+        endgameHunt.player.first = true;
+        endgameHunt.ai.turns = 0;
+        endgameHunt.ai.first = true;
+        aiReconCells.clear();
     }
 
     /**
@@ -92,6 +119,7 @@ import { getShipSvg } from './shipArt.js';
         let shots = 0, hits = 0;
         for (const ev of events || []) {
             if (ev.type === 'CELL_UPDATE') {
+                if (ev.payload.secondary) continue;
                 const s = ev.payload.state;
                 if (s === 'HIT' || s === 'DESTROYED' || s === 'MISS') {
                     shots++;
@@ -105,16 +133,24 @@ import { getShipSvg } from './shipArt.js';
     /**
      * 记录战斗统计并处理玩家连击
      */
-    function recordStats(events, isPlayer) {
+    function recordStats(events, isPlayer, weapon = 'AP') {
         if (!battleStats) return;
-        const { shots, hits } = countShots(events);
+        // 水听只产生侦查标记，不计入射数/命中率
+        const { shots, hits } = weapon === 'SONAR' ? { shots: 0, hits: 0 } : countShots(events);
         const side = isPlayer ? 'player' : 'ai';
         battleStats[side].shots += shots;
         battleStats[side].hits += hits;
+        for (const ev of events || []) {
+            if (ev.type === 'EFFECT' && ev.payload?.kind === 'DAMAGE') {
+                battleStats[side].damage += ev.payload.amount || 0;
+            }
+        }
 
         if (isPlayer) {
             battleStats.turns++;
-            if (hits > 0) {
+            if (weapon === 'SONAR') {
+                playerStreak = 0;
+            } else if (hits > 0) {
                 playerStreak++;
                 battleStats.maxStreak = Math.max(battleStats.maxStreak, playerStreak);
                 if (playerStreak >= 2) {
@@ -143,7 +179,7 @@ import { getShipSvg } from './shipArt.js';
         if (!el) return;
         if (!state) { el.className = 'turn-indicator'; el.textContent = ''; return; }
         el.className = `turn-indicator visible t-${state}`;
-        el.textContent = state === 'player' ? '我方回合 · ALLIED TURN' : (state === 'ai' ? '敌方回合 · ENEMY TURN' : '战斗结束 · ACTION COMPLETE');
+        el.textContent = state === 'player' ? '我方回合' : (state === 'ai' ? '敌方回合' : '战斗结束');
         void el.offsetWidth; // 重新触发 pop 动画
         el.classList.add('pop');
     }
@@ -196,6 +232,8 @@ import { getShipSvg } from './shipArt.js';
         });
 
         initHelpShips();
+        initHelpDoctrines();
+        updateDoctrineReadout();
         setDifficulty(currentDifficulty, { silent: true });
         
         // 初始化默认视图
@@ -209,6 +247,7 @@ import { getShipSvg } from './shipArt.js';
         // 创建渲染器
         battleRenderer = new BattleRenderer({
             logFn: log,
+            planeImgFn: (grid) => getPlaneSquadronDataUrl(grid === 'PLAYER' ? enemyFaction : playerFaction),
             onShipSunk: (shipId, grid) => {
                 if (grid === 'ENEMY') {
                     const ship = enemyShips.find(s => s.id === shipId);
@@ -236,7 +275,10 @@ import { getShipSvg } from './shipArt.js';
             attackerShips: myShips.map(s => new ShipState(s)),
             defenderGrid: enemyGridMap,
             defenderShips: enemyShips,
-            isPlayer: true
+            isPlayer: true,
+            attackerFaction: playerFaction,
+            defenderFaction: enemyFaction,
+            attackerViewGrid: getPlayerViewGrid()
         };
     }
 
@@ -248,7 +290,10 @@ import { getShipSvg } from './shipArt.js';
             attackerShips: enemyShips.map(s => new ShipState(s)),
             defenderGrid: buildPlayerGridForAI(),
             defenderShips: myShips,
-            isPlayer: false
+            isPlayer: false,
+            attackerFaction: enemyFaction,
+            defenderFaction: playerFaction,
+            attackerViewGrid: getAiViewGrid()
         };
     }
 
@@ -307,19 +352,18 @@ import { getShipSvg } from './shipArt.js';
      */
     function updateGridSize() {
         const root = document.documentElement;
-        const mobileBreakpoint = INTERACTION_TIMING.MOBILE_BREAKPOINT;
-        
-        // 计算可用宽度（考虑边框和内边距）
+        const viewportW = root.clientWidth || window.innerWidth;
+        const isMobile = viewportW <= INTERACTION_TIMING.MOBILE_BREAKPOINT;
         const gridBorder = 8; // 4px * 2
-        const maxGridWidth =( mobileBreakpoint - gridBorder) * 0.5; // 留出一些余量
-        
-        // 计算每个格子的最大尺寸（向下取整以确保均匀）
-        const maxCellSize = Math.floor(maxGridWidth / BOARD_SIZE); // 留出一些余量
-        
-        // 使用默认尺寸和最大尺寸中的较小值
-        const cellSize = Math.min(DEFAULT_CELL_SIZE, maxCellSize);
-        
-        // 设置 CSS 变量
+        let cellSize = DEFAULT_CELL_SIZE;
+
+        if (isMobile) {
+            // 移动端：左侧留给行号，右侧留少量呼吸空间
+            const horizPadding = 28;
+            const available = viewportW - horizPadding - gridBorder;
+            cellSize = Math.max(20, Math.min(DEFAULT_CELL_SIZE, Math.floor(available / BOARD_SIZE)));
+        }
+
         root.style.setProperty('--board-size', BOARD_SIZE);
         root.style.setProperty('--cell-size', `${cellSize}px`);
     }
@@ -429,27 +473,45 @@ import { getShipSvg } from './shipArt.js';
             const options = Object.entries(FACTIONS)
                 .map(([id, f]) => `<option value="${id}">${f.name}</option>`).join('');
             fpSelect.innerHTML = options;
-            feSelect.innerHTML = options;
+            feSelect.innerHTML = `<option value="${RANDOM_FACTION}">随机</option>` + options;
             fpSelect.value = playerFaction;
-            feSelect.value = enemyFaction;
+            feSelect.value = enemyFactionRandom ? RANDOM_FACTION : enemyFaction;
 
             fpSelect.addEventListener('change', () => {
                 playerFaction = fpSelect.value;
                 localStorage.setItem('playerFaction', playerFaction);
                 sfx.play('click');
+                if (enemyFactionRandom) enemyFaction = pickRandomEnemyFaction(playerFaction);
+                updateDoctrineReadout();
+                initHelpShips();
+                updateWeaponStates();
                 if (gameState === 'SETUP') {
                     myGridMap = createEmptyGrid();
                     initShips();
                     checkReady();
-                    log(`我方阵营更换为「${FACTIONS[playerFaction].name}」，请重新部署。`, "c-sys");
+                    log(`我方阵营更换为「${FACTIONS[playerFaction].name}」，${getDoctrine(playerFaction).name}，请重新部署。`, "c-sys");
+                }
+                if (enemyFactionRandom) {
+                    log('敌方随机阵营已按新的集团归属重新抽取，开战前不揭晓。', "c-sys");
                 }
             });
 
             feSelect.addEventListener('change', () => {
+                sfx.play('click');
+                if (feSelect.value === RANDOM_FACTION) {
+                    enemyFactionRandom = true;
+                    localStorage.setItem('enemyFactionRandom', '1');
+                    enemyFaction = pickRandomEnemyFaction(playerFaction);
+                    updateDoctrineReadout();
+                    log('敌方阵营设为随机：每局开战前从对立集团抽取，开战即揭晓。', "c-sys");
+                    return;
+                }
+                enemyFactionRandom = false;
+                localStorage.setItem('enemyFactionRandom', '0');
                 enemyFaction = feSelect.value;
                 localStorage.setItem('enemyFaction', enemyFaction);
-                sfx.play('click');
-                log(`敌方阵营更换为「${FACTIONS[enemyFaction].name}」。`, "c-sys");
+                updateDoctrineReadout();
+                log(`敌方阵营更换为「${FACTIONS[enemyFaction].name}」，${getDoctrine(enemyFaction).name}。`, "c-sys");
             });
         }
 
@@ -596,6 +658,16 @@ import { getShipSvg } from './shipArt.js';
         // 仅在移动端生效 (通过检测按钮是否可见，或者直接操作类名，PC端CSS会忽略这些类名)
         const pBox = document.getElementById('player-board-box');
         const eBox = document.getElementById('enemy-board-box');
+        const target = viewName === 'player' ? pBox : eBox;
+        const other = viewName === 'player' ? eBox : pBox;
+
+        // 目标视图已激活时直接返回，避免重复触发入场动画造成闪烁
+        if (other.classList.contains('active-view')) {
+            other.classList.remove('active-view');
+        } else if (target.classList.contains('active-view')) {
+            return;
+        }
+        target.classList.add('active-view');
         
         // Old tabs
         const tabP = document.getElementById('tab-view-player');
@@ -605,23 +677,10 @@ import { getShipSvg } from './shipArt.js';
         const mbTabP = document.getElementById('mb-tab-player');
         const mbTabE = document.getElementById('mb-tab-enemy');
 
-        // 移除所有激活状态
-        pBox.classList.remove('active-view');
-        eBox.classList.remove('active-view');
-        if(tabP) tabP.classList.remove('active');
-        if(tabE) tabE.classList.remove('active');
-        if(mbTabP) mbTabP.classList.remove('active');
-        if(mbTabE) mbTabE.classList.remove('active');
-
-        if (viewName === 'player') {
-            pBox.classList.add('active-view');
-            if(tabP) tabP.classList.add('active');
-            if(mbTabP) mbTabP.classList.add('active');
-        } else {
-            eBox.classList.add('active-view');
-            if(tabE) tabE.classList.add('active');
-            if(mbTabE) mbTabE.classList.add('active');
-        }
+        if(tabP) tabP.classList.toggle('active', viewName === 'player');
+        if(tabE) tabE.classList.toggle('active', viewName === 'enemy');
+        if(mbTabP) mbTabP.classList.toggle('active', viewName === 'player');
+        if(mbTabE) mbTabE.classList.toggle('active', viewName === 'enemy');
     }
 
     // === 攻击范围高亮逻辑 ===
@@ -631,10 +690,10 @@ import { getShipSvg } from './shipArt.js';
 
         clearAttackHighlights();
 
-        // 使用武器系统获取预览范围
+        // 使用武器系统获取预览范围（需带阵营上下文，学说会改变形状/半径）
         if (weaponService) {
             weaponService.setCurrentWeapon(currentWeapon);
-            const preview = weaponService.getPreviewArea({ r, c });
+            const preview = weaponService.getPreviewArea({ r, c }, buildPlayerWeaponContext());
             
             const eGrid = document.getElementById('enemy-grid');
             preview.cells.forEach(pos => {
@@ -1279,6 +1338,11 @@ import { getShipSvg } from './shipArt.js';
         btn.className = "btn-restart";
 
         resetAIState(); // 重置 AI 内部状态（伤害记录等）
+        resetAiWorker();
+        if (enemyFactionRandom) {
+            enemyFaction = pickRandomEnemyFaction(playerFaction);
+            updateDoctrineReadout();
+        }
         initEnemy();
         resetBattleStats();
         updateStatus();
@@ -1287,6 +1351,7 @@ import { getShipSvg } from './shipArt.js';
         sfx.play('click');
         setTurnIndicator(firstTurn === 'PLAYER' ? 'player' : 'ai');
         log(`「${FACTIONS[playerFaction].name}」对阵「${FACTIONS[enemyFaction].name}」！`, 'c-sys');
+        log(`我方学说：${getDoctrine(playerFaction).name}；敌方学说：${getDoctrine(enemyFaction).name}`, 'c-sys');
 
         if (firstTurn === 'PLAYER') {
             log("战斗开始！玩家先手，点击敌方海域开火。", "c-warn");
@@ -1339,8 +1404,9 @@ import { getShipSvg } from './shipArt.js';
                 maxHp,
                 code,
                 hp: Array(len).fill(maxHp),
-                sunk: false, 
-                r, c, v 
+                sunk: false,
+                r, c, v,
+                vertical: v
             });
         });
     }
@@ -1362,12 +1428,12 @@ import { getShipSvg } from './shipArt.js';
     }
 
     function updateWeaponStates() {
-        const cvAlive = myShips.some(s => s.code === 'CV' && !s.sunk);
-        const clAlive = myShips.some(s => s.code === 'CL' && !s.sunk);
         const ddAlive = myShips.some(s => s.code === 'DD' && !s.sunk);
         const ssAlive = myShips.some(s => s.code === 'SS' && !s.sunk);
+        const heProfile = getHEProfile(playerFaction, myShips);
+        const sonarProfile = getSonarProfile(playerFaction);
         
-        const enableHE = cvAlive; // 仅航母可用空袭
+        const enableHE = heProfile.available;
         const enableSonar = ddAlive || ssAlive;
         
         document.getElementById('btn-he').disabled = !enableHE;
@@ -1376,19 +1442,54 @@ import { getShipSvg } from './shipArt.js';
         if (currentWeapon === 'HE' && !enableHE) selectWeapon('AP');
         if (currentWeapon === 'SONAR' && !enableSonar) selectWeapon('AP');
 
-        // 更新主炮伤害显示
+        // 更新武器栏数值（学说会改变伤害/范围/航母依赖）
         const dmg = getAPDamage();
+        const doctrine = getDoctrine(playerFaction);
+        const maxPenetrations = getAPMaxPenetrations(playerFaction, myShips);
         const descEl = document.getElementById('ap-desc');
-        if (descEl) descEl.innerText = `单点 · ${dmg} 伤`;
+        if (descEl) {
+            const notes = [];
+            if (doctrine.ap?.suspectBonus) notes.push('疑似+1');
+            if (doctrine.ap?.sunkBonus) notes.push('击沉+1');
+            if (doctrine.ap?.quadTurrets) {
+                notes.push(myShips.some(s => s.code === 'BB' && !s.sunk) ? '四联' : '核心损失');
+            }
+            if (maxPenetrations > 1) notes.push(`连穿${maxPenetrations}舱`);
+            if (doctrine.ap?.damagePenalty) notes.push('主炮-1');
+            if (doctrine.ap?.cvBonus) {
+                notes.push(myShips.some(s => s.code === 'CV' && !s.sunk)
+                    ? `CV+${doctrine.ap.cvBonus}`
+                    : '无CV');
+            }
+            const note = notes.length ? `，${notes.join(' / ')}` : '';
+            descEl.innerText = maxPenetrations > 1 ? `${dmg}伤 连穿` : `${dmg}伤 穿甲`;
+            const apFull = `单点 ${dmg} 伤，穿甲${note}`;
+            descEl.title = apFull;
+            const apBtn = document.getElementById('btn-ap');
+            if (apBtn) apBtn.title = apFull;
+        }
+        const heEl = document.getElementById('he-desc');
+        if (heEl) {
+            heEl.innerText = heProfile.compact;
+            heEl.title = heProfile.meta;
+            const heBtn = document.getElementById('btn-he');
+            if (heBtn) heBtn.title = enableHE ? heProfile.meta : '需要航母存活才能发动空袭';
+        }
+        const sonarEl = document.getElementById('sonar-desc');
+        if (sonarEl) {
+            const mode = sonarProfile.reveal === 'nearest' ? '，接触标定' : '';
+            sonarEl.innerText = `侦查 ${sonarProfile.label}${mode}`;
+            const sonarBtn = document.getElementById('btn-sonar');
+            if (sonarBtn) {
+                sonarBtn.title = enableSonar
+                    ? `水听 ${sonarProfile.label}${mode}`
+                    : '需要驱逐舰或潜艇存活才能使用水听';
+            }
+        }
     }
 
     function getAPDamage() {
-        const bbAlive = myShips.some(s => s.code === 'BB' && !s.sunk);
-        const ssAlive = myShips.some(s => s.code === 'SS' && !s.sunk);
-        const clAlive = myShips.some(s => s.code === 'CL' && !s.sunk);
-        if (bbAlive) return 3;
-        if (ssAlive || clAlive) return 2; // SS/CL 提供 2 点伤害
-        return 1;
+        return getFactionAPDamage(playerFaction, myShips);
     }
 
     function updateStatus() {
@@ -1421,6 +1522,13 @@ import { getShipSvg } from './shipArt.js';
             list.appendChild(row);
         });
         
+        const enemyAlive = enemyShips.filter(s => !s.sunk).length;
+        const remainEl = document.getElementById('enemy-remaining');
+        if (remainEl) {
+            remainEl.innerText = `存活 ${enemyAlive}`;
+            remainEl.classList.toggle('last', enemyAlive === 1);
+        }
+        
         updateWeaponStates();
     }
 
@@ -1434,9 +1542,32 @@ import { getShipSvg } from './shipArt.js';
             const context = buildPlayerWeaponContext();
             const result = weaponService.executePlayerAction({ r, c }, context);
             
-            if (!result.success) return;
+            if (!result.success) {
+                // 已处理格（沉船/已确认空海域）不能重复打击：原地抖动 + 说明，不消耗回合
+                const cell = document.querySelector(`#enemy-grid .cell[data-r="${r}"][data-c="${c}"]`);
+                if (cell) {
+                    cell.classList.remove('shake');
+                    void cell.offsetWidth;
+                    cell.classList.add('shake');
+                    setTimeout(() => cell.classList.remove('shake'), 500);
+                    if (battleRenderer) {
+                        battleRenderer.spawnFloat(
+                            'ENEMY', r, c,
+                            cell.classList.contains('destroyed') ? '已毁' : '×',
+                            'fx-float'
+                        );
+                    }
+                }
+                const reason = result.reason === '目标无效'
+                    ? (cell && cell.classList.contains('destroyed')
+                        ? '该舱室已被摧毁，无法重复打击。'
+                        : '该海域已确认无目标，换一格试试。')
+                    : result.reason;
+                log(reason, 'c-sys');
+                return;
+            }
 
-            recordStats(result.events, true);
+            recordStats(result.events, true, currentWeapon);
 
             // 检查胜负（仅对攻击类武器，声纳不会击沉船只）
             if (currentWeapon !== 'SONAR' && result.shipsSunk && result.shipsSunk.length > 0) {
@@ -1445,6 +1576,7 @@ import { getShipSvg } from './shipArt.js';
         }
 
         updateStatus();
+        tickEndgameHunt('player');
         document.getElementById('enemy-grid').style.pointerEvents = 'none';
         if (gameState === 'PLAYING') {
             setTurnIndicator('ai');
@@ -1455,7 +1587,9 @@ import { getShipSvg } from './shipArt.js';
                     if(gameState === 'PLAYING') switchMobileView('player');
                 }, timing.VIEW_SWITCH_DELAY);
             }
-            scheduleAiTurn(timing.AI_ACTION_DELAY); 
+            // 空袭编队/声呐圈还在播时不要让 AI 抢主线程，否则动画会卡在计算上
+            const fxDelay = currentWeapon === 'HE' ? 1450 : (currentWeapon === 'SONAR' ? 1000 : 0);
+            scheduleAiTurn(Math.max(timing.AI_ACTION_DELAY, fxDelay));
         }
     }
 
@@ -1467,7 +1601,7 @@ import { getShipSvg } from './shipArt.js';
     function setDifficulty(level, options = {}) {
         const { silent = false } = options;
         currentDifficulty = level;
-        AI_PROB_CONFIG = { ...DIFFICULTY_SETTINGS[level] };
+        AI_PROB_CONFIG = { ...DIFFICULTY_SETTINGS[level], level };
         
         // 更新所有难度按钮状态 (包括桌面端和移动端设置菜单)
         document.querySelectorAll('.diff-btn').forEach(btn => {
@@ -1479,22 +1613,101 @@ import { getShipSvg } from './shipArt.js';
         });
 
         if (!silent) {
-            log(`AI 难度已调整为: ${level === 'EASY' ? '新兵 (简单)' : (level === 'NORMAL' ? '舰长 (困难)' : '提督 (冷酷)')}`, "c-sys");
+            const label = level === 'EASY' ? '新兵 (简单)' : (level === 'NORMAL' ? '舰长 (中等)' : '提督 (困难)');
+            log(`AI 难度已调整为: ${label}`, "c-sys");
         }
     }
 
     function clearAiTurnTimeout() {
+        aiTurnToken++;
         if (aiTurnTimeout !== null) {
             clearTimeout(aiTurnTimeout);
             aiTurnTimeout = null;
         }
     }
 
+    function getAiWorker() {
+        if (aiWorker) return aiWorker;
+        try {
+            aiWorker = new AiDecisionWorker();
+            aiWorker.onmessage = (event) => {
+                const { id, decision } = event.data || {};
+                const resolve = pendingAiDecisions.get(id);
+                if (resolve) {
+                    pendingAiDecisions.delete(id);
+                    resolve(decision);
+                }
+            };
+            aiWorker.onerror = () => {
+                aiWorker = null;
+                for (const resolve of pendingAiDecisions.values()) resolve(null);
+                pendingAiDecisions.clear();
+            };
+        } catch (err) {
+            aiWorker = null;
+        }
+        return aiWorker;
+    }
+
+    function requestAiDecision(context) {
+        const worker = getAiWorker();
+        if (!worker) return Promise.resolve(null);
+        const id = ++aiDecisionSeq;
+        return new Promise(resolve => {
+            pendingAiDecisions.set(id, resolve);
+            worker.postMessage({ type: 'decide', id, context });
+        });
+    }
+
+    function resetAiWorker() {
+        if (aiWorker) aiWorker.postMessage({ type: 'reset' });
+    }
+
+    /** 决策上下文：只含可结构化克隆的公开信息，AI 目标船不携带坐标 */
+    function buildAiDecisionContext() {
+        const viewGrid = getAiViewGrid();
+        const playerViewGrid = getPlayerViewGrid();
+        const aiTargets = myShips.map(s => ({
+            id: s.id,
+            code: s.code,
+            len: s.len,
+            maxHp: s.maxHp,
+            sunk: s.sunk
+        }));
+        const aiOwnShips = enemyShips.map(s => ({
+            id: s.id,
+            code: s.code,
+            len: s.len,
+            maxHp: s.maxHp,
+            hp: [...s.hp],
+            sunk: s.sunk,
+            r: s.r,
+            c: s.c,
+            vertical: s.v ?? s.vertical ?? false
+        }));
+        return {
+            viewGrid,
+            myShips: aiTargets,
+            enemyShips: aiOwnShips,
+            difficultyConfig: AI_PROB_CONFIG,
+            playerViewGrid,
+            aiFaction: enemyFaction,
+            playerFaction
+        };
+    }
+
     function scheduleAiTurn(delay) {
         clearAiTurnTimeout();
-        aiTurnTimeout = setTimeout(() => {
+        const token = ++aiTurnToken;
+        const context = buildAiDecisionContext();
+        // 立刻在 Worker 里算，等动画时间到了再落子；主线程全程只播特效
+        const decisionPromise = requestAiDecision(context);
+        aiTurnTimeout = setTimeout(async () => {
             aiTurnTimeout = null;
-            aiTurn();
+            let decision = await decisionPromise;
+            if (token !== aiTurnToken || gameState !== 'PLAYING') return;
+            if (!decision) decision = makeAIDecision(context);
+            aiTurn(decision);
         }, delay);
     }
     
@@ -1505,34 +1718,20 @@ import { getShipSvg } from './shipArt.js';
         });
     }
 
-    function aiTurn() {
+    function aiTurn(decision) {
         if (gameState !== 'PLAYING') return;
         
         // 清除上一次的攻击标记
         clearLastEnemyAttacks();
 
-        // 1. 准备决策上下文
-        const viewGrid = getAiViewGrid();
-        const playerViewGrid = getPlayerViewGrid();  // 用于对称推演
-        const aiDecisionContext = {
-            viewGrid,
-            myShips,
-            enemyShips,
-            difficultyConfig: AI_PROB_CONFIG,
-            playerViewGrid  // 新增：玩家视角的 AI 棋盘
-        };
-
-        // 2. 调用 AI 策略模块进行决策
-        const decision = makeAIDecision(aiDecisionContext);
-
-        // 3. 使用武器系统执行攻击
+        // 使用武器系统执行攻击
         if (weaponService) {
             const context = buildAIWeaponContext();
             const result = weaponService.executeAIAction(decision, context);
 
-            recordStats(result.events, false);
+            recordStats(result.events, false, decision.weapon);
 
-            // 4. 检查胜负（仅对攻击类武器）
+            // 检查胜负（仅对攻击类武器）
             if (decision.weapon !== 'SONAR' && result.shipsSunk && result.shipsSunk.length > 0) {
                 // AI 击沉玩家船只时，需要给对应的船添加 sunk 类
                 for (const shipId of result.shipsSunk) {
@@ -1547,6 +1746,7 @@ import { getShipSvg } from './shipArt.js';
 
         updateStatus();
         if (showAiDebug) updateAiHeatmapVisuals(); // 实时更新热力图
+        tickEndgameHunt('ai');
         const enemyGridEl = document.getElementById('enemy-grid');
         if (gameState === 'PLAYING') {
             setTurnIndicator('player');
@@ -1574,6 +1774,12 @@ import { getShipSvg } from './shipArt.js';
             else if (cell.classList.contains('miss')) grid[r][c] = 1;
             else if (cell.classList.contains('ai-detect')) grid[r][c] = 4;
         });
+
+        // 追击阶段的侦察接触只进入 AI 认知，不在玩家棋盘上伪装成受损
+        for (const key of aiReconCells) {
+            const [r, c] = key.split(',').map(Number);
+            if (grid[r][c] === 0 || grid[r][c] === 4) grid[r][c] = 4;
+        }
 
         // 标记已沉没船只的位置为 5 (Sunk)，视为不可穿越的障碍
         myShips.forEach(s => {
@@ -1605,7 +1811,7 @@ import { getShipSvg } from './shipArt.js';
             if (cell.classList.contains('destroyed')) grid[r][c] = 3;
             else if (cell.classList.contains('hit')) grid[r][c] = 2;
             else if (cell.classList.contains('miss')) grid[r][c] = 1;
-            else if (cell.classList.contains('suspect')) grid[r][c] = 4;
+            else if (cell.classList.contains('suspect') || cell.classList.contains('detect')) grid[r][c] = 4;
         });
         
         // 标记已沉没的 AI 船只
@@ -1622,6 +1828,87 @@ import { getShipSvg } from './shipArt.js';
         });
         
         return grid;
+    }
+
+    /** 该格是否已在猎杀方的认知中（命中/击沉/未命中，无需再标定） */
+    function isLastShipCellKnown(hunter, r, c) {
+        const gridId = hunter === 'player' ? 'enemy-grid' : 'player-grid';
+        const cell = document.querySelector(`#${gridId} .cell[data-r="${r}"][data-c="${c}"]`);
+        if (!cell) return true;
+        return cell.classList.contains('hit')
+            || cell.classList.contains('destroyed')
+            || cell.classList.contains('miss');
+    }
+
+    function revealLastShipContact(hunter) {
+        const fleet = hunter === 'player' ? enemyShips : myShips;
+        const alive = fleet.filter(s => !s.sunk);
+        if (alive.length !== 1) return;
+
+        const last = alive[0];
+        const vertical = last.v ?? last.vertical ?? false;
+        const gridId = hunter === 'player' ? 'enemy-grid' : 'player-grid';
+
+        // 只标定最后一个尚未受创的舱室，避免重复覆盖同一片海域
+        for (let i = 0; i < last.len; i++) {
+            if (last.hp[i] <= 0) continue;
+            const r = vertical ? last.r + i : last.r;
+            const c = vertical ? last.c : last.c + i;
+            if (isLastShipCellKnown(hunter, r, c)) continue;
+
+            const zone = [];
+            for (let dr = -RECON_RADIUS; dr <= RECON_RADIUS; dr++) {
+                for (let dc = -RECON_RADIUS; dc <= RECON_RADIUS; dc++) {
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (!isInBounds(nr, nc)) continue;
+                    const cell = document.querySelector(`#${gridId} .cell[data-r="${nr}"][data-c="${nc}"]`);
+                    if (!cell) continue;
+                    if (cell.classList.contains('hit')
+                        || cell.classList.contains('destroyed')
+                        || cell.classList.contains('miss')) continue;
+                    if (hunter === 'player') {
+                        if (cell.classList.contains('detect')) continue;
+                    } else {
+                        if (cell.classList.contains('ai-detect')) continue;
+                        if (aiReconCells.has(`${nr},${nc}`)) continue;
+                        aiReconCells.add(`${nr},${nc}`);
+                    }
+                    zone.push({ r: nr, c: nc });
+                }
+            }
+
+            if (zone.length > 0) {
+                if (hunter === 'player') {
+                    battleRenderer.render(zone.map(({ r: zr, c: zc }) => ({
+                        type: EventType.CELL_UPDATE,
+                        payload: { grid: 'ENEMY', r: zr, c: zc, state: 'SUSPECT' }
+                    })));
+                    sfx.play('detect');
+                    log('侦察接触：最后敌舰所在海域已标出疑似接触区。', 'c-warn');
+                } else {
+                    log('敌方侦察机标出了我方最后舰艇所在的海域。', 'c-warn');
+                }
+            }
+            return;
+        }
+    }
+
+    function tickEndgameHunt(hunter) {
+        if (gameState !== 'PLAYING') return;
+        const fleet = hunter === 'player' ? enemyShips : myShips;
+        if (fleet.filter(s => !s.sunk).length !== 1) {
+            endgameHunt[hunter].turns = 0;
+            endgameHunt[hunter].first = true;
+            return;
+        }
+        endgameHunt[hunter].turns++;
+        // 最后一艘暴露后的下个回合给出接触区，之后每 3 回合刷新
+        const threshold = endgameHunt[hunter].first ? ENDGAME_FIRST_DELAY : ENDGAME_PING_INTERVAL;
+        if (endgameHunt[hunter].turns < threshold) return;
+        endgameHunt[hunter].turns = 0;
+        endgameHunt[hunter].first = false;
+        revealLastShipContact(hunter);
     }
 
     function checkWin(who) {
@@ -1662,6 +1949,8 @@ import { getShipSvg } from './shipArt.js';
             statsEl.innerHTML = `
                 <div class="gos-row"><span>我方命中率</span><b>${pct(battleStats.player.hits, battleStats.player.shots)}</b></div>
                 <div class="gos-row"><span>敌方命中率</span><b>${pct(battleStats.ai.hits, battleStats.ai.shots)}</b></div>
+                <div class="gos-row"><span>我方输出</span><b>${battleStats.player.damage} 伤</b></div>
+                <div class="gos-row"><span>敌方输出</span><b>${battleStats.ai.damage} 伤</b></div>
                 <div class="gos-row"><span>击沉战果</span><b>${sunkByMe} / ${enemyShips.length}</b></div>
                 <div class="gos-row"><span>最大连击</span><b>x${battleStats.maxStreak}</b></div>
                 <div class="gos-row"><span>战斗回合</span><b>${battleStats.turns}</b></div>`;
@@ -1858,16 +2147,101 @@ import { getShipSvg } from './shipArt.js';
             tdHp.innerText = type.maxHp;
             tr.appendChild(tdHp);
 
-            // Ability
+            // Ability（手册只列基础规则，学说修正以学说卡为准）
             const tdAbil = document.createElement('td');
-            if (type.code === 'CV') tdAbil.innerHTML = '解锁 <b>空袭</b>';
+            if (type.code === 'CV') {
+                tdAbil.innerHTML = '解锁 <b>空袭</b>';
+            }
             else if (type.code === 'DD') tdAbil.innerHTML = '解锁 <b>水听</b>';
-            else if (type.code === 'BB') tdAbil.innerHTML = '主炮伤害上限 3';
-            else if (type.code === 'SS') tdAbil.innerHTML = '主炮伤害上限 2<br>解锁 <b>水听</b>';
-            else if (type.code === 'CL') tdAbil.innerHTML = '主炮伤害上限 2 ';
+            else if (type.code === 'BB' || type.code === 'SS' || type.code === 'CL') {
+                const maxAp = type.code === 'BB' ? 3 : 2;
+                tdAbil.innerHTML = `主炮伤害上限 ${maxAp}`;
+                if (type.code === 'SS') tdAbil.innerHTML += '<br>解锁 <b>水听</b>';
+            }
             else tdAbil.innerText = '-';
             tr.appendChild(tdAbil);
 
             tbody.appendChild(tr);
+        });
+    }
+
+    /**
+     * 装备区阵营学说速览（随阵营选择实时刷新）
+     */
+    function updateDoctrineReadout() {
+        const el = document.getElementById('doctrine-readout');
+        if (!el) return;
+        el.innerHTML = '';
+
+        const makeCard = (side, factionId) => {
+            const doc = getDoctrine(factionId);
+            const faction = FACTIONS[factionId];
+            const hidden = side === 'enemy' && enemyFactionRandom;
+            const card = document.createElement('div');
+            card.className = `dr-card dr-${side}${hidden ? ' dr-random' : ''}`;
+
+            const head = document.createElement('div');
+            head.className = 'dr-head';
+
+            const sideTag = document.createElement('span');
+            sideTag.className = 'dr-side';
+            sideTag.innerText = side === 'player' ? '我方' : (hidden ? '敌方 随机' : '敌方');
+            const name = document.createElement('span');
+            name.className = 'dr-name';
+            name.innerText = hidden ? '随机阵营' : doc.name;
+            const en = document.createElement('span');
+            en.className = 'dr-en';
+            en.innerText = hidden ? 'RANDOM' : doc.en;
+            head.append(sideTag, name, en);
+
+            const brief = document.createElement('div');
+            brief.className = 'dr-brief';
+            brief.innerText = hidden ? '开战前从对立集团中抽取，学说随之确定。' : doc.brief;
+
+            card.appendChild(head);
+            card.appendChild(brief);
+            if (faction && !hidden) card.title = `${faction.name}：${doc.desc}`;
+            else if (hidden) card.title = '每局开战前随机抽取';
+            return card;
+        };
+
+        el.appendChild(makeCard('player', playerFaction));
+        el.appendChild(makeCard('enemy', enemyFaction));
+        highlightDoctrineRows();
+    }
+
+    /**
+     * 作战手册阵营学说表（静态填充一次，选择时高亮当前双方）
+     */
+    function initHelpDoctrines() {
+        const tbody = document.getElementById('rules-doctrine-table-body');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        Object.entries(DOCTRINES).forEach(([id, doc]) => {
+            const tr = document.createElement('tr');
+            tr.dataset.faction = id;
+
+            const tdFaction = document.createElement('td');
+            tdFaction.innerText = FACTIONS[id]?.name || id;
+            const tdName = document.createElement('td');
+            tdName.innerHTML = `<b>${doc.name}</b><br><span class="doc-en">${doc.en}</span>`;
+            const tdBrief = document.createElement('td');
+            tdBrief.innerText = doc.brief;
+            const tdAI = document.createElement('td');
+            tdAI.innerText = doc.aiHint;
+
+            tr.append(tdFaction, tdName, tdBrief, tdAI);
+            tbody.appendChild(tr);
+        });
+        highlightDoctrineRows();
+    }
+
+    function highlightDoctrineRows() {
+        const tbody = document.getElementById('rules-doctrine-table-body');
+        if (!tbody) return;
+        tbody.querySelectorAll('tr[data-faction]').forEach(tr => {
+            const id = tr.dataset.faction;
+            tr.classList.toggle('doc-row-player', id === playerFaction);
+            tr.classList.toggle('doc-row-enemy', !enemyFactionRandom && id === enemyFaction);
         });
     }
