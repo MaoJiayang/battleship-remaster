@@ -137,6 +137,16 @@
         </div>
 
         <div class="menu-section">
+          <div class="menu-label">对局数据 <span>MATCH LOG</span></div>
+          <div class="menu-row">
+            <button id="btn-export-matches" class="menu-btn btn-blue" disabled>导出 JSON <b id="match-log-count">0</b></button>
+            <button id="btn-clear-matches" class="menu-btn btn-restart" disabled>清空</button>
+          </div>
+          <button id="btn-disk-log" class="menu-btn btn-mode menu-wide">自动落盘：关</button>
+          <div id="match-disk-status" class="menu-hint">开启后每一手写入项目内 match-logs/。敌方布阵只在结束后写入。</div>
+        </div>
+
+        <div class="menu-section">
           <button id="mobile-menu-help" class="menu-btn btn-orange menu-wide">作战手册</button>
         </div>
       </div>

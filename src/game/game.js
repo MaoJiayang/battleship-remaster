@@ -5,6 +5,23 @@ import { makeAIDecision, calculateProbabilityGrid, resetAIState } from '../ai/ai
 import AiDecisionWorker from '../ai/aiWorker.js?worker&inline';
 import { deployShips as aiDeployShips } from '../ai/aiDeployment.js';
 import { getPlayerModel, recordCompletedMatch } from '../ai/playerModel.js';
+import {
+    beginMatch,
+    abandonMatch,
+    recordAction,
+    finishMatch,
+    damageFromEvents,
+    sunkCodesFromIds,
+    getMatchCount,
+    exportMatchesToFile,
+    clearMatches,
+    isDiskLoggingEnabled,
+    setDiskLoggingEnabled,
+    probeDiskLog,
+    getDiskLogState,
+    onDiskLogStateChange
+} from './matchRecorder.js';
+
 // 武器系统导入
 import { WeaponRegistry } from './weapons/WeaponRegistry.js';
 import { WeaponService } from './weapons/WeaponService.js';
@@ -427,6 +444,52 @@ import { VIEW_STATE } from './battle/ViewState.js';
         addCoordLabels(eGrid);
     }
 
+    function updateMatchLogUi() {
+        const countEl = document.getElementById('match-log-count');
+        const count = getMatchCount();
+        if (countEl) countEl.textContent = String(count);
+        const exportBtn = document.getElementById('btn-export-matches');
+        if (exportBtn) exportBtn.disabled = count === 0;
+        const clearBtn = document.getElementById('btn-clear-matches');
+        if (clearBtn) clearBtn.disabled = count === 0;
+
+        const diskState = getDiskLogState();
+        const diskBtn = document.getElementById('btn-disk-log');
+        if (diskBtn) {
+            diskBtn.textContent = `自动落盘：${diskState.enabled ? '开' : '关'}`;
+            diskBtn.classList.toggle('is-on', diskState.enabled);
+        }
+        const diskStatus = document.getElementById('match-disk-status');
+        if (diskStatus) {
+            let text;
+            let tone = '';
+            if (diskState.enabled) {
+                if (diskState.needsPermission) {
+                    text = '已开启，需要重新授权：点击上方开关选择项目文件夹。';
+                    tone = 'is-error';
+                } else {
+                    text = `每一手写入 ${diskState.file}（已写 ${diskState.written} 行）`;
+                    if (diskState.failed) {
+                        text += `，失败 ${diskState.failed}`;
+                        tone = 'is-error';
+                    } else {
+                        tone = 'is-on';
+                    }
+                }
+            } else if (diskState.available === false) {
+                text = '当前浏览器没有落盘通道；对局记录仍保存在浏览器内。';
+                tone = 'is-error';
+            } else {
+                text = diskState.transport === 'http'
+                    ? '开启后每一手写入项目内 match-logs/。'
+                    : '开启后选择游戏所在文件夹（如 海战棋），之后每手自动追加到其中的 match-logs/。';
+            }
+            diskStatus.textContent = text;
+            diskStatus.classList.toggle('is-on', tone === 'is-on');
+            diskStatus.classList.toggle('is-error', tone === 'is-error');
+        }
+    }
+
     function bindUiEvents() {
         const helpBtn = document.getElementById('help-btn');
         if (helpBtn) {
@@ -449,9 +512,60 @@ import { VIEW_STATE } from './battle/ViewState.js';
         const settingsModal = document.getElementById('settings-modal');
         if (menuBtn && settingsModal) {
             menuBtn.addEventListener('click', () => {
-
+                settingsModal.style.display = 'block';
+                updateMatchLogUi();
+                probeDiskLog().then(updateMatchLogUi);
             });
         }
+
+        const exportBtn = document.getElementById('btn-export-matches');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => {
+                const { payload, filename } = exportMatchesToFile();
+                log(`已导出 ${payload.matchCount} 局对局数据：${filename}`, 'c-sys');
+            });
+        }
+        const clearBtn = document.getElementById('btn-clear-matches');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                if (!getMatchCount()) return;
+                if (!window.confirm('清空本地对局记录？建议先导出 JSON。')) return;
+                clearMatches();
+                updateMatchLogUi();
+                log('本地对局记录已清空。', 'c-sys');
+            });
+        }
+
+        const diskBtn = document.getElementById('btn-disk-log');
+        if (diskBtn) {
+            diskBtn.addEventListener('click', async () => {
+                const state = getDiskLogState();
+                if (state.enabled && state.needsPermission) {
+                    const ok = await setDiskLoggingEnabled(true);
+                    log(ok ? '落盘授权已恢复。' : '未完成授权，自动落盘暂不可用。', ok ? 'c-sys' : 'c-warn');
+                } else if (state.enabled) {
+                    await setDiskLoggingEnabled(false);
+                    log('自动落盘已关闭，对局记录仍保存在浏览器内。', 'c-sys');
+                } else {
+                    const ok = await setDiskLoggingEnabled(true);
+                    if (ok) {
+                        log(`自动落盘已开启：每一手写入 ${getDiskLogState().file}。`, 'c-sys');
+                    } else {
+                        log('未能开启自动落盘（已取消选择或当前浏览器不支持），对局记录仍保存在浏览器内。', 'c-warn');
+                    }
+                }
+                updateMatchLogUi();
+            });
+        }
+        onDiskLogStateChange(updateMatchLogUi);
+        updateMatchLogUi();
+        probeDiskLog().then((available) => {
+            if (!available && isDiskLoggingEnabled()) {
+                setDiskLoggingEnabled(false);
+                log('未连接落盘服务，自动落盘已关闭；对局记录仍保存在浏览器内。', 'c-warn');
+            }
+            updateMatchLogUi();
+        });
 
         const helpModal = document.getElementById('help-modal');
         if (helpModal) {
@@ -1288,6 +1402,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
         closeGameOverModal();
         document.body.classList.remove('game-playing'); // 移除战斗状态类
         clearAiTurnTimeout();
+        abandonMatch();
         currentWinner = null;
         gameState = 'SETUP';
         resetBattleStats();
@@ -1373,6 +1488,15 @@ import { VIEW_STATE } from './battle/ViewState.js';
         }
         initEnemy();
         resetBattleStats();
+        beginMatch({
+            playerFaction,
+            enemyFaction,
+            level: currentDifficulty,
+            firstTurn: firstTurn === 'PLAYER' ? 'player' : 'ai',
+            playerShips: myShips,
+            playerHE: getHEProfile(playerFaction, myShips),
+            aiHE: getHEProfile(enemyFaction, enemyShips)
+        });
         updateStatus();
         selectWeapon('AP');
         aiStack = [];
@@ -1570,6 +1694,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
         if (weaponService) {
             weaponService.setCurrentWeapon(currentWeapon);
             const context = buildPlayerWeaponContext();
+            const viewBefore = getPlayerViewGrid();
             const result = weaponService.executePlayerAction({ r, c }, context);
             
             if (!result.success) {
@@ -1598,6 +1723,17 @@ import { VIEW_STATE } from './battle/ViewState.js';
             }
 
             recordStats(result.events, true, currentWeapon);
+            recordAction({
+                seat: 'player',
+                weapon: currentWeapon,
+                r,
+                c,
+                view: viewBefore,
+                damage: damageFromEvents(result.events),
+                sunk: sunkCodesFromIds(result.shipsSunk, enemyShips),
+                shape: getHEProfile(playerFaction, myShips).shape,
+                radius: getSonarProfile(playerFaction).radius
+            });
 
             // 检查胜负（仅对攻击类武器，声纳不会击沉船只）
             if (currentWeapon !== 'SONAR' && result.shipsSunk && result.shipsSunk.length > 0) {
@@ -1768,9 +1904,23 @@ import { VIEW_STATE } from './battle/ViewState.js';
         // 使用武器系统执行攻击
         if (weaponService) {
             const context = buildAIWeaponContext();
+            const viewBefore = getAiViewGrid();
             const result = weaponService.executeAIAction(decision, context);
 
             recordStats(result.events, false, decision.weapon);
+            if (result.success) {
+                recordAction({
+                    seat: 'ai',
+                    weapon: decision.weapon,
+                    r: decision.r,
+                    c: decision.c,
+                    view: viewBefore,
+                    damage: damageFromEvents(result.events),
+                    sunk: sunkCodesFromIds(result.shipsSunk, myShips),
+                    shape: getHEProfile(enemyFaction, enemyShips).shape,
+                    radius: getSonarProfile(enemyFaction).radius
+                });
+            }
 
             // 检查胜负（仅对攻击类武器）
             if (decision.weapon !== 'SONAR' && result.shipsSunk && result.shipsSunk.length > 0) {
@@ -1972,6 +2122,13 @@ import { VIEW_STATE } from './battle/ViewState.js';
             ships: myShips.map(s => ({ len: s.len, r: s.r, c: s.c, v: s.v ?? s.vertical })),
             shotCells: [...playerShotCells]
         });
+        finishMatch({
+            result: who === '玩家' ? 'win' : 'loss',
+            stats: battleStats,
+            playerShips: myShips,
+            enemyShips
+        });
+        updateMatchLogUi();
         const enemyGridEl = document.getElementById('enemy-grid');
         if (enemyGridEl) enemyGridEl.style.pointerEvents = 'none';
         revealEnemyShips(); // 游戏结束时显示敌方舰船
@@ -2005,7 +2162,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
                 <div class="gos-row"><span>敌方输出</span><b>${battleStats.ai.damage} 伤</b></div>
                 <div class="gos-row"><span>击沉战果</span><b>${sunkByMe} / ${enemyShips.length}</b></div>
                 <div class="gos-row"><span>最大连击</span><b>x${battleStats.maxStreak}</b></div>
-                <div class="gos-row"><span>战斗回合</span><b>${battleStats.turns}</b></div>`;
+                <div class="gos-row"><span>战斗回合</span><b>${battleStats.turns}</b></div>
+                <div class="gos-row"><span>对局记录</span><b>已存 ${getMatchCount()} 局</b></div>`;
         }
 
         setTimeout(() => {

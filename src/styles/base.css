@@ -2397,6 +2397,10 @@ kbd {
 .menu-label { font: 9px var(--mono); letter-spacing: 0.2em; color: #7f9299; margin-bottom: 8px; }
 .menu-label span { color: #56686e; }
 .menu-btn { border-radius: 2px; font-size: 12px; letter-spacing: 0.1em; border: 1px solid #05080a; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 2px 0 #05080a; }
+.menu-btn b { margin-left: 4px; color: var(--brass); font: 9px var(--mono); }
+.menu-hint { margin-top: 8px; font: 9px var(--mono); letter-spacing: 0.08em; color: #66797f; line-height: 1.5; }
+.menu-hint.is-on { color: #b8a469; }
+.menu-hint.is-error { color: #b4705f; }
 .menu-wide { width: 100%; margin-top: 8px; }
 
 /* ---------- 移动端覆盖 ---------- */
