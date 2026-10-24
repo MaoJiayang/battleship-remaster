@@ -52,7 +52,7 @@ def batch(records, device):
     lengths = torch.tensor([len(record["history"]) for record in records], device=device)
     events = np.zeros((len(records), max(1, lengths.max().item()), HISTORY_FEATURES), dtype=np.float32)
     for index, record in enumerate(records):
-        if record["history"]:
+        if len(record["history"]):
             events[index, :len(record["history"])] = record["history"]
     return planes, globals, torch.tensor(events, device=device), lengths, mask
 
@@ -191,8 +191,9 @@ def parity(network, records, metadata, output, device):
     fixtures = []
     for index, record in enumerate(selected):
         fixtures.append({"observation": {"schema": metadata["schema"], "rulesId": metadata["rulesId"],
-                                          "planes": record["planes"], "globals": record["globals"], "mask": record["mask"]},
-                         "events": record["history"], "expected": {"logits": logits[index].cpu().tolist(),
+                                          "planes": np.asarray(record["planes"]).tolist(), "globals": np.asarray(record["globals"]).tolist(),
+                                          "mask": np.asarray(record["mask"]).tolist()},
+                         "events": np.asarray(record["history"]).tolist(), "expected": {"logits": logits[index].cpu().tolist(),
                          "valueLogit": values[index].item(), "value": values[index].sigmoid().item()}})
     output.write_text(json.dumps(fixtures), encoding="utf-8")
 

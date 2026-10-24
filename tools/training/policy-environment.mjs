@@ -49,11 +49,14 @@ function reset(spec) {
             });
             game.policySeed = seed;
             game.learnerSeat = learnerSeat;
+            game.layout = layout;
             games.push(game);
             cursors.push({ A: 0, B: 0 });
         }
     } finally { Math.random = saved; }
-    return { observations: games.map((_, index) => observation(index)) };
+    return { observations: games.map((_, index) => observation(index)),
+        configurations: games.map((game, index) => ({ index, seed: game.policySeed, layout: game.layout,
+            factions: [game.configA.faction, game.configB.faction], tuning: game.configA.tuning })) };
 }
 
 function step(commands) {
