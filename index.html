@@ -192,12 +192,14 @@
         <div class="faction-label">阵营 <span>FACTION</span></div>
         <div class="faction-grid">
           <div class="faction-cell">
-            <label class="fs-label" for="faction-player">我方阵营</label>
-            <select id="faction-player" class="faction-select"></select>
+            <span class="fs-label" id="faction-player-label">我方阵营</span>
+            <select id="faction-player" class="faction-select-native" hidden aria-hidden="true" tabindex="-1"></select>
+            <button type="button" id="faction-player-trigger" class="faction-select faction-trigger" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="faction-player-label faction-player-trigger">选择阵营</button>
           </div>
           <div class="faction-cell">
-            <label class="fs-label" for="faction-enemy">敌方阵营</label>
-            <select id="faction-enemy" class="faction-select"></select>
+            <span class="fs-label" id="faction-enemy-label">敌方阵营</span>
+            <select id="faction-enemy" class="faction-select-native" hidden aria-hidden="true" tabindex="-1"></select>
+            <button type="button" id="faction-enemy-trigger" class="faction-select faction-trigger" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="faction-enemy-label faction-enemy-trigger">选择阵营</button>
           </div>
         </div>
 

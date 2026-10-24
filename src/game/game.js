@@ -232,6 +232,148 @@ import { VIEW_STATE } from './battle/ViewState.js';
     let battleRenderer = null;
     let weaponService = null;
 
+    // 阵营下拉：Electron 的原生 select 弹层偶尔不显示，改由页面内菜单承载
+    function setupFactionTrigger(select) {
+        const trigger = document.getElementById(`${select.id}-trigger`);
+        if (!trigger) return;
+        const menuId = `${select.id}-menu`;
+        let menu = null;
+        let open = false;
+
+        const syncLabel = () => {
+            const option = select.selectedOptions[0];
+            trigger.textContent = option ? option.textContent : '选择阵营';
+        };
+
+        const menuItems = () => menu ? [...menu.querySelectorAll('[role="option"]')] : [];
+        const setActive = index => {
+            const items = menuItems();
+            if (!items.length) return;
+            const next = Math.max(0, Math.min(items.length - 1, index));
+            items.forEach((item, i) => item.classList.toggle('active', i === next));
+            items[next].focus({ preventScroll: true });
+            items[next].scrollIntoView({ block: 'nearest' });
+        };
+
+        const close = (restoreFocus = false) => {
+            if (!open) return;
+            open = false;
+            trigger.setAttribute('aria-expanded', 'false');
+            trigger.removeAttribute('aria-controls');
+            if (menu) {
+                menu.remove();
+                menu = null;
+            }
+            document.removeEventListener('pointerdown', onOutside, true);
+            window.removeEventListener('resize', onViewportChange);
+            window.removeEventListener('scroll', onViewportChange, true);
+            if (restoreFocus) trigger.focus({ preventScroll: true });
+        };
+
+        const choose = index => {
+            const option = select.options[index];
+            if (!option) return;
+            const changed = select.value !== option.value;
+            select.value = option.value;
+            syncLabel();
+            close(true);
+            if (changed) select.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+
+        const positionMenu = () => {
+            const rect = trigger.getBoundingClientRect();
+            const below = window.innerHeight - rect.bottom - 8;
+            const above = rect.top - 8;
+            const placeAbove = below < 160 && above > below;
+            menu.style.width = `${rect.width}px`;
+            menu.style.left = `${rect.left}px`;
+            menu.style.maxHeight = `${Math.max(80, Math.min(280, placeAbove ? above : below))}px`;
+            menu.style.top = placeAbove
+                ? `${Math.max(8, rect.top - menu.offsetHeight - 4)}px`
+                : `${rect.bottom + 4}px`;
+        };
+
+        const onOutside = event => {
+            if (menu && (menu.contains(event.target) || trigger.contains(event.target))) return;
+            close();
+        };
+        const onViewportChange = event => {
+            // 菜单自身滚动时保持展开
+            if (event && event.target instanceof Node && menu && menu.contains(event.target)) return;
+            close();
+        };
+
+        const openMenu = () => {
+            if (open) return;
+            open = true;
+            menu = document.createElement('div');
+            menu.className = 'faction-menu';
+            menu.id = menuId;
+            menu.setAttribute('role', 'listbox');
+            const labelledBy = trigger.getAttribute('aria-labelledby');
+            if (labelledBy) menu.setAttribute('aria-labelledby', labelledBy);
+            else menu.setAttribute('aria-label', trigger.textContent);
+            [...select.options].forEach((option, index) => {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'faction-option';
+                item.id = `${menuId}-opt-${index}`;
+                item.setAttribute('role', 'option');
+                item.setAttribute('aria-selected', String(option.value === select.value));
+                item.textContent = option.textContent;
+                if (option.value === select.value) item.classList.add('selected');
+                item.addEventListener('click', () => choose(index));
+                menu.appendChild(item);
+            });
+            menu.addEventListener('keydown', event => {
+                const items = menuItems();
+                const current = items.indexOf(document.activeElement);
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    setActive((current < 0 ? 0 : current) + (event.key === 'ArrowDown' ? 1 : -1));
+                } else if (event.key === 'Home' || event.key === 'End') {
+                    event.preventDefault();
+                    setActive(event.key === 'Home' ? 0 : items.length - 1);
+                } else if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    choose(current >= 0 ? current : select.selectedIndex);
+                } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    close(true);
+                } else if (event.key === 'Tab') {
+                    // 关闭后从触发按钮继续 Tab，避免焦点落在已被移除的菜单项
+                    close(true);
+                }
+            });
+            document.body.appendChild(menu);
+            trigger.setAttribute('aria-expanded', 'true');
+            trigger.setAttribute('aria-controls', menuId);
+            positionMenu();
+            document.addEventListener('pointerdown', onOutside, true);
+            window.addEventListener('resize', onViewportChange);
+            window.addEventListener('scroll', onViewportChange, true);
+            setActive(Math.max(0, select.selectedIndex));
+        };
+
+        select.addEventListener('change', syncLabel);
+        trigger.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (open) close(true);
+            else openMenu();
+        });
+        trigger.addEventListener('keydown', event => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                if (!open) openMenu();
+            } else if (event.key === 'Escape' && open) {
+                event.preventDefault();
+                close(true);
+            }
+        });
+        syncLabel();
+    }
+
     export function initGame() {
         initGrids();
         
@@ -606,6 +748,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
             feSelect.innerHTML = `<option value="${RANDOM_FACTION}">随机</option>` + options;
             fpSelect.value = playerFaction;
             feSelect.value = enemyFactionRandom ? RANDOM_FACTION : enemyFaction;
+            setupFactionTrigger(fpSelect);
+            setupFactionTrigger(feSelect);
 
             fpSelect.addEventListener('change', () => {
                 playerFaction = fpSelect.value;
