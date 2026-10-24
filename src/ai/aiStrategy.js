@@ -64,6 +64,7 @@ export class AIDecisionEngine {
         this.damageDealtGrid = createEmptyDamageGrid();
         this.sonarHistory = new Set();
         this.actionHistory = [];
+        this.lastTrainingPolicy = null;
         this.generation = (this.generation || 0) + 1;
     }
 
@@ -118,7 +119,7 @@ export class AIDecisionEngine {
             sampleFirstTurn: true, posterior: true, fastSampling: tuning.fastSampling, deadline
         });
         const belief = baseline && performance.now() >= deadline ? null : createBelief(deadline);
-        const search = new BeliefSearch(context, belief, this.actionHistory || [], this.damageDealtGrid, tuning, () => new AIDecisionEngine(), baseline, deadline, createBelief);
+        const search = new BeliefSearch(context, belief, this.actionHistory || [], this.damageDealtGrid, tuning, () => new AIDecisionEngine(), baseline, deadline, createBelief, this.neuralModel);
         search.baselineMs = baselineMs;
         search.inferenceMs = performance.now() - started - baselineMs;
         return search;
@@ -129,6 +130,7 @@ export class AIDecisionEngine {
         if (!result) return null;
         const { action, ...stats } = result;
         this.lastDecisionStats = stats;
+        this.lastTrainingPolicy = search.trainingPolicy();
         const abilities = checkAIAbilities(context.enemyShips, context.aiFaction, context.playerFaction, {
             sunkEnemyShips: context.myShips.filter(ship => ship.sunk).length, neutralBias: true
         });
@@ -136,6 +138,7 @@ export class AIDecisionEngine {
     }
 
     async decideAsync(context) {
+        this.lastTrainingPolicy = null;
         const tuning = context.difficultyConfig?.tuning || getAITuning(context.difficultyConfig?.level || 'HARD');
         if (!tuning.search) return this.decide(context);
         const generation = this.generation;
@@ -157,6 +160,7 @@ export class AIDecisionEngine {
      * AI 决策主入口
      */
     decide(context) {
+        this.lastTrainingPolicy = null;
         const {
             viewGrid,
             myShips,

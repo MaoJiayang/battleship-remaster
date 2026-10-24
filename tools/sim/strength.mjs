@@ -9,6 +9,7 @@ import { deployShips } from '../../src/ai/aiDeployment.js';
 import { getAITuning } from '../../src/ai/aiTuning.js';
 import { SHIP_TYPES } from '../../src/data/ships.js';
 import { DIFFICULTY_SETTINGS } from '../../src/data/difficulties.js';
+import { NavalNeuralNetwork } from '../../src/ai/neuralNetwork.js';
 import { FACTIONS, mulberry32, hashSeed, boundedMeanInterval } from './core.mjs';
 
 const [, , specPath, outputPath, shardArg, workersArg] = process.argv;
@@ -22,6 +23,11 @@ const pairs = spec.pairs ?? 50;
 const seedOffset = spec.seedOffset ?? 0;
 const candidate = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.candidate, tuning: { ...getAITuning('HARD'), search: true, fastSampling: true, searchFixedIterations: true, ...spec.candidate?.tuning } };
 const opponent = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.opponent, tuning: { ...getAITuning('HARD'), search: false, fastSampling: false, ...spec.opponent?.tuning } };
+const modelSources = Object.fromEntries(['candidate', 'opponent'].map(role => {
+    const filename = spec[role]?.model;
+    return [role, filename ? fs.readFileSync(path.resolve(path.dirname(specPath), filename), 'utf8') : null];
+}));
+const models = Object.fromEntries(Object.entries(modelSources).map(([role, source]) => [role, source ? new NavalNeuralNetwork(JSON.parse(source)) : null]));
 
 function makeFleet(seed) {
     const saved = Math.random;
@@ -62,6 +68,8 @@ if (shardArg !== undefined) {
                 { ...(seat === 'B' ? candidate : opponent), faction },
                 { fleetA, fleetB, maxPlies: spec.maxPlies ?? 320 }
             );
+            engine.sides[seat].engine.neuralModel = models.candidate;
+            engine.sides[seat === 'A' ? 'B' : 'A'].engine.neuralModel = models.opponent;
             while (!engine.finished) {
                 const measure = engine.currentSeat === seat;
                 const start = performance.now();
@@ -145,6 +153,7 @@ if (shardArg !== undefined) {
     }
     hashDirectory(sourceRoot);
     const report = { generatedAt: new Date().toISOString(), sourceHash: sourceHash.digest('hex'),
+        modelHashes: Object.fromEntries(Object.entries(modelSources).map(([role, source]) => [role, source ? crypto.createHash('sha256').update(source).digest('hex') : null])),
         harnessHash: crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex'), randomness: 'per-seat-turn', node: process.version,
         options: { ...spec, pairs, seedOffset, candidate, opponent }, elapsedSec: (Date.now() - started) / 1000,
         overall: summarize(rows), factions: Object.fromEntries(factions.map(faction => [faction, summarize(rows.filter(row => row.faction === faction))])) };

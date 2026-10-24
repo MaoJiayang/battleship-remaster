@@ -6,6 +6,7 @@ import { advancePursuit } from '../game/battle/PursuitResolver.js';
 import { BeliefState, CellState, checkAIAbilities, getActionCoverage, evaluateAction } from './aiCore.js';
 import { approximatePosterior, activeSensorRegions } from './rolloutBelief.js';
 import { PairedEvidence, scenarioRandom } from './pairedEvidence.js';
+import { encodeNeuralObservation, neuralActionIndex, NEURAL_ACTIONS } from './neuralObservation.js';
 
 const CELL_COUNT = BOARD_SIZE * BOARD_SIZE;
 const DEADLINE = Symbol('搜索时间预算已到');
@@ -204,8 +205,9 @@ function makeNode(actions, preferred, scores = null) {
 }
 
 export class BeliefSearch {
-    constructor(context, belief, history, damageGrid, tuning, createPolicyEngine = null, preferredBaseline = null, deadline = Infinity, validationBeliefFactory = null) {
+    constructor(context, belief, history, damageGrid, tuning, createPolicyEngine = null, preferredBaseline = null, deadline = Infinity, validationBeliefFactory = null, neuralModel = null) {
         this.context = context;
+        this.neuralModel = neuralModel;
         this.tuning = tuning;
         this.iterations = 0;
         this.planningIterations = 0;
@@ -265,8 +267,8 @@ export class BeliefSearch {
                 engine.damageDealtGrid = damageGrid.map(row => [...row]);
                 engine.sonarHistory = new Set(this.sonarHistory);
                 preferred = engine.decide({ ...context, difficultyConfig: { ...context.difficultyConfig, tuning: { ...tuning, search: false } } });
-            } else preferred = this.rolloutPolicy(state, 0);
-            const actions = legalActions(this.view, abilitiesFor(this.own, this.particles[0]));
+            } else preferred = this.computeRolloutPolicy(state, 0);
+            const actions = this.nodeActions(state);
             let scores = null;
             if (tuning.actionOrder === 'posterior') {
                 const abilities = checkAIAbilities(context.enemyShips, context.aiFaction, context.playerFaction, {
@@ -283,6 +285,7 @@ export class BeliefSearch {
                 const posterior = BeliefState.fromMarginals(context.myShips.filter(ship => !ship.sunk), context.viewGrid, probabilityGrid);
                 scores = new Map(actions.map(action => [action, evaluateAction(posterior, action, abilities, context.difficultyConfig.alpha, damageGrid, maximumHp)]));
             }
+            if (this.neuralModel?.metadata.policyTrained) scores = this.neuralScores(state, actions);
             this.root = makeNode(actions, preferred, scores);
             this.baseline = this.root.actions[0];
         } else if (tuning.pairedSearch && preferredBaseline) {
@@ -291,6 +294,40 @@ export class BeliefSearch {
             this.inferenceFallback = true;
             this.stop('inference');
         } else this.root = null;
+    }
+
+    neuralPrediction(state, seat) {
+        if (!state.neuralPredictions) state.neuralPredictions = [];
+        if (state.neuralPredictions[seat]) return state.neuralPredictions[seat];
+        const own = state.models[seat];
+        const target = state.models[1 - seat];
+        const initialSunk = this.context.myShips.filter(ship => ship.sunk);
+        const matrix = values => Array.from({ length: BOARD_SIZE }, (_, row) => Array.from(values.subarray(row * BOARD_SIZE, (row + 1) * BOARD_SIZE)));
+        const context = {
+            viewGrid: matrix(state.views[seat]), playerViewGrid: matrix(state.views[1 - seat]),
+            enemyShips: [...own.ships, ...(seat === 1 ? initialSunk : [])],
+            myShips: [...target.ships, ...(seat === 0 ? initialSunk : [])],
+            aiFaction: own.faction, playerFaction: target.faction,
+            areaContact: this.hunters(state)[seat].areaContact,
+            pursuit: { enabled: this.pursuit?.enabled !== false, hunters: [this.hunters(state)[seat], this.hunters(state)[1 - seat]] }
+        };
+        const observation = encodeNeuralObservation(context, {
+            damageGrid: matrix(state.dealt[seat]), regions: (state.regions || this.sensorRegions)[seat],
+            sonarHistory: state.sonarUsed?.[seat] ?? (seat === 0 ? this.sonarHistory : new Set())
+        });
+        return state.neuralPredictions[seat] = { observation, prediction: this.neuralModel.predict(observation) };
+    }
+
+    nodeActions(state) {
+        const actions = legalActions(state.views[0], abilitiesFor(state.models[0], state.models[1]));
+        if (!this.neuralModel) return actions;
+        const { observation } = this.neuralPrediction(state, 0);
+        return actions.filter(action => observation.mask[neuralActionIndex(action)]);
+    }
+
+    neuralScores(state, actions) {
+        const { prediction } = this.neuralPrediction(state, 0);
+        return new Map(actions.map(action => [action, prediction.logits[neuralActionIndex(action)]]));
     }
 
     legacyEngine(state, seat) {
@@ -331,6 +368,16 @@ export class BeliefSearch {
     }
 
     computeRolloutPolicy(state, seat) {
+        if (this.neuralModel?.metadata.policyTrained) {
+            const { observation, prediction } = this.neuralPrediction(state, seat);
+            let best = null;
+            let maximum = -Infinity;
+            for (const action of legalActions(state.views[seat], abilitiesFor(state.models[seat], state.models[1 - seat]))) {
+                const index = neuralActionIndex(action);
+                if (observation.mask[index] && prediction.logits[index] > maximum) { maximum = prediction.logits[index]; best = action; }
+            }
+            return best;
+        }
         const own = state.models[seat];
         const target = state.models[1 - seat];
         const view = state.views[seat];
@@ -420,10 +467,24 @@ export class BeliefSearch {
             if (contact) state.regions[seat].push(contact.cells.map(cell => cell.r * BOARD_SIZE + cell.c).filter(cell => state.views[seat][cell] === CellState.SUSPECT));
         }
         if (state.policyTurns) state.policyTurns[seat]++;
+        if (state.sonarUsed && action.weapon === 'SONAR') state.sonarUsed[seat].add(`${action.r},${action.c}`);
+        state.neuralPredictions = null;
         return observation;
     }
 
     rollout(state, depth = 0) {
+        if (this.neuralModel) {
+            let terminal = victory(state);
+            if (terminal !== null) return terminal;
+            if (depth % 2 === 1) {
+                const reply = this.rolloutPolicy(state, 1);
+                if (!reply) return 0.5;
+                this.play(state, 1, reply);
+                terminal = victory(state);
+                if (terminal !== null) return terminal;
+            }
+            return this.neuralPrediction(state, 0).prediction.value;
+        }
         for (let step = depth; step < (this.tuning.rolloutLimit ?? 160); step++) {
             let result = victory(state);
             if (result !== null) return result;
@@ -468,7 +529,8 @@ export class BeliefSearch {
                     if (!selected.children) selected.children = new Map();
                     let child = selected.children.get(key);
                     if (!child) {
-                        child = makeNode(legalActions(state.views[0], abilitiesFor(state.models[0], state.models[1])), this.rolloutPolicy(state, 0));
+                        const actions = this.nodeActions(state);
+                        child = makeNode(actions, this.rolloutPolicy(state, 0), this.neuralModel?.metadata.policyTrained ? this.neuralScores(state, actions) : null);
                         selected.children.set(key, child);
                         result = this.rollout(state, depth + 2);
                     } else if (depth + 2 >= (this.tuning.searchDepth ?? 12)) result = this.rollout(state, depth + 2);
@@ -504,7 +566,8 @@ export class BeliefSearch {
         restoreModel(this.own, this.own.saved);
         restoreModel(scenario.particle, scenario.particle.saved);
         return { models: [this.own, scenario.particle], views: [Uint8Array.from(this.view), Uint8Array.from(this.opponentView)],
-            dealt: [Float64Array.from(this.damageGrid), new Float64Array(CELL_COUNT)], randomSeed: scenario.seed, policyTurns: [0, 0] };
+            dealt: [Float64Array.from(this.damageGrid), new Float64Array(CELL_COUNT)], randomSeed: scenario.seed, policyTurns: [0, 0],
+            sonarUsed: [new Set(this.sonarHistory), new Set()] };
     }
 
     evaluateScenario(action, scenario) {
@@ -561,9 +624,28 @@ export class BeliefSearch {
         }
     }
 
+    trainingPolicy() {
+        if (!this.neuralModel || !this.root || this.inferenceFallback) return null;
+        const visited = this.root.actions.filter(entry => entry.visits > 0);
+        if (visited.length < 2) return null;
+        const total = visited.reduce((sum, entry) => sum + entry.visits, 0);
+        const probabilities = new Float32Array(NEURAL_ACTIONS);
+        for (const entry of visited) probabilities[neuralActionIndex(entry.action)] = entry.visits / total;
+        return probabilities;
+    }
+
     decision() {
-        const selected = this.tuning.pairedSearch ? (this.evidence?.accepted ? this.candidate : this.baseline)
-            : this.root?.actions.filter(entry => entry.visits > 0).sort((left, right) => right.visits - left.visits || right.wins / right.visits - left.wins / left.visits)[0];
+        let selected = this.tuning.pairedSearch ? (this.evidence?.accepted ? this.candidate : this.baseline)
+            : this.root?.actions.filter(entry => entry.visits > 0).sort((left, right) => right.visits - left.visits || right.wins / right.visits - left.wins / left.visits)[0] || this.root?.actions[0];
+        if (this.neuralModel && !this.tuning.pairedSearch && this.tuning.trainingTemperature > 0) {
+            const visited = this.root?.actions.filter(entry => entry.visits > 0) || [];
+            const weights = visited.map(entry => entry.visits ** (1 / this.tuning.trainingTemperature));
+            let threshold = Math.random() * weights.reduce((sum, weight) => sum + weight, 0);
+            for (let index = 0; index < visited.length; index++) {
+                threshold -= weights[index];
+                if (threshold <= 0) { selected = visited[index]; break; }
+            }
+        }
         return selected ? { action: selected.action, visits: selected.visits, winRate: selected.visits ? selected.wins / selected.visits : null,
             iterations: this.iterations, particles: this.particles.length, planningIterations: this.planningIterations,
             validationSamples: this.evidence?.samples ?? 0, logEvidence: this.evidence?.logEvidence ?? 0,

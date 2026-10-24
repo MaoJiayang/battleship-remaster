@@ -5,3 +5,5 @@ debug-ships.html
 debug-sfx.html
 match-logs/
 tools/sim/runs/
+tools/training/runs/
+tools/training/__pycache__/

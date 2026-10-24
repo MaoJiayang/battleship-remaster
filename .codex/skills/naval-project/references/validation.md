@@ -106,6 +106,16 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 - r14 起初始化计时另含 `validationInferenceP95Ms`，逐手第三个阶段计时为冻结候选后的独立后验重建；不要只看初次 `inferenceP95Ms` 就认为覆盖全部推断成本。
 - 实验进度及未验收限制见 [AI 实验进度](ai-research.md)。
 
+### 游戏网络采集、训练与导出
+
+- `node tools/training/generate-data.mjs <配置.json> <全新数据目录>`。`mode=warmup` 使用无搜索旧困难 AI，仅记录终局价值；`mode=selfplay` 必须指定相对配置文件的 `model`，固定 `searchIterations`（默认 64）、按根访问概率探索。训练无 16 毫秒逐手约束，可显式增加搜索量；`games/jobs/seed/tuning` 全部存入清单。
+- 数据包含 `features.f32`、`targets.f32`、`masks.u8` 和分片清单；完整清单记录模型及源码哈希。布局交换组 `splitGroup` 跨分片保持一致，按该组哈希分出验证集，避免镜像布局泄漏；物理规则指纹不同的数据不能混合。
+- 使用唯一 ROCm 环境执行 `train.py <数据目录...> --output <全新模型目录> --architecture attention --epochs 12`；全连接基线用 `--architecture mlp`，自对弈可用 `--resume <旧模型.json>`。输出模型、训练指标、权重和 16 个真实验证局面数值对照；普通游戏无需 Python。
+- `node tools/training/validate-model.mjs <模型.json> <parity.json>` 检查前向误差，再预热并记录 300 次 JavaScript 推理中位与尾延迟；该计时不含观测构建、后验采样及整手搜索，不能称作整手或手机时延。
+- `strength.mjs` 支持 `candidate.model`、`opponent.model`（相对配置文件），汇总保存权重 SHA256。离线高搜索量棋力与单进程低工作量／限时性能分别验证，不能用并发批量的逐手计时代表实战。
+- 新模块行为验证为 `node tools/training/selftest.mjs`，并回归原搜索、配对、并行度、校准及多人房间自测。仍保留默认原 AI，不因训练损失下降自动启用模型。
+- 本轮独立源码与产物集中在远端 `ai-training/runs/neural-20261024-r1` 至 `r4`；每版独立归档，不覆盖前版。实际 CNN 训练可完成前后向，但 MIOpen 报告 `gfx120020.HIP.fdb.txt` 性能库不可读警告；这不同于先前无警告的合成环境检查，尚未据此改驱动或系统设置。
+
 `node tools/sim/calibration.mjs <配置.json> <输出.json>` 捕获模型通过复核的行动，在相同的真实布局快照上分别强制执行候选与基准，再用旧困难 AI 继续双方对局；继续策略的随机条件配对。配置支持 `games`、`limit`、`continuations`、`modelContinuations`（默认 128）、`seedOffset` 和 `tuning`。完整布局仅供外部评估器执行物理环境，决策输入仍由模拟引擎过滤。
 
 - 该工具诊断模拟收益与真实布局/旧 AI 继续策略参照的差异；完整棋力仍看新旧算法配对赛。
