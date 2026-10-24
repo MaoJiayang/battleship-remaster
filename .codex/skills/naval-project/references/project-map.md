@@ -98,6 +98,9 @@ scheduleAiTurn 构建可克隆视野快照并立即请求 Worker
 - `tools/training/neural_model.py`、`train.py`：同结构 PyTorch 训练及权重导出。旧困难 AI 对局仅提供终局价值起步；自对弈搜索访问分布提供策略标签，终局胜负提供价值标签。按交换座位共享的布阵组划分训练/验证集。
 - `generate-data.mjs` 多进程生成真实模拟对局，`validate-model.mjs` 比较 JavaScript 与 PyTorch 数值并测单次推理；`selftest.mjs` 检查隐藏信息边界、机制输入、合法搜索和超时退路。
 - 决策器只有显式注入 `neuralModel` 时使用网络；`policyTrained=false` 时仅用价值头，保持原后续策略。真实游戏及普通实验入口没有自动加载模型。阶段成果和验收边界见 [AI 实验进度](ai-research.md#游戏网络首轮实现与验证)。
+- `neuralHistory.js` 定义公开攻击事件：相对行动方、回合、武器坐标与能力、攻击前后公开视图，共 258 维；模拟器仅在 `recordPublicHistory=true` 时采集，不读取隐藏目标坐标或血量。`memoryNetwork.js` 支持 16 维 GRU 或历史交叉注意力的增量 JavaScript 推理，`directPolicy.js` 负责公平观测编码、记忆更新、合法动作过滤和直接选招。
+- `tools/training/policy-environment.mjs` 以 JSON 行协议批量运行真实模拟器；`memory_model.py` 定义对应 PyTorch 结构，`ppo.py` 采集当前策略轨迹，执行 PPO 自对弈并维护历史对手。`tools/sim/strength.mjs` 以 `candidate.direct=true` 显式测试直接策略，普通游戏及 Worker 不自动加载新模型。
+- 模拟器结果新增 `terminated/truncated`，手数上限归为训练截断，旧 `winner='DRAW'` 字段保留兼容。PPO 截断从该玩家最后的公平观测估值，不固定填 0.5；配对测试若有截断，单一胜率与置信区间不作为有效结论，并报告结果上下界。
 
 ## 联机已有基础
 

@@ -15,6 +15,7 @@ import { SHIP_TYPES } from '../data/ships.js';
 import { deployShips } from './aiDeployment.js';
 import { AIDecisionEngine } from './aiStrategy.js';
 import { getAITuning } from './aiTuning.js';
+import { publicDecisionEvent } from './neuralHistory.js';
 import { checkAIAbilities } from './aiCore.js';
 import { DIFFICULTY_SETTINGS } from '../data/difficulties.js';
 import { VIEW_STATE } from '../game/battle/ViewState.js';
@@ -161,6 +162,7 @@ export class SimulationEngine {
         this.firstSeat = options.firstSeat === 'B' ? 'B' : 'A';
         this.enablePursuit = options.enablePursuit !== false;
         this.recordHistory = !!options.recordHistory;
+        this.recordPublicHistory = !!options.recordPublicHistory;
         this.verbose = !!options.verbose;
         this.reset();
     }
@@ -174,6 +176,8 @@ export class SimulationEngine {
         this.winner = null;
         this.currentSeat = this.firstSeat;
         this.history = [];
+        this.publicHistory = [];
+        this.terminationReason = null;
         this.tail = null;
         this.finished = false;
     }
@@ -219,6 +223,7 @@ export class SimulationEngine {
             enemyShips: describeOwnShips(attacker.ships),
             difficultyConfig: this._decisionConfig(attacker),
             playerViewGrid: defender.view,
+            ...(this.recordPublicHistory ? { publicEvents: this.publicHistory, decisionSeat: attacker === this.sides.A ? 'A' : 'B' } : {}),
             areaContact,
             pursuit: { enabled: this.enablePursuit, hunters: [{ ...attacker.hunt }, { ...defender.hunt }] },
             aiFaction: attacker.faction,
@@ -239,7 +244,7 @@ export class SimulationEngine {
     step() {
         if (this.finished) return null;
         if (this.plies >= this.maxPlies) {
-            this._finish(null);
+            this._finish(null, 'time-limit');
             return null;
         }
 
@@ -250,7 +255,10 @@ export class SimulationEngine {
 
         const decision = attacker.engine.decide(this._decisionContext(attacker, defender));
         const abilities = this._abilities(attacker, defender);
+        const before = this.recordPublicHistory ? attacker.view.map(row => [...row]) : null;
         const action = this._executeAction(attacker, defender, decision, abilities);
+
+        if (before) this.publicHistory.push(publicDecisionEvent(seat, this.plies, action, abilities, before, attacker.view));
 
         if (this.recordHistory) {
             this.history.push({ ply: this.plies, seat, action });
@@ -275,6 +283,8 @@ export class SimulationEngine {
     getResult() {
         return {
             winner: this.winner || 'DRAW',
+            terminated: this.finished && this.terminationReason !== 'time-limit',
+            truncated: this.finished && this.terminationReason === 'time-limit',
             plies: this.plies,
             firstSeat: this.firstSeat,
             A: this._sideResult(this.sides.A),
@@ -295,8 +305,9 @@ export class SimulationEngine {
         };
     }
 
-    _finish(winner) {
+    _finish(winner, reason = winner ? 'fleet-destroyed' : 'draw') {
         this.winner = winner;
+        this.terminationReason = reason;
         this.finished = true;
         if (!winner) return;
 

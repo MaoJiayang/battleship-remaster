@@ -89,7 +89,7 @@ export class NavalNeuralNetwork {
         if (model.architecture === 'attention' && (!Number.isInteger(model.heads) || model.heads < 1 || embedding % model.heads)) throw new Error('注意力头数无效');
     }
 
-    predict(observation) {
+    encode(observation) {
         const { metadata, layers } = this;
         if (observation.schema !== metadata.schema || observation.rulesId !== metadata.rulesId
             || observation.globals.length !== metadata.globalSize || observation.planes.length !== NEURAL_CHANNELS * NEURAL_CELLS) throw new Error('局面输入与模型不兼容');
@@ -131,6 +131,12 @@ export class NavalNeuralNetwork {
             }
             summary = linear(Float32Array.from([...rules, ...attended]), 1, layers.fusion, true);
         } else summary = linear(linear(Float32Array.from([...pool(observation.planes), ...observation.globals]), 1, layers.mlp1, true), 1, layers.mlp2, true);
+        return { cells, summary };
+    }
+
+    decode({ cells, summary }) {
+        const { layers } = this;
+        const embedding = this.metadata.embedding;
         const policyInputs = new Float32Array(NEURAL_CELLS * embedding * 2);
         for (let cell = 0; cell < NEURAL_CELLS; cell++) {
             policyInputs.set(cells.subarray(cell * embedding, (cell + 1) * embedding), cell * embedding * 2);
@@ -144,4 +150,10 @@ export class NavalNeuralNetwork {
         const value = linear(linear(summary, 1, layers.valueHidden, true), 1, layers.value)[0];
         return { value: 1 / (1 + Math.exp(-value)), valueLogit: value, logits };
     }
+
+    predict(observation) {
+        return this.decode(this.encode(observation));
+    }
 }
+
+export { linear };

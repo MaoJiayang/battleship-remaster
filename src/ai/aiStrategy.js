@@ -65,6 +65,7 @@ export class AIDecisionEngine {
         this.sonarHistory = new Set();
         this.actionHistory = [];
         this.lastTrainingPolicy = null;
+        this.directPolicy?.reset();
         this.generation = (this.generation || 0) + 1;
     }
 
@@ -139,6 +140,7 @@ export class AIDecisionEngine {
 
     async decideAsync(context) {
         this.lastTrainingPolicy = null;
+        if (this.directPolicy) return this.decide(context);
         const tuning = context.difficultyConfig?.tuning || getAITuning(context.difficultyConfig?.level || 'HARD');
         if (!tuning.search) return this.decide(context);
         const generation = this.generation;
@@ -161,6 +163,7 @@ export class AIDecisionEngine {
      */
     decide(context) {
         this.lastTrainingPolicy = null;
+        if (this.directPolicy) return this.directPolicy.decide(context, this);
         const {
             viewGrid,
             myShips,

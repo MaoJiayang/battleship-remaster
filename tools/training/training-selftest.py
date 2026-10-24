@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 from neural_model import NavalNetwork
+from memory_model import MemoryNetwork, load_memory
 from train import evaluate, losses
 
 
@@ -52,3 +53,28 @@ for architecture in ("attention", "mlp"):
         assert module.bias.grad is not None and torch.isfinite(module.bias.grad).all()
         assert module.bias.grad.abs().sum() > 0, "双头损失没有产生训练梯度。"
 print("TRAINING SELFTEST OK")
+
+for kind in ("gru", "attention"):
+    network = MemoryNetwork(86, kind)
+    events = torch.randn(2, 3, 258)
+    lengths = torch.tensor([0, 2])
+    planes = torch.randn(2, 17, 11, 11)
+    globals = torch.randn(2, 86)
+    with torch.no_grad():
+        network.fusion.weight[:, 16:].copy_(torch.eye(16))
+    logits, values = network(planes, globals, events, lengths)
+    changed = events.clone()
+    changed[:, 2] = 100
+    masked_logits, masked_values = network(planes, globals, changed, lengths)
+    assert torch.allclose(logits, masked_logits, atol=1e-6), "历史填充区域影响了策略。"
+    assert torch.allclose(values, masked_values, atol=1e-6), "历史填充区域影响了价值。"
+    (logits.mean() + values.mean()).backward()
+    assert network.event.weight.grad is not None and torch.isfinite(network.event.weight.grad).all()
+    assert network.event.weight.grad.abs().sum() > 0, "历史编码没有学习梯度。"
+    metadata = {"schema": "naval-belief-v1", "rulesId": "test", "boardSize": 11, "channels": 17, "globalSize": 86, "policyTrained": True}
+    restored = MemoryNetwork(86, kind)
+    load_memory(restored, network.export(metadata))
+    restored_logits, restored_values = restored(planes, globals, events, lengths)
+    assert torch.allclose(logits, restored_logits, atol=1e-6), "历史模型权重恢复后策略不一致。"
+    assert torch.allclose(values, restored_values, atol=1e-6), "历史模型权重恢复后价值不一致。"
+print("MEMORY TRAINING SELFTEST OK")

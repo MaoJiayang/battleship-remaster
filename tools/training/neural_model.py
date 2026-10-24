@@ -32,7 +32,7 @@ class NavalNetwork(nn.Module):
         rows, columns = torch.meshgrid(coordinates, coordinates, indexing="ij")
         self.register_buffer("coordinates", torch.stack((rows, columns), dim=-1).reshape(1, 121, 2))
 
-    def forward(self, planes, globals):
+    def encode(self, planes, globals):
         spatial = functional.relu(self.conv2(functional.relu(self.conv1(planes)))) if self.architecture == "attention" else planes
         cell_inputs = torch.cat((spatial.flatten(2).transpose(1, 2), self.coordinates.expand(len(planes), -1, -1)), dim=-1)
         cells = functional.relu(self.cell(cell_inputs))
@@ -48,10 +48,16 @@ class NavalNetwork(nn.Module):
         else:
             pooled = functional.adaptive_avg_pool2d(planes, 4).flatten(1)
             summary = functional.relu(self.mlp2(functional.relu(self.mlp1(torch.cat((pooled, globals), dim=-1)))))
+        return cells, summary
+
+    def decode(self, cells, summary):
         policy_inputs = torch.cat((cells, summary.unsqueeze(1).expand(-1, 121, -1)), dim=-1)
         logits = self.policy(functional.relu(self.policyHidden(policy_inputs))).transpose(1, 2).flatten(1)
         value = self.value(functional.relu(self.valueHidden(summary))).squeeze(-1)
         return logits, value
+
+    def forward(self, planes, globals):
+        return self.decode(*self.encode(planes, globals))
 
     def export(self, metadata):
         layers = {}

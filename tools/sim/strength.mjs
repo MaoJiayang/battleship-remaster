@@ -5,11 +5,12 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { SimulationEngine } from '../../src/ai/SimulationEngine.js';
-import { deployShips } from '../../src/ai/aiDeployment.js';
+import { deployFleet } from './layouts.mjs';
 import { getAITuning } from '../../src/ai/aiTuning.js';
-import { SHIP_TYPES } from '../../src/data/ships.js';
 import { DIFFICULTY_SETTINGS } from '../../src/data/difficulties.js';
 import { NavalNeuralNetwork } from '../../src/ai/neuralNetwork.js';
+import { MemoryNeuralNetwork } from '../../src/ai/memoryNetwork.js';
+import { DirectNeuralPolicy } from '../../src/ai/directPolicy.js';
 import { FACTIONS, mulberry32, hashSeed, boundedMeanInterval } from './core.mjs';
 
 const [, , specPath, outputPath, shardArg, workersArg] = process.argv;
@@ -27,13 +28,18 @@ const modelSources = Object.fromEntries(['candidate', 'opponent'].map(role => {
     const filename = spec[role]?.model;
     return [role, filename ? fs.readFileSync(path.resolve(path.dirname(specPath), filename), 'utf8') : null];
 }));
-const models = Object.fromEntries(Object.entries(modelSources).map(([role, source]) => [role, source ? new NavalNeuralNetwork(JSON.parse(source)) : null]));
+const models = Object.fromEntries(Object.entries(modelSources).map(([role, source]) => {
+    const model = source ? JSON.parse(source) : null;
+    if (spec[role]?.direct && !model) throw new Error('直接策略必须指定模型');
+    if (model?.format === 'naval-memory-v1' && !spec[role]?.direct) throw new Error('历史模型需要显式 direct=true');
+    return [role, model ? (model.format === 'naval-memory-v1' ? new MemoryNeuralNetwork(model) : new NavalNeuralNetwork(model)) : null];
+}));
 
 function makeFleet(seed) {
     const saved = Math.random;
     try {
         Math.random = mulberry32(seed);
-        return deployShips(SHIP_TYPES);
+        return deployFleet(spec.layout || 'spread');
     } finally {
         Math.random = saved;
     }
@@ -66,10 +72,12 @@ if (shardArg !== undefined) {
             const engine = new SimulationEngine(
                 { ...(seat === 'A' ? candidate : opponent), faction },
                 { ...(seat === 'B' ? candidate : opponent), faction },
-                { fleetA, fleetB, maxPlies: spec.maxPlies ?? 320 }
+                { fleetA, fleetB, maxPlies: spec.maxPlies ?? 320, recordPublicHistory: !!spec.candidate?.direct || !!spec.opponent?.direct }
             );
-            engine.sides[seat].engine.neuralModel = models.candidate;
-            engine.sides[seat === 'A' ? 'B' : 'A'].engine.neuralModel = models.opponent;
+            for (const [role, side] of [['candidate', seat], ['opponent', seat === 'A' ? 'B' : 'A']]) {
+                if (spec[role]?.direct) engine.sides[side].engine.directPolicy = new DirectNeuralPolicy(models[role], !!spec[role].stochastic);
+                else engine.sides[side].engine.neuralModel = models[role];
+            }
             while (!engine.finished) {
                 const measure = engine.currentSeat === seat;
                 const start = performance.now();
@@ -90,7 +98,7 @@ if (shardArg !== undefined) {
         } finally {
             Math.random = saved;
         }
-        rows.push({ faction, pair, seed, seat, winner: result.winner, plies: result.plies,
+        rows.push({ faction, pair, seed, seat, winner: result.winner, truncated: result.truncated, plies: result.plies,
             candidateStats: result[seat].stats, opponentStats: result[seat === 'A' ? 'B' : 'A'].stats, decisionMs: elapsed,
             inferenceFallbacks, searchCalls, improvedDecisions, validationSamples, timeStops, phaseTimings });
     }
@@ -115,7 +123,8 @@ if (shardArg !== undefined) {
     const rows = shards.flat();
     const summarize = selected => {
         const wins = selected.filter(row => row.winner === row.seat).length;
-        const draws = selected.filter(row => row.winner === 'DRAW').length;
+        const draws = selected.filter(row => row.winner === 'DRAW' && !row.truncated).length;
+        const truncations = selected.filter(row => row.truncated).length;
         const games = selected.length;
         const rate = games ? (wins + draws / 2) / games : 0;
         const groups = new Map();
@@ -130,7 +139,13 @@ if (shardArg !== undefined) {
         const inferenceTimes = selected.flatMap(row => row.phaseTimings?.map(timing => timing[1]) || []).sort((left, right) => left - right);
         const validationInferenceTimes = selected.flatMap(row => row.phaseTimings?.map(timing => timing[2] || 0) || []).sort((left, right) => left - right);
         const quantile = fraction => durations[Math.min(durations.length - 1, Math.floor(durations.length * fraction))] || 0;
-        return { games, wins, draws, rate, ci95: boundedMeanInterval(pairRates), ci95Method: 'paired-bounded-mean-KL',
+        const winningPlies = selected.filter(row => row.winner === row.seat).map(row => row.plies).sort((left, right) => left - right);
+        const decisions = selected.reduce((total, row) => total + Object.values(row.candidateStats.weapons).reduce((sum, amount) => sum + amount, 0), 0);
+        return { games, wins, draws, truncations, rate: truncations ? null : rate,
+            winningPliesMedian: winningPlies.length ? winningPlies[Math.floor(winningPlies.length / 2)] : null,
+            damagePerDecision: decisions ? selected.reduce((total, row) => total + row.candidateStats.damage, 0) / decisions : null,
+            scoreBounds: games ? [(wins + draws / 2) / games, (wins + draws / 2 + truncations) / games] : [0, 1],
+            ci95: truncations ? [0, 1] : boundedMeanInterval(pairRates), ci95Method: 'paired-bounded-mean-KL',
             pairedWins: pairRates.filter(value => value > 0.5).length, pairedLosses: pairRates.filter(value => value < 0.5).length,
             pairedSplits: pairRates.filter(value => value === 0.5).length, p50Ms: quantile(0.5), p95Ms: quantile(0.95), maxMs: durations.at(-1) || 0,
             baselineP95Ms: baselineTimes[Math.floor(baselineTimes.length * 0.95)] || 0, inferenceP95Ms: inferenceTimes[Math.floor(inferenceTimes.length * 0.95)] || 0,
