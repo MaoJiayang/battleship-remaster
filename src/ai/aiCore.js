@@ -234,6 +234,18 @@ export function getStaticPlacements(len) {
  * 核心思想：通过蒙特卡洛采样近似所有可行配置的分布
  */
 export class BeliefState {
+    static fromMarginals(ships, viewGrid, probabilityGrid) {
+        const belief = Object.create(BeliefState.prototype);
+        belief.ships = ships;
+        belief.viewGrid = viewGrid;
+        belief.boardSize = BOARD_SIZE;
+        belief._sampleCount = 0;
+        belief._shipEntries = [];
+        belief._probabilityGrid = probabilityGrid;
+        belief._entropy = null;
+        return belief;
+    }
+
     /**
      * @param {Ship[]} ships - 目标船只
      * @param {number[][]} viewGrid - 视角网格
@@ -250,6 +262,7 @@ export class BeliefState {
         this.areaContact = options?.areaContact?.cells ? options.areaContact : null;
         this.sampleFirstTurn = !!options.sampleFirstTurn;
         this.posterior = !!options.posterior;
+        this.fastSampling = !!options.fastSampling;
         this.deadline = options.deadline ?? Infinity;
         this._deadlineReached = false;
         // 区域接触只对“最后 1 艘目标舰”有确定含义
@@ -429,6 +442,8 @@ export class BeliefState {
         const weights = new Float64Array(count);
         const priorWeights = this.posterior ? new Float64Array(count) : null;
         const proposalWeights = this.posterior ? new Float64Array(count) : null;
+        const cumulative = new Float64Array(count);
+        let totalWeight = 0;
         let n = 0;
         
         for (let p = 0; p < count; p++) {
@@ -454,6 +469,8 @@ export class BeliefState {
             }
             viable[n] = p;
             weights[n] = weight;
+            totalWeight += weight;
+            cumulative[n] = totalWeight;
             n++;
         }
         
@@ -464,6 +481,8 @@ export class BeliefState {
             weights,
             priorWeights,
             proposalWeights,
+            cumulative,
+            totalWeight,
             // 每次抽船复用的临时数组
             tmpViable: new Int32Array(n),
             tmpCumulative: new Float64Array(n)
@@ -485,15 +504,18 @@ export class BeliefState {
         
         for (let i = 0; i < this._shipEntries.length; i++) {
             const { entry } = this._shipEntries[i];
-            const placement = this._sampleShipPlacement(entry, occupied);
+            const independent = this.fastSampling && this.posterior;
+            const placement = independent ? this._drawPlacement(entry) : this._sampleShipPlacement(entry, occupied);
             if (placement < 0) {
                 return false; // 放置失败，整个配置作废
             }
             chosen[i] = placement;
+            if (independent) this._chosenLogWeight += Math.log(entry.totalWeight / entry.proposalWeights[placement]) + Math.log(entry.priorWeights[placement]);
             const { staticEntry } = entry;
             const base = placement * staticEntry.len;
             for (let k = 0; k < staticEntry.len; k++) {
                 const cell = staticEntry.cells[base + k];
+                if (occupied[cell]) return false;
                 occupied[cell] = 1;
                 if (hitFlags[cell] && !covered[cell]) {
                     covered[cell] = 1;
@@ -514,6 +536,16 @@ export class BeliefState {
         if (!n) return -1;
         
         const { cells, len } = staticEntry;
+        if (this.fastSampling && !this.posterior) {
+            for (let attempt = 0; attempt < 8; attempt++) {
+                const placement = this._drawPlacement(entry);
+                let blocked = false;
+                for (let segment = 0; segment < len; segment++) {
+                    if (occupied[cells[placement * len + segment]]) { blocked = true; break; }
+                }
+                if (!blocked) return placement;
+            }
+        }
         let count = 0;
         let totalWeight = 0;
         
@@ -551,6 +583,19 @@ export class BeliefState {
         const placement = tmpViable[lo];
         if (this.posterior) this._chosenLogWeight += Math.log(totalWeight / entry.proposalWeights[placement]) + Math.log(entry.priorWeights[placement]);
         return placement;
+    }
+
+    _drawPlacement(entry) {
+        if (!entry.n) return -1;
+        const position = Math.random() * entry.totalWeight;
+        let lower = 0;
+        let upper = entry.n - 1;
+        while (lower < upper) {
+            const middle = (lower + upper) >> 1;
+            if (entry.cumulative[middle] < position) lower = middle + 1;
+            else upper = middle;
+        }
+        return entry.viable[lower];
     }
 
     getSampleFleets(limit = this._sampleCount) {
@@ -1134,7 +1179,7 @@ export function simulateMultiStepThreats(opponentViewGrid, myShips, opponentShip
     
     for (let step = 0; step < steps; step++) {
         // 【每步都完整推演】构建对手置信状态
-        const opponentBelief = new BeliefState(aliveTargets, simViewGrid, sampleCount);
+        const opponentBelief = new BeliefState(aliveTargets, simViewGrid, sampleCount, { fastSampling: options.fastSampling });
         const probGrid = opponentBelief.getProbabilityGrid();
         
         // 枚举对手可用行动

@@ -86,9 +86,11 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 
 - 7 学说合计 `14 × pairs` 局；配置支持 `pairs`、`jobs`、`seedOffset`、`maxPlies`、`factions`、`sameFleet`、`candidate.tuning` 和 `opponent.tuning`。
 - 候选默认显式开启实验搜索，对手显式关闭；游戏默认开关不会改变该实验含义。具体实验必须保存完整配置。
+- 候选默认启用快速采样，对手显式 `fastSampling=false`，冻结原慢采样作为历史基准。比较搜索本身时再设 `opponent.tuning.fastSampling=true` 做消融；单纯快速采样改变随机数消耗顺序，不能把点估计上升直接当作搜索增益。
 - 默认候选设 `searchFixedIterations=true`，便于固定种子回归；验证实际统一时间预算时显式设为 `false`，计时依赖运行负载，不能保证跨进程数逐局一致。单手时延验证优先单进程，批量吞吐测试可用 10 进程。
 - 按“学说 × 对局组 × 座位”分片，默认 8 进程，远端当前可显式设 `jobs=10`；进程优先级低于普通，窗口隐藏。交换座位仍使用同组舰队与固定种子，并行度不改变棋局；小样本的尾段任务分配更均匀。
 - 当前协议按座位、回合独立设随机数，避免思考消耗改变对手随机流；同算法交换座位控制组完全对称。汇总含源码及脚本内容哈希、协议标记、双方配置、按完整对局组计算的有界均值区间、成对胜负变化、改招次数、复核样本数、超时、推断回退及初始化耗时；分片保留原始行。计时受并发争用影响，不代表浏览器单手耗时。
+- r14 起初始化计时另含 `validationInferenceP95Ms`，逐手第三个阶段计时为冻结候选后的独立后验重建；不要只看初次 `inferenceP95Ms` 就认为覆盖全部推断成本。
 - 实验进度及未验收限制见 [AI 实验进度](ai-research.md)。
 
 `node tools/sim/calibration.mjs <配置.json> <输出.json>` 捕获模型通过复核的行动，在相同的真实布局快照上分别强制执行候选与基准，再用旧困难 AI 继续双方对局；继续策略的随机条件配对。配置支持 `games`、`limit`、`continuations`、`modelContinuations`（默认 128）、`seedOffset` 和 `tuning`。完整布局仅供外部评估器执行物理环境，决策输入仍由模拟引擎过滤。
@@ -97,6 +99,20 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 - 另从公开上下文重新生成模型池，冻结已选行动后重估模拟收益；输出分别记录录取差、新模型复核差与真实布局参照差。录取差有候选选择与提前停止偏差，不可直接作为无偏预测计算校准误差。
 - `node tools/sim/calibration.mjs --selftest` 验证强制制胜/失误、快照隔离和可重复性。
 - 默认模式保持旧 AI；`npm run ai:lab` 显式在 5175 开启实验困难 AI。Vite 可能只监听 IPv6 的 localhost，按启动输出使用 `http://localhost:5175/`；普通模式及单文件构建不受影响。
+
+### 代理通过多人桩实际游玩
+
+```powershell
+$env:HZQ_ROOM_DIR = Join-Path $env:TEMP 'hzq-playtest-独立任务标识'
+node tools/agent-arena/room-cli.mjs new play1 us us --controllers=human,ai --level=HARD --seed=240125 --ai=search
+node tools/agent-arena/room-cli.mjs status play1 --seat=A
+node tools/agent-arena/room-cli.mjs fire play1 SONAR 6 6 --seat=A
+node tools/agent-arena/room-cli.mjs log play1 --seat=A
+```
+
+- `--ai=search` 显式使用与浏览器实验模式相同的 HARD 搜索配置；省略则使用默认评分策略。房间及分座位视图记录模式，状态文本展示模式，重载后继续生效。
+- 用户允许必要时委派小参数模型亲自操作。参赛代理只看自己座位的 `status/log`，逐手选择，不读取房间文件或对方私有视图；房间 JSON 内有隐藏布阵。已看过某局赛后阵型时改用新种子。
+- 保留房间 ID、种子、目录、具体手数与当时可见依据。区分已有命中后追击、目标已沉后的重新探索；不把猜中、单局输赢或 CLI 棋盘当作总体棋力及视觉证据。
 
 ## 接手验证快照
 

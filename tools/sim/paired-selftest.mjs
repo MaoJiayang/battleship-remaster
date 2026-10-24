@@ -70,6 +70,14 @@ while (!search.finished) search.advance(8);
 assert.deepEqual(search.decision().action, { weapon: 'AP', r: 5, c: 5 });
 assert.equal(search.decision().improved, true, '独立复核支持明显制胜行动时须允许替换基准');
 
+const ambiguous = { ...context, viewGrid: view.map(row => [...row]) };
+ambiguous.viewGrid[5][5] = 0;
+const fleetAt = cell => ({ _sampleCount: 1, getSampleFleets: () => [[{ ship: targets[0], cells: [cell] }]] });
+const heldOut = new BeliefSearch(ambiguous, fleetAt(60), [], view.map(row => row.map(() => 0)), tuning, factory, baseline, Infinity, () => fleetAt(96));
+while (!heldOut.finished) heldOut.advance(8);
+assert.deepEqual(heldOut.decision().action, baseline, '新后验不支持规划样本中的优势时须保留基准，不能继续复用规划模型');
+assert.equal(heldOut.decision().stopReason, 'rejected');
+
 const stopped = new BeliefSearch(context, belief, [], view.map(row => row.map(() => 0)), tuning, factory);
 stopped.setDeadline(-1);
 stopped.advance(8);

@@ -32,7 +32,7 @@ import {
 
 const USAGE = [
     '用法：',
-    '  new <id> <A阵营> <B阵营> [--controllers=human,ai] [--first=A] [--seed=1] [--level=HARD] [--maxPlies=150]',
+    '  new <id> <A阵营> <B阵营> [--controllers=human,ai] [--first=A] [--seed=1] [--level=HARD] [--maxPlies=150] [--ai=default|search]',
     '  status <id> [--seat=A]',
     '  fire <id> <AP|HE|SONAR> <row> <col> [--seat=A]',
     '  log <id> [--seat=A]',
@@ -114,6 +114,7 @@ try {
                 firstSeat,
                 seed,
                 level: options.level || 'HARD',
+                aiMode: options.ai || 'default',
                 maxPlies: options.maxPlies === undefined ? 150 : Number(options.maxPlies)
             });
             saveRoom(room);

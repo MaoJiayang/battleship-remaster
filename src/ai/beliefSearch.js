@@ -3,7 +3,7 @@ import { getHEOffsets } from '../data/doctrines.js';
 import { resolveHit } from '../game/battle/HitResolver.js';
 import { resolveSonar } from '../game/battle/SonarResolver.js';
 import { advancePursuit } from '../game/battle/PursuitResolver.js';
-import { CellState, checkAIAbilities, getActionCoverage } from './aiCore.js';
+import { BeliefState, CellState, checkAIAbilities, getActionCoverage, evaluateAction } from './aiCore.js';
 import { approximatePosterior, activeSensorRegions } from './rolloutBelief.js';
 import { PairedEvidence, scenarioRandom } from './pairedEvidence.js';
 
@@ -157,6 +157,22 @@ function abilitiesFor(attacker, defender) {
     });
 }
 
+function collectParticles(belief, view, history, context, tuning, deadline) {
+    const particles = [];
+    const fleets = belief.iterateSampleFleets ? belief.iterateSampleFleets(belief._sampleCount, true) : belief.getSampleFleets(belief._sampleCount);
+    for (const fleet of fleets) {
+        if (performance.now() >= deadline) break;
+        const model = prepareParticle(fleet, view, history, deadline);
+        if (model === DEADLINE) break;
+        if (!model) continue;
+        model.faction = context.playerFaction;
+        model.initialSunk = context.myShips.filter(ship => ship.sunk).length;
+        particles.push(model);
+        if (particles.length >= (tuning.modelSamples ?? 48)) break;
+    }
+    return particles;
+}
+
 function legalActions(view, abilities, includeSonar = true) {
     const actions = [];
     for (let cell = 0; cell < CELL_COUNT; cell++) {
@@ -175,19 +191,20 @@ function victory(state) {
     return null;
 }
 
-function makeNode(actions, preferred) {
+function makeNode(actions, preferred, scores = null) {
     const shuffled = [...actions];
     for (let index = shuffled.length - 1; index > 0; index--) {
         const target = Math.floor(Math.random() * (index + 1));
         [shuffled[index], shuffled[target]] = [shuffled[target], shuffled[index]];
     }
+    if (scores) shuffled.sort((left, right) => scores.get(right) - scores.get(left));
     const preferredIndex = preferred ? shuffled.findIndex(action => action.weapon === preferred.weapon && action.r === preferred.r && action.c === preferred.c) : -1;
     if (preferredIndex > 0) [shuffled[0], shuffled[preferredIndex]] = [shuffled[preferredIndex], shuffled[0]];
     return { visits: 0, actions: shuffled.map(action => ({ action, visits: 0, wins: 0, difference: 0, children: null })) };
 }
 
 export class BeliefSearch {
-    constructor(context, belief, history, damageGrid, tuning, createPolicyEngine = null, preferredBaseline = null, deadline = Infinity) {
+    constructor(context, belief, history, damageGrid, tuning, createPolicyEngine = null, preferredBaseline = null, deadline = Infinity, validationBeliefFactory = null) {
         this.context = context;
         this.tuning = tuning;
         this.iterations = 0;
@@ -196,6 +213,7 @@ export class BeliefSearch {
         this.stopReason = null;
         this.deadline = deadline;
         this.particles = [];
+        this.validationBeliefFactory = validationBeliefFactory;
         if (preferredBaseline && performance.now() >= deadline) {
             this.root = makeNode([preferredBaseline], preferredBaseline);
             this.baseline = this.root.actions[0];
@@ -211,6 +229,7 @@ export class BeliefSearch {
         this.opponentView = Uint8Array.from((context.playerViewGrid || Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(0))).flat());
         this.damageGrid = Float64Array.from(damageGrid.flat());
         const compiledHistory = compileHistory(history, this.view);
+        this.compiledHistory = compiledHistory;
         this.sensorRegions = [[], []];
         for (const entry of compiledHistory) {
             if (!entry.scan || !entry.before || !entry.observed) continue;
@@ -230,17 +249,7 @@ export class BeliefSearch {
         this.own.faction = context.aiFaction;
         setKnownCells(this.own, this.opponentView);
         this.own.saved = saveModel(this.own);
-        const fleets = belief.iterateSampleFleets ? belief.iterateSampleFleets(belief._sampleCount, true) : belief.getSampleFleets(belief._sampleCount);
-        for (const fleet of fleets) {
-            if (performance.now() >= deadline) break;
-            const model = prepareParticle(fleet, this.view, compiledHistory, deadline);
-            if (model === DEADLINE) break;
-            if (!model) continue;
-            model.faction = context.playerFaction;
-            model.initialSunk = context.myShips.filter(ship => ship.sunk).length;
-            this.particles.push(model);
-            if (this.particles.length >= (tuning.modelSamples ?? 96)) break;
-        }
+        this.particles = collectParticles(belief, this.view, compiledHistory, context, tuning, deadline);
         if (preferredBaseline && performance.now() >= deadline) {
             this.root = makeNode([preferredBaseline], preferredBaseline);
             this.baseline = this.root.actions[0];
@@ -257,7 +266,24 @@ export class BeliefSearch {
                 engine.sonarHistory = new Set(this.sonarHistory);
                 preferred = engine.decide({ ...context, difficultyConfig: { ...context.difficultyConfig, tuning: { ...tuning, search: false } } });
             } else preferred = this.rolloutPolicy(state, 0);
-            this.root = makeNode(legalActions(this.view, abilitiesFor(this.own, this.particles[0])), preferred);
+            const actions = legalActions(this.view, abilitiesFor(this.own, this.particles[0]));
+            let scores = null;
+            if (tuning.actionOrder === 'posterior') {
+                const abilities = checkAIAbilities(context.enemyShips, context.aiFaction, context.playerFaction, {
+                    sunkEnemyShips: context.myShips.filter(ship => ship.sunk).length
+                });
+                const maximumHp = Math.max(...context.myShips.filter(ship => !ship.sunk).map(ship => ship.maxHp));
+                const probabilities = new Float64Array(CELL_COUNT);
+                for (const particle of this.particles) {
+                    for (const ship of particle.ships) {
+                        for (const cell of ship.cells) if (isOpen(this.view[cell])) probabilities[cell] += 1 / this.particles.length;
+                    }
+                }
+                const probabilityGrid = Array.from({ length: BOARD_SIZE }, (_, row) => Array.from(probabilities.subarray(row * BOARD_SIZE, (row + 1) * BOARD_SIZE)));
+                const posterior = BeliefState.fromMarginals(context.myShips.filter(ship => !ship.sunk), context.viewGrid, probabilityGrid);
+                scores = new Map(actions.map(action => [action, evaluateAction(posterior, action, abilities, context.difficultyConfig.alpha, damageGrid, maximumHp)]));
+            }
+            this.root = makeNode(actions, preferred, scores);
             this.baseline = this.root.actions[0];
         } else if (tuning.pairedSearch && preferredBaseline) {
             this.root = makeNode([preferredBaseline], preferredBaseline);
@@ -469,8 +495,9 @@ export class BeliefSearch {
         this.stopReason = reason;
     }
 
-    makeScenario() {
-        return { particle: this.particles[Math.floor(Math.random() * this.particles.length)], seed: Math.floor(Math.random() * 4294967296) };
+    makeScenario(validation = false) {
+        const particles = validation && this.validationParticles ? this.validationParticles : this.particles;
+        return { particle: particles[Math.floor(Math.random() * particles.length)], seed: Math.floor(Math.random() * 4294967296) };
     }
 
     scenarioState(scenario) {
@@ -491,6 +518,14 @@ export class BeliefSearch {
         this.candidate = this.root.actions.filter(entry => entry.visits > 0)
             .sort((left, right) => right.difference / right.visits - left.difference / left.visits || right.visits - left.visits)[0];
         if (!this.candidate || this.candidate === this.baseline || this.candidate.difference <= 0) { this.stop('baseline'); return; }
+        if (this.validationBeliefFactory) {
+            const started = performance.now();
+            const belief = this.validationBeliefFactory(this.deadline);
+            this.validationParticles = collectParticles(belief, this.view, this.compiledHistory, this.context, this.tuning, this.deadline);
+            this.validationInferenceMs = performance.now() - started;
+            if (performance.now() >= this.deadline) { this.stop('time'); return; }
+            if (!this.validationParticles.length) { this.inferenceFallback = true; this.stop('inference'); return; }
+        }
         this.evidence = new PairedEvidence(this.tuning.searchRisk ?? 0.05);
         this.phase = 'validation';
     }
@@ -510,7 +545,7 @@ export class BeliefSearch {
                     this.planningIterations++;
                     if (this.planningIterations >= (this.tuning.searchIterations ?? 64)) this.freezeCandidate();
                 } else {
-                    const scenario = this.makeScenario();
+                    const scenario = this.makeScenario(true);
                     const baseline = this.evaluateScenario(this.baseline.action, scenario);
                     const candidate = this.evaluateScenario(this.candidate.action, scenario);
                     this.evidence.observe(candidate, baseline);
@@ -534,6 +569,8 @@ export class BeliefSearch {
             validationSamples: this.evidence?.samples ?? 0, logEvidence: this.evidence?.logEvidence ?? 0,
             pairedDifference: this.evidence?.mean ?? 0, pairedVariance: this.evidence?.variance ?? 0,
             improved: !!this.evidence?.accepted, stopReason: this.stopReason,
-            baselineMs: this.baselineMs ?? 0, inferenceMs: this.inferenceMs ?? 0, inferenceFallback: !!this.inferenceFallback } : null;
+            baselineMs: this.baselineMs ?? 0, inferenceMs: this.inferenceMs ?? 0,
+            validationInferenceMs: this.validationInferenceMs ?? 0, validationModels: this.validationParticles?.length ?? 0,
+            inferenceFallback: !!this.inferenceFallback } : null;
     }
 }

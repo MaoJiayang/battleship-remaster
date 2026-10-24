@@ -12,8 +12,8 @@ for (const search of [false, true]) {
     for (const jobs of [1, 10]) {
         const specPath = path.join(directory, `spec-${search}-${jobs}.json`);
         const outputPath = path.join(directory, `out-${search}-${jobs}.json`);
-        const tuning = { search: false, sampleCount: 64, opponentSampleCount: 8, lookaheadSteps: 1 };
-        const candidateTuning = { ...tuning, search, searchFixedIterations: true, modelSamples: 12, searchIterations: 16, validationIterations: 16, rolloutLimit: 80 };
+        const tuning = { search: false, fastSampling: false, sampleCount: 64, opponentSampleCount: 8, lookaheadSteps: 1 };
+        const candidateTuning = { ...tuning, search, fastSampling: search, searchFixedIterations: true, modelSamples: 12, searchIterations: 16, validationIterations: 16, rolloutLimit: 80 };
         fs.writeFileSync(specPath, JSON.stringify({ pairs: 2, jobs, seedOffset: 20261024, candidate: { tuning: candidateTuning }, opponent: { tuning } }));
         const result = spawnSync(process.execPath, [script, specPath, outputPath], { encoding: 'utf8', windowsHide: true });
         assert.equal(result.status, 0, result.stderr);

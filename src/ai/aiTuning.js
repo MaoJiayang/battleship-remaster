@@ -10,16 +10,18 @@ const HARD_TUNING = Object.freeze({
     opponentSampleCount: 80,
     lookaheadSteps: 4,
     search: import.meta.env?.MODE === 'ai-lab',
+    fastSampling: true,
+    actionOrder: 'posterior',
     pairedSearch: true,
     rolloutOpponent: 'probability',
-    modelSamples: 96,
-    searchIterations: 64,
-    validationIterations: 64,
+    modelSamples: 48,
+    searchIterations: 24,
+    validationIterations: 32,
     searchRisk: 0.05,
     rolloutLimit: 160,
     searchDepth: 12,
     searchBatchSize: 4,
-    searchTimeMs: 120,
+    searchTimeMs: 40,
     policyCacheLimit: 2048
 });
 

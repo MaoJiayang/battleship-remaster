@@ -20,8 +20,8 @@ const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
 const factions = spec.factions || FACTIONS;
 const pairs = spec.pairs ?? 50;
 const seedOffset = spec.seedOffset ?? 0;
-const candidate = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.candidate, tuning: { ...getAITuning('HARD'), search: true, searchFixedIterations: true, ...spec.candidate?.tuning } };
-const opponent = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.opponent, tuning: { ...getAITuning('HARD'), search: false, ...spec.opponent?.tuning } };
+const candidate = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.candidate, tuning: { ...getAITuning('HARD'), search: true, fastSampling: true, searchFixedIterations: true, ...spec.candidate?.tuning } };
+const opponent = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.opponent, tuning: { ...getAITuning('HARD'), search: false, fastSampling: false, ...spec.opponent?.tuning } };
 
 function makeFleet(seed) {
     const saved = Math.random;
@@ -70,7 +70,7 @@ if (shardArg !== undefined) {
                 if (measure) {
                     elapsed.push(performance.now() - start);
                     const stats = engine.sides[seat].engine.lastDecisionStats;
-                    phaseTimings.push([stats?.baselineMs || 0, stats?.inferenceMs || 0]);
+                    phaseTimings.push([stats?.baselineMs || 0, stats?.inferenceMs || 0, stats?.validationInferenceMs || 0]);
                     if (engine.sides[seat].engine.lastDecisionStats?.inferenceFallback) inferenceFallbacks++;
                     if (engine.sides[seat].engine.lastDecisionStats?.iterations > 0) searchCalls++;
                     if (engine.sides[seat].engine.lastDecisionStats?.improved) improvedDecisions++;
@@ -120,11 +120,13 @@ if (shardArg !== undefined) {
         const durations = selected.flatMap(row => row.decisionMs).sort((left, right) => left - right);
         const baselineTimes = selected.flatMap(row => row.phaseTimings?.map(timing => timing[0]) || []).sort((left, right) => left - right);
         const inferenceTimes = selected.flatMap(row => row.phaseTimings?.map(timing => timing[1]) || []).sort((left, right) => left - right);
+        const validationInferenceTimes = selected.flatMap(row => row.phaseTimings?.map(timing => timing[2] || 0) || []).sort((left, right) => left - right);
         const quantile = fraction => durations[Math.min(durations.length - 1, Math.floor(durations.length * fraction))] || 0;
         return { games, wins, draws, rate, ci95: boundedMeanInterval(pairRates), ci95Method: 'paired-bounded-mean-KL',
             pairedWins: pairRates.filter(value => value > 0.5).length, pairedLosses: pairRates.filter(value => value < 0.5).length,
             pairedSplits: pairRates.filter(value => value === 0.5).length, p50Ms: quantile(0.5), p95Ms: quantile(0.95), maxMs: durations.at(-1) || 0,
             baselineP95Ms: baselineTimes[Math.floor(baselineTimes.length * 0.95)] || 0, inferenceP95Ms: inferenceTimes[Math.floor(inferenceTimes.length * 0.95)] || 0,
+            validationInferenceP95Ms: validationInferenceTimes[Math.floor(validationInferenceTimes.length * 0.95)] || 0,
             inferenceFallbacks: selected.reduce((sum, row) => sum + row.inferenceFallbacks, 0), searchCalls: selected.reduce((sum, row) => sum + row.searchCalls, 0),
             improvedDecisions: selected.reduce((sum, row) => sum + row.improvedDecisions, 0), validationSamples: selected.reduce((sum, row) => sum + row.validationSamples, 0),
             timeStops: selected.reduce((sum, row) => sum + row.timeStops, 0) };

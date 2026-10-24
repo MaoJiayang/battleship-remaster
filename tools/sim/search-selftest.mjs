@@ -102,9 +102,32 @@ for (const long of longPlacements) {
         for (const cell of [...long, single]) exact[cell]++;
     }
 }
-Math.random = mulberry32(20261024);
-const posterior = new BeliefState([{ code: 'DD', len: 2, maxHp: 1 }, { code: 'SS', len: 1, maxHp: 2 }], posteriorView, 8192, { posterior: true, sampleFirstTurn: true }).getProbabilityGrid().flat();
-for (const cell of cells) assert.ok(Math.abs(posterior[cell] - exact[cell] / configurations) < 0.035, '加权后验须接近可穷举的真实分布，疑似提议偏好不能冒充观测');
+for (const fastSampling of [false, true]) {
+    Math.random = mulberry32(20261024);
+    const posterior = new BeliefState([{ code: 'DD', len: 2, maxHp: 1 }, { code: 'SS', len: 1, maxHp: 2 }], posteriorView, 8192, { posterior: true, sampleFirstTurn: true, fastSampling }).getProbabilityGrid().flat();
+    for (const cell of cells) assert.ok(Math.abs(posterior[cell] - exact[cell] / configurations) < 0.035, '加权后验须接近可穷举的真实分布，疑似提议偏好不能冒充观测');
+}
+
+const placementWeight = placement => 1 + 10 * Number(placement.includes(60)) + 1.25 * Number(placement.includes(48));
+const singleWeight = cell => placementWeight([cell]);
+const totalLongWeight = longPlacements.reduce((sum, placement) => sum + placementWeight(placement), 0);
+const totalSingleWeight = cells.reduce((sum, cell) => sum + singleWeight(cell), 0);
+const legacyMarginal = new Float64Array(121);
+let acceptedWeight = 0;
+for (const long of longPlacements) {
+    for (const single of cells) {
+        if (long.includes(single) || (!long.includes(60) && single !== 60)) continue;
+        const weight = placementWeight(long) / totalLongWeight * singleWeight(single)
+            / (totalSingleWeight - long.reduce((sum, cell) => sum + singleWeight(cell), 0));
+        acceptedWeight += weight;
+        for (const cell of [...long, single]) legacyMarginal[cell] += weight;
+    }
+}
+for (const fastSampling of [false, true]) {
+    Math.random = mulberry32(20261024);
+    const marginal = new BeliefState([{ code: 'DD', len: 2, maxHp: 1 }, { code: 'SS', len: 1, maxHp: 2 }], posteriorView, 8192, { fastSampling }).getProbabilityGrid().flat();
+    for (const cell of cells) assert.ok(Math.abs(marginal[cell] - legacyMarginal[cell] / acceptedWeight) < 0.035, '快速条件拒绝采样须保持旧策略的舰队分布');
+}
 
 let pursuitContacts = 0;
 for (const faction of ['us', 'ijn', 'rn', 'km', 'fn', 'rm', 'sn']) {

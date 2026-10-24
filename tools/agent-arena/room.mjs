@@ -21,6 +21,7 @@ import path from 'node:path';
 import { SimulationEngine } from '../../src/ai/SimulationEngine.js';
 import { deployShips } from '../../src/ai/aiDeployment.js';
 import { SHIP_TYPES } from '../../src/data/ships.js';
+import { getAITuning } from '../../src/ai/aiTuning.js';
 import { VIEW_STATE } from '../../src/game/battle/ViewState.js';
 import { ArenaError, reviveEngine, serializeEngine, statusText, validateAction } from './arena.mjs';
 
@@ -211,7 +212,8 @@ export function createRoom({
     level = 'HARD',
     maxPlies = 150,
     firstSeat = 'A',
-    fleets = null
+    fleets = null,
+    aiMode = 'default'
 }) {
     const sid = String(id);
     if (fs.existsSync(roomPath(sid))) throw new ArenaError(`房间 ${sid} 已存在`);
@@ -224,11 +226,16 @@ export function createRoom({
         seats[seat] = { faction: seats[seat].faction, controller };
     }
     if (!['A', 'B'].includes(firstSeat)) throw new ArenaError('firstSeat 必须是 A / B');
+    if (!['default', 'search'].includes(aiMode)) throw new ArenaError('AI 策略必须是 default / search');
+    if (aiMode === 'search' && level !== 'HARD') throw new ArenaError('实验搜索仅支持 HARD 难度');
 
     const dealt = fleets || makeFleets(seed >>> 0);
+    const configFor = seat => ({ faction: seats[seat].faction, level,
+        tuning: seats[seat].controller === 'ai' && aiMode === 'search'
+            ? { ...getAITuning(level), search: true } : undefined });
     const engine = new SimulationEngine(
-        { faction: seats.A.faction, level },
-        { faction: seats.B.faction, level },
+        configFor('A'),
+        configFor('B'),
         {
             firstSeat,
             fleetA: dealt.A,
@@ -244,6 +251,7 @@ export function createRoom({
         version: 0,
         seed: seed >>> 0,
         level,
+        aiMode,
         maxPlies,
         seats,
         engine: serializeEngine(engine),
@@ -327,6 +335,7 @@ export function viewFor(room, seat) {
         seat,
         faction: me.faction,
         level: room.level,
+        aiMode: room.aiMode || 'default',
         plies: engine.plies,
         currentSeat: engine.currentSeat,
         yourTurn: !isOver(room) && engine.currentSeat === seat
@@ -398,7 +407,7 @@ export function roomStatusText(room, seat = 'A') {
         resigned: room.resignedSeat === seat,
         log: room.log.map(entry => ({ ply: entry.ply, text: describeEvent(entry, seat) }))
     };
-    return statusText(engine, pseudo, contactsFor(room, seat));
+    return `${statusText(engine, pseudo, contactsFor(room, seat))}\nAI 策略：${room.aiMode === 'search' ? '实验搜索' : '默认策略'}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +517,17 @@ export function runRoomSelfTest() {
     const afterAi = viewFor(first.room, 'A');
     if (afterAi.finished) throw new ArenaError('对局不应在首手结束');
     if (afterAi.currentSeat !== 'A') throw new ArenaError('AI 行动后没有轮回到人类座位');
+
+    const experimental = createRoom({
+        id: `room-selftest-search-${Date.now()}`,
+        seats: { A: { faction: 'us' }, B: { faction: 'us', controller: 'ai' } },
+        seed: 17, firstSeat: 'B', aiMode: 'search'
+    }).room;
+    const experimentalView = viewFor(JSON.parse(JSON.stringify(experimental)), 'A');
+    if (experimentalView.aiMode !== 'search' || experimentalView.log.length !== 1 || !experimentalView.yourTurn) {
+        throw new ArenaError('实验搜索房间没有正常完成 AI 首手或保存模式');
+    }
+    if (experimentalView.enemyShips.some(ship => 'r' in ship || 'hp' in ship)) throw new ArenaError('实验搜索房间泄露隐藏信息');
 
     let staleBlocked = false;
     try {

@@ -113,11 +113,12 @@ export class AIDecisionEngine {
         const previous = this.actionHistory?.at(-1);
         if (previous && !previous.afterView) previous.afterView = context.viewGrid.map(row => [...row]);
         const targets = context.myShips.filter(ship => !ship.sunk);
-        const belief = baseline && performance.now() >= deadline ? null : new BeliefState(targets, context.viewGrid, tuning.sampleCount, {
+        const createBelief = deadline => new BeliefState(targets, context.viewGrid, tuning.sampleCount, {
             placementPrior: context.placementPrior, areaContact: context.areaContact,
-            sampleFirstTurn: true, posterior: true, deadline
+            sampleFirstTurn: true, posterior: true, fastSampling: tuning.fastSampling, deadline
         });
-        const search = new BeliefSearch(context, belief, this.actionHistory || [], this.damageDealtGrid, tuning, () => new AIDecisionEngine(), baseline, deadline);
+        const belief = baseline && performance.now() >= deadline ? null : createBelief(deadline);
+        const search = new BeliefSearch(context, belief, this.actionHistory || [], this.damageDealtGrid, tuning, () => new AIDecisionEngine(), baseline, deadline, createBelief);
         search.baselineMs = baselineMs;
         search.inferenceMs = performance.now() - started - baselineMs;
         return search;
@@ -201,7 +202,7 @@ export class AIDecisionEngine {
         }
 
         // 4. 构建置信状态（蒙特卡洛采样；历史布阵先验与区域接触观测参与概率更新）
-        const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount, { placementPrior, areaContact });
+        const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount, { placementPrior, areaContact, fastSampling: tuning.fastSampling });
 
         // 5. 枚举行动，过滤已用过的声呐点
         let actions = enumerateAllActions(viewGrid, abilities);
@@ -228,7 +229,7 @@ export class AIDecisionEngine {
                 alpha,
                 tuning.lookaheadSteps,
                 tuning.opponentSampleCount,
-                { opponentFaction: playerFaction, myFaction: aiFaction }
+                { opponentFaction: playerFaction, myFaction: aiFaction, fastSampling: tuning.fastSampling }
             );
         }
 
