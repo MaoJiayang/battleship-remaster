@@ -93,15 +93,28 @@ def losses(network, batch):
 
 def evaluate(network, dataset, indices, batch_size, device):
     totals = np.zeros(4)
+    policy_records = 0
     network.eval()
     with torch.no_grad():
         for start in range(0, len(indices), batch_size):
             selected = indices[start:start + batch_size]
-            values = losses(network, dataset.batch(selected, device))
-            totals += np.asarray([value.item() for value in values]) * len(selected)
+            batch = dataset.batch(selected, device)
+            _, value_loss, policy_loss, brier = losses(network, batch)
+            counts = batch[2][:, 1:].sum(dim=1)
+            valid = counts > 0
+            probabilities = batch[2][:, 1:] / counts.clamp_min(1).unsqueeze(1)
+            entropy = -(probabilities * probabilities.clamp_min(1e-30).log()).sum()
+            labeled = valid.sum().item()
+            totals += np.asarray([value_loss.item() * len(selected), policy_loss.item() * labeled,
+                                  brier.item() * len(selected), entropy.item()])
+            policy_records += labeled
     if not np.isfinite(totals).all():
         raise RuntimeError("验证损失出现非有限值。")
-    return dict(zip(("loss", "value_loss", "policy_loss", "brier"), (totals / len(indices)).tolist()))
+    value_loss = totals[0] / len(indices)
+    policy_loss = totals[1] / max(1, policy_records)
+    entropy = totals[3] / max(1, policy_records)
+    return {"loss": value_loss + policy_loss, "value_loss": value_loss, "policy_loss": policy_loss,
+            "brier": totals[2] / len(indices), "policy_entropy": entropy, "policy_kl": policy_loss - entropy}
 
 
 def main():
@@ -145,10 +158,12 @@ def main():
         previous_policy = previous.get("policyTrained", False)
     network.to(device)
     optimizer = torch.optim.AdamW(network.parameters(), lr=arguments.learning_rate, weight_decay=0.0001, foreach=False)
-    history = [{"epoch": 0, "validation": evaluate(network, dataset, dataset.validation, arguments.batch_size, device)}]
+    history = [{"epoch": 0, "train": evaluate(network, dataset, dataset.train, arguments.batch_size, device),
+                "validation": evaluate(network, dataset, dataset.validation, arguments.batch_size, device)}]
     best_loss = history[0]["validation"]["loss"]
     best = copy.deepcopy(network.state_dict())
     best_epoch = 0
+    updates = 0
     started = time.perf_counter()
     for epoch in range(1, arguments.epochs + 1):
         network.train()
@@ -158,8 +173,10 @@ def main():
             loss, *_ = losses(network, dataset.batch(order[start:start + arguments.batch_size], device))
             loss.backward()
             optimizer.step()
+            updates += 1
+        training = evaluate(network, dataset, dataset.train, arguments.batch_size, device)
         validation = evaluate(network, dataset, dataset.validation, arguments.batch_size, device)
-        history.append({"epoch": epoch, "validation": validation})
+        history.append({"epoch": epoch, "train": training, "validation": validation})
         print(json.dumps(history[-1]), flush=True)
         if validation["loss"] < best_loss:
             best_loss = validation["loss"]
@@ -170,6 +187,9 @@ def main():
     metadata = {**dataset.layout, "policyTrained": previous_policy or (dataset.policy_train_records > 0 and best_epoch > 0),
                 "training": {"records": dataset.records, "train_records": len(dataset.train), "validation_records": len(dataset.validation),
                              "policy_records": dataset.policy_records, "best_epoch": best_epoch, "datasets": dataset.manifests, "seconds": time.perf_counter() - started,
+                             "epochs": arguments.epochs, "batch_size": arguments.batch_size, "updates": updates,
+                             "optimizer": "AdamW", "learning_rate": arguments.learning_rate, "weight_decay": 0.0001,
+                             "resume": str(arguments.resume.resolve()) if arguments.resume else None,
                              "torch": torch.__version__, "device": str(device), "history": history}}
     model = network.export(metadata)
     (arguments.output / "model.json").write_text(json.dumps(model, ensure_ascii=False), encoding="utf-8")

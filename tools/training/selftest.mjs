@@ -3,6 +3,7 @@ import { SimulationEngine } from '../../src/ai/SimulationEngine.js';
 import { DOCTRINES } from '../../src/data/doctrines.js';
 import { getAITuning } from '../../src/ai/aiTuning.js';
 import { encodeNeuralObservation, neuralRulesId, neuralActionIndex } from '../../src/ai/neuralObservation.js';
+import { mulberry32 } from '../sim/core.mjs';
 
 const game = new SimulationEngine('HARD', 'HARD');
 const context = game._decisionContext(game.sides.A, game.sides.B);
@@ -42,6 +43,20 @@ assert.ok(policy && Math.abs(policy.reduce((sum, value) => sum + value, 0) - 1) 
 assert.ok(policy.every((value, index) => Number.isFinite(value) && value >= 0 && (!value || original.mask[index])));
 game.sides.A.engine.reset();
 assert.equal(game.sides.A.engine.lastTrainingPolicy, null);
+function valueOnlyDecision(policyTrained) {
+    const saved = Math.random;
+    try {
+        Math.random = mulberry32(240124);
+        const comparison = new SimulationEngine('HARD', 'HARD');
+        comparison.sides.A.engine.neuralModel = {
+            metadata: { policyTrained },
+            predict() { return { value: 0.5, logits: Float32Array.from({ length: 363 }, (_, index) => policyTrained ? index : 0) }; }
+        };
+        comparison.sides.A.config.tuning = { ...game.sides.A.config.tuning, neuralPolicy: false };
+        return { action: comparison.step(), policy: comparison.sides.A.engine.lastTrainingPolicy };
+    } finally { Math.random = saved; }
+}
+assert.deepEqual(valueOnlyDecision(true), valueOnlyDecision(false), '关闭策略头后选招不能受其逻辑值影响');
 const limitedGame = new SimulationEngine('HARD', 'HARD');
 limitedGame.sides.A.engine.neuralModel = game.sides.A.engine.neuralModel;
 const limitedContext = limitedGame._decisionContext(limitedGame.sides.A, limitedGame.sides.B);

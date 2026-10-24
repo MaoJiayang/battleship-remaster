@@ -115,6 +115,9 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 - `strength.mjs` 支持 `candidate.model`、`opponent.model`（相对配置文件），汇总保存权重 SHA256。离线高搜索量棋力与单进程低工作量／限时性能分别验证，不能用并发批量的逐手计时代表实战。
 - 新模块行为验证为 `node tools/training/selftest.mjs`，并回归原搜索、配对、并行度、校准及多人房间自测。仍保留默认原 AI，不因训练损失下降自动启用模型。
 - 本轮独立源码与产物集中在远端 `ai-training/runs/neural-20261024-r1` 至 `r4`；每版独立归档，不覆盖前版。实际 CNN 训练可完成前后向，但 MIOpen 报告 `gfx120020.HIP.fdb.txt` 性能库不可读警告；这不同于先前无警告的合成环境检查，尚未据此改驱动或系统设置。
+- 欠拟合及标签诊断用 `audit-data.py <自对弈数据目录> --models <模型.json...> --output <新报告.json> --fit-records 64 --fit-steps 2048`，在唯一 ROCm 环境执行。分别查看训练／验证价值误差、策略交叉熵减标签熵后的散度和小样本拟合曲线；小样本拟合成功不是完整泛化证明。`r5`、`r6` 保存原 16 轮与延长训练的对照。
+- `candidate.tuning.neuralPolicy=false` 在保留同一模型价值输出的同时关闭策略选招与排序，用于隔离对照；不改模型的 `policyTrained` 元数据。该元数据仅说明策略头参与过训练，不能替代棋力或收敛验收。
+- `train.py` 同时保存逐轮训练／验证指标及实际更新数，策略损失只按有标签样本汇总；`training-selftest.py` 验证汇总与双头训练梯度。`node tools/training/data-selftest.mjs` 验证采集器在手数截止时不添加未执行动作，平局价值为 0.5，镜像布阵组跨分片共享。两项均保留临时证据，不修改正式对局数据。
 
 `node tools/sim/calibration.mjs <配置.json> <输出.json>` 捕获模型通过复核的行动，在相同的真实布局快照上分别强制执行候选与基准，再用旧困难 AI 继续双方对局；继续策略的随机条件配对。配置支持 `games`、`limit`、`continuations`、`modelContinuations`（默认 128）、`seedOffset` 和 `tuning`。完整布局仅供外部评估器执行物理环境，决策输入仍由模拟引擎过滤。
 

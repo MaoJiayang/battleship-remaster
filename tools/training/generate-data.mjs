@@ -85,8 +85,8 @@ if (shardArg !== undefined) {
                 layout ??= { schema: observation.schema, rulesId: observation.rulesId, boardSize: 11, channels: 17,
                     globalSize: observation.globals.length, featureSize: observation.planes.length + observation.globals.length, actionSize: NEURAL_ACTIONS };
                 Math.random = mulberry32(hashSeed(`neural-turn|${layoutSeed}|${gameIndex % 2}|${seat}|${game.plies}`));
-                game.step();
-                snapshots.push({ seat, observation, policy: mode === 'selfplay' ? side.engine.lastTrainingPolicy : null });
+                const action = game.step();
+                if (action) snapshots.push({ seat, observation, policy: mode === 'selfplay' ? side.engine.lastTrainingPolicy : null });
             }
             const start = records;
             for (const snapshot of snapshots) {

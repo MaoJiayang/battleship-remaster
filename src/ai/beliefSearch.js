@@ -285,7 +285,7 @@ export class BeliefSearch {
                 const posterior = BeliefState.fromMarginals(context.myShips.filter(ship => !ship.sunk), context.viewGrid, probabilityGrid);
                 scores = new Map(actions.map(action => [action, evaluateAction(posterior, action, abilities, context.difficultyConfig.alpha, damageGrid, maximumHp)]));
             }
-            if (this.neuralModel?.metadata.policyTrained) scores = this.neuralScores(state, actions);
+            if (this.neuralPolicyEnabled) scores = this.neuralScores(state, actions);
             this.root = makeNode(actions, preferred, scores);
             this.baseline = this.root.actions[0];
         } else if (tuning.pairedSearch && preferredBaseline) {
@@ -294,6 +294,10 @@ export class BeliefSearch {
             this.inferenceFallback = true;
             this.stop('inference');
         } else this.root = null;
+    }
+
+    get neuralPolicyEnabled() {
+        return !!this.neuralModel?.metadata.policyTrained && this.tuning.neuralPolicy !== false;
     }
 
     neuralPrediction(state, seat) {
@@ -368,7 +372,7 @@ export class BeliefSearch {
     }
 
     computeRolloutPolicy(state, seat) {
-        if (this.neuralModel?.metadata.policyTrained) {
+        if (this.neuralPolicyEnabled) {
             const { observation, prediction } = this.neuralPrediction(state, seat);
             let best = null;
             let maximum = -Infinity;
@@ -530,7 +534,7 @@ export class BeliefSearch {
                     let child = selected.children.get(key);
                     if (!child) {
                         const actions = this.nodeActions(state);
-                        child = makeNode(actions, this.rolloutPolicy(state, 0), this.neuralModel?.metadata.policyTrained ? this.neuralScores(state, actions) : null);
+                        child = makeNode(actions, this.rolloutPolicy(state, 0), this.neuralPolicyEnabled ? this.neuralScores(state, actions) : null);
                         selected.children.set(key, child);
                         result = this.rollout(state, depth + 2);
                     } else if (depth + 2 >= (this.tuning.searchDepth ?? 12)) result = this.rollout(state, depth + 2);
