@@ -48,7 +48,7 @@ def evaluate(network, dataset, indices, minibatch, device):
 def main():
     parser = argparse.ArgumentParser(description="用真实旧困难 AI 行动监督预热现有轻量历史策略与价值双头。")
     parser.add_argument("data", type=Path)
-    parser.add_argument("--initial", type=Path, required=True)
+    parser.add_argument("--initial", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--kind", choices=("gru", "attention"), required=True)
     parser.add_argument("--epochs", type=int, default=32)
@@ -66,16 +66,31 @@ def main():
     if len(devices) != 1:
         raise RuntimeError("需要唯一的 RX 9060 XT。")
     device = torch.device("cuda", devices[0])
-    dataset = ExpertDataset(arguments.data)
-    initial = json.loads(arguments.initial.read_text(encoding="utf-8"))
-    if any(initial[key] != value for key, value in dataset.layout.items()):
-        raise ValueError("监督数据与起步模型规则不一致。")
-    network = MemoryNetwork(initial["globalSize"], arguments.kind).to(device)
-    if initial["format"] == "naval-memory-v1":
-        load_memory(network, initial)
+    manifest = json.loads((arguments.data / "manifest.json").read_text(encoding="utf-8"))
+    unified = manifest["format"] == "naval-unified-expert-v1"
+    initial = json.loads(arguments.initial.read_text(encoding="utf-8")) if arguments.initial else None
+    if unified:
+        from unified_data import UnifiedDataset
+        from unified_model import UnifiedNetwork, load_unified
+        dataset = UnifiedDataset(arguments.data)
+        network = UnifiedNetwork(arguments.kind).to(device)
+        if initial:
+            if initial["rulesId"] != dataset.layout["rulesId"]:
+                raise ValueError("统一冷启动起步模型规则不一致。")
+            load_unified(network, initial)
     else:
+        if not initial:
+            raise ValueError("旧模型监督训练必须指定起步权重。")
+        dataset = ExpertDataset(arguments.data)
+        if any(initial[key] != value for key, value in dataset.layout.items()):
+            raise ValueError("监督数据与起步模型规则不一致。")
+        network = MemoryNetwork(initial["globalSize"], arguments.kind).to(device)
+    if initial and initial["format"] == "naval-memory-v1":
+        load_memory(network, initial)
+    elif not unified:
         load_board(network.board, initial)
-    metadata = {**dataset.layout, "policyTrained": True}
+    metadata = {**dataset.layout, "policyTrained": True,
+                **({"validatedRules": [dataset.layout["rulesId"]], "trainedShapes": [[dataset.layout["height"], dataset.layout["width"]]]} if unified else {})}
     (arguments.output / "initial-model.json").write_text(json.dumps(network.export(metadata)), encoding="utf-8")
     optimizer = torch.optim.AdamW(network.parameters(), lr=arguments.learning_rate, weight_decay=0.0001, foreach=False)
     history = []
@@ -110,7 +125,7 @@ def main():
             best = copy.deepcopy(network.state_dict())
         metadata["training"] = {"algorithm": "supervised actual old-HARD actions plus terminal value", "history": history,
                                 "best_epoch": best_epoch, "updates": updates, "seconds": time.perf_counter() - started,
-                                "initial_sha256": hashlib.sha256(arguments.initial.read_bytes()).hexdigest(),
+                                "initial_sha256": hashlib.sha256(arguments.initial.read_bytes()).hexdigest() if arguments.initial else None,
                                 "data_manifest_sha256": hashlib.sha256((arguments.data / "manifest.json").read_bytes()).hexdigest(),
                                 "source_sha256": source_hash(), "torch": str(torch.__version__), "device": str(device),
                                 "arguments": {key: str(value) if isinstance(value, Path) else value for key, value in vars(arguments).items()}}

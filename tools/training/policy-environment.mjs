@@ -3,10 +3,13 @@ import { SimulationEngine } from '../../src/ai/SimulationEngine.js';
 import { deployFleet } from '../sim/layouts.mjs';
 import { encodeNeuralObservation, neuralAction, neuralActionIndex } from '../../src/ai/neuralObservation.js';
 import { encodePublicEvent } from '../../src/ai/neuralHistory.js';
+import { encodeGameUnifiedObservation, encodeGameUnifiedEvent } from '../../src/ai/unifiedAdapter.js';
 import { FACTIONS, hashSeed, mulberry32 } from '../sim/core.mjs';
 
 let games = [];
 let cursors = [];
+let encoding = 'legacy';
+let mechanismCaches = [];
 
 function observation(index, seat = games[index].currentSeat) {
     const game = games[index];
@@ -14,11 +17,14 @@ function observation(index, seat = games[index].currentSeat) {
     const context = game._decisionContext(side, game.sides[seat === 'A' ? 'B' : 'A']);
     const previous = side.engine.actionHistory.at(-1);
     if (previous && !previous.afterView) previous.afterView = context.viewGrid.map(row => [...row]);
-    const encoded = encodeNeuralObservation(context, {
-        history: side.engine.actionHistory, damageGrid: side.engine.damageDealtGrid, sonarHistory: side.engine.sonarHistory
+    const encoded = (encoding === 'unified' ? encodeGameUnifiedObservation : encodeNeuralObservation)(context, {
+        history: side.engine.actionHistory, damageGrid: side.engine.damageDealtGrid, sonarHistory: side.engine.sonarHistory,
+        mechanismCache: mechanismCaches[index][seat]
     });
-    const events = game.publicHistory.slice(cursors[index][seat]).map(event => Array.from(encodePublicEvent(event, seat)));
+    const events = game.publicHistory.slice(cursors[index][seat]).map(event => encoding === 'unified'
+        ? encodeGameUnifiedEvent(event, seat) : Array.from(encodePublicEvent(event, seat)));
     cursors[index][seat] = game.publicHistory.length;
+    if (encoding === 'unified') return { index, seat, observation: encoded, events };
     return { index, seat, planes: Array.from(encoded.planes), globals: Array.from(encoded.globals), mask: Array.from(encoded.mask),
         schema: encoded.schema, rulesId: encoded.rulesId, events };
 }
@@ -27,8 +33,11 @@ function reset(spec) {
     if (!Number.isInteger(spec.games) || spec.games < 2 || !Number.isInteger(spec.maxPlies) || spec.maxPlies < 1) throw new Error('环境配置无效');
     if (spec.learnerSeats && (!Array.isArray(spec.learnerSeats) || spec.learnerSeats.length !== spec.games
         || spec.learnerSeats.some(seat => seat !== 'A' && seat !== 'B'))) throw new Error('学习座位配置无效');
+    if (spec.encoding !== undefined && !['legacy', 'unified'].includes(spec.encoding)) throw new Error('观测编码配置无效');
+    encoding = spec.encoding ?? 'legacy';
     games = [];
     cursors = [];
+    mechanismCaches = [];
     const saved = Math.random;
     try {
         for (let index = 0; index < spec.games; index++) {
@@ -52,6 +61,7 @@ function reset(spec) {
             game.layout = layout;
             games.push(game);
             cursors.push({ A: 0, B: 0 });
+            mechanismCaches.push({ A: {}, B: {} });
         }
     } finally { Math.random = saved; }
     return { observations: games.map((_, index) => observation(index)),
@@ -107,7 +117,7 @@ for await (const line of input) {
         const request = JSON.parse(line);
         const result = request.type === 'reset' ? reset(request) : request.type === 'step' ? step(request.actions) : null;
         if (!result) throw new Error('环境命令无效');
-        process.stdout.write(JSON.stringify(result) + '\n');
+        process.stdout.write(JSON.stringify(result, (_, value) => ArrayBuffer.isView(value) ? Array.from(value) : value) + '\n');
     } catch (error) {
         process.stdout.write(JSON.stringify({ error: error.message }) + '\n');
     }

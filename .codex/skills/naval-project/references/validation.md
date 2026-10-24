@@ -137,6 +137,23 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 
 ### 游戏网络采集、训练与导出
 
+统一模型原型使用独立协议与新规则数据：
+
+```powershell
+node tools/training/unified-selftest.mjs <新局面文件.json>
+python tools/training/unified-selftest.py <局面文件.json> <新显卡检查目录>
+node tools/training/unified-parity.mjs <显卡检查目录>
+node tools/training/unified-runtime-selftest.mjs <显卡检查目录>
+python tools/training/unified_data.py --output <新数据目录> --batches 20 --games 98 --seed 251030
+python tools/training/expert_train.py <数据目录> --output <新模型目录> --kind gru --epochs 16 --minibatch 128
+python tools/training/ppo.py --initial <模型.json> --output <新自对弈目录> --kind gru --iterations 16 --games 98
+```
+
+- Python 命令在远端唯一 `venv-rocm` 运行；当前本机只验证 Python 语法。新协议教师预热可从随机初始化开始，原协议仍要求 `--initial`。注意力对照使用 `--kind attention`，两结构走相同规则和预算。
+- 结构验证覆盖真实七学说隐藏敌舰字段禁读、当前能力相同但依赖不同、显式先验、3 种尺寸及 2／3／4 武器、集合顺序无关、增量与完整历史一致、跨语言数值，以及真实整局合法行动。5×7、8×4 为合成结构用例，不是其他尺寸游戏的实战验收。
+- `unified-pipeline-selftest.py <数据目录> <gru.json> <attention.json> <新输出目录>` 检查真实终局胜负回报、教师截断排除价值、末端自举、旧教师／当前策略／历史快照、采样概率重算和实际 PPO 更新。检查点恢复另经 `ppo.py --resume` 验证。
+- `unified-parity.mjs` 性能段会从头处理完整历史；实战 `DirectNeuralPolicy` 增量处理。`unified-runtime-selftest.mjs` 当前计时包围完整 `engine.decide()`，另报编码部分，不含动画及结算；r27／r28 旧计时是编码＋选招，两者范围不同。只有 Node CPU 证据，未做手机／浏览器帧率或统一模型的单文件发布验收。
+
 - `node tools/training/generate-data.mjs <配置.json> <全新数据目录>`。`mode=warmup` 使用无搜索旧困难 AI，仅记录终局价值；`mode=selfplay` 必须指定相对配置文件的 `model`，固定 `searchIterations`（默认 64）、按根访问概率探索。训练无 16 毫秒逐手约束，可显式增加搜索量；`games/jobs/seed/tuning` 全部存入清单。
 - 数据包含 `features.f32`、`targets.f32`、`masks.u8` 和分片清单；完整清单记录模型及源码哈希。布局交换组 `splitGroup` 跨分片保持一致，按该组哈希分出验证集，避免镜像布局泄漏；物理规则指纹不同的数据不能混合。
 - 使用唯一 ROCm 环境执行 `train.py <数据目录...> --output <全新模型目录> --architecture attention --epochs 12`；全连接基线用 `--architecture mlp`，自对弈可用 `--resume <旧模型.json>`。输出模型、训练指标、权重和 16 个真实验证局面数值对照；普通游戏无需 Python。

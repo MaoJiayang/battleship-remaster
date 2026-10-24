@@ -20,12 +20,15 @@ from memory_model import MemoryNetwork, HISTORY_FEATURES, load_board, load_memor
 
 
 class Environment:
-    def __init__(self):
+    def __init__(self, encoding="legacy"):
+        self.encoding = encoding
         self.process = subprocess.Popen(["node", str(Path(__file__).with_name("policy-environment.mjs"))],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8",
                                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
 
     def call(self, request):
+        if request.get("type") == "reset":
+            request = {**request, "encoding": self.encoding}
         self.process.stdin.write(json.dumps(request) + "\n")
         self.process.stdin.flush()
         line = self.process.stdout.readline()
@@ -58,6 +61,11 @@ def batch(records, device):
 
 
 def distribution(network, records, device):
+    if getattr(network, "unified", False):
+        from unified_model import unified_batch
+        batch_input = unified_batch(records, device)
+        logits, values = network(batch_input)
+        return torch.distributions.Categorical(logits=logits.masked_fill(~batch_input["mask"], -1e9)), values.sigmoid()
     planes, globals, events, lengths, mask = batch(records, device)
     logits, values = network(planes, globals, events, lengths)
     return torch.distributions.Categorical(logits=logits.masked_fill(~mask, -1e9)), values.sigmoid()
@@ -76,11 +84,15 @@ def collect(environment, network, pool, games, seed, max_plies, device, generato
         groups = {}
         commands = []
         for observation in observations:
-            if expected_layout and (observation["rulesId"] != expected_layout["rulesId"] or observation["schema"] != expected_layout["schema"]):
+            body = observation.get("observation", observation)
+            if expected_layout and (body["rulesId"] != expected_layout["rulesId"] or body["schema"] != expected_layout["schema"]):
                 raise ValueError("训练环境的规则或公平观测协议与初始模型不一致。")
             index, seat = observation["index"], observation["seat"]
             history = histories[index, seat]
-            history.extend(observation.pop("events"))
+            incoming = observation.pop("events")
+            if getattr(network, "unified", False):
+                incoming = [np.asarray(event, dtype=np.float32) for event in incoming]
+            history.extend(incoming)
             observation["history"] = list(history)
             learner = seat == learner_seats[index]
             opponent = opponents[index]
@@ -108,7 +120,10 @@ def collect(environment, network, pool, games, seed, max_plies, device, generato
                 if result["currentSeat"] != learner_seats[index] or result["learnerSeat"] != learner_seats[index]:
                     raise RuntimeError("训练截断没有对齐下一次己方决策。")
                 final = next(item for item in result["finalObservations"] if item["seat"] == learner_seats[index])
-                histories[index, final["seat"]].extend(final.pop("events"))
+                incoming = final.pop("events")
+                if getattr(network, "unified", False):
+                    incoming = [np.asarray(event, dtype=np.float32) for event in incoming]
+                histories[index, final["seat"]].extend(incoming)
                 final["history"] = histories[index, final["seat"]]
                 with torch.no_grad():
                     _, value = distribution(network, [final], device)
@@ -185,6 +200,15 @@ def opponent_statistics(outcomes):
 
 def parity(network, records, metadata, output, device):
     selected = [records[index] for index in np.linspace(0, len(records) - 1, min(8, len(records)), dtype=int)]
+    if getattr(network, "unified", False):
+        from unified_model import unified_batch
+        with torch.no_grad():
+            logits, values = network(unified_batch(selected, device))
+        fixtures = [{"observation": record["observation"], "history": record["history"],
+                     "expected": {"logits": logits[index].cpu().tolist(), "valueLogit": values[index].item(),
+                                  "value": values[index].sigmoid().item()}} for index, record in enumerate(selected)]
+        output.write_text(json.dumps(fixtures, default=lambda value: value.tolist()), encoding="utf-8")
+        return
     planes, globals, events, lengths, _ = batch(selected, device)
     with torch.no_grad():
         logits, values = network(planes, globals, events, lengths)
@@ -222,14 +246,21 @@ def main():
         raise RuntimeError("需要唯一的 RX 9060 XT。")
     device = torch.device("cuda", devices[0])
     initial = json.loads(arguments.initial.read_text(encoding="utf-8"))
-    network = MemoryNetwork(initial["globalSize"], arguments.kind).to(device)
+    unified = initial["format"] == "naval-unified-v1"
+    if unified:
+        from unified_model import UnifiedNetwork, load_unified
+        network = UnifiedNetwork(arguments.kind).to(device)
+        load_unified(network, initial)
+    else:
+        network = MemoryNetwork(initial["globalSize"], arguments.kind).to(device)
     if initial["format"] == "naval-memory-v1":
         load_memory(network, initial)
-    else:
+    elif not unified:
         load_board(network.board, initial)
     network.eval()
-    layout = {key: initial[key] for key in ("schema", "rulesId", "boardSize", "channels", "globalSize")}
-    metadata = {**layout, "policyTrained": True}
+    layout = {key: initial[key] for key in (("schema", "rulesId") if unified else ("schema", "rulesId", "boardSize", "channels", "globalSize"))}
+    metadata = {**layout, "policyTrained": True,
+                **({"validatedRules": initial["validatedRules"], "trainedShapes": initial["trainedShapes"]} if unified else {})}
     optimizer = torch.optim.AdamW(network.parameters(), lr=0.0003, weight_decay=0.0001, foreach=False)
     pool = []
     history = []
@@ -252,7 +283,7 @@ def main():
                 parameter.requires_grad_(False)
             pool.append(frozen)
     (arguments.output / "initial-model.json").write_text(json.dumps(network.export(metadata)), encoding="utf-8")
-    environment = Environment()
+    environment = Environment("unified" if unified else "legacy")
     source = hashlib.sha256()
     source_root = Path(__file__).resolve().parents[2]
     filenames = sorted((source_root / "src").rglob("*.js")) + sorted(Path(__file__).parent.glob("*.py")) + sorted(Path(__file__).parent.glob("*.mjs")) + sorted((source_root / "tools/sim").glob("*.mjs"))

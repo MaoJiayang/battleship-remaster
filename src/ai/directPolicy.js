@@ -1,6 +1,8 @@
 import { encodeNeuralObservation, neuralAction } from './neuralObservation.js';
 import { encodePublicEvent } from './neuralHistory.js';
 import { checkAIAbilities } from './aiCore.js';
+import { encodeGameUnifiedObservation, encodeGameUnifiedEvent } from './unifiedAdapter.js';
+import { unifiedAction } from './unifiedObservation.js';
 
 export class DirectNeuralPolicy {
     constructor(network, stochastic = false) {
@@ -12,20 +14,23 @@ export class DirectNeuralPolicy {
     reset() {
         this.cursor = 0;
         this.memory = null;
+        this.mechanismCache = {};
     }
 
     decide(context, engine) {
         const started = performance.now();
         const previous = engine.actionHistory.at(-1);
         if (previous && !previous.afterView) previous.afterView = context.viewGrid.map(row => [...row]);
-        const observation = encodeNeuralObservation(context, {
-            history: engine.actionHistory, damageGrid: engine.damageDealtGrid, sonarHistory: engine.sonarHistory
+        const unified = this.network.metadata.format === 'naval-unified-v1';
+        const observation = (unified ? encodeGameUnifiedObservation : encodeNeuralObservation)(context, {
+            history: engine.actionHistory, damageGrid: engine.damageDealtGrid, sonarHistory: engine.sonarHistory, mechanismCache: this.mechanismCache
         });
         const encodedAt = performance.now();
         let prediction;
-        if (this.network.metadata.format === 'naval-memory-v1') {
+        if (this.network.metadata.format === 'naval-memory-v1' || unified) {
             if (!context.publicEvents || !context.decisionSeat || context.publicEvents.length < this.cursor) throw new Error('记忆策略缺少公开历史或历史已重置');
-            const events = context.publicEvents.slice(this.cursor).map(event => encodePublicEvent(event, context.decisionSeat));
+            const events = context.publicEvents.slice(this.cursor).map(event => unified
+                ? encodeGameUnifiedEvent(event, context.decisionSeat) : encodePublicEvent(event, context.decisionSeat));
             prediction = this.network.predict(observation, events, this.memory ?? this.network.initialState());
             this.memory = prediction.state;
             this.cursor = context.publicEvents.length;
@@ -47,6 +52,6 @@ export class DirectNeuralPolicy {
         }
         engine.lastDecisionStats = { direct: true, encodingMs: encodedAt - started, networkMs: performance.now() - encodedAt };
         const abilities = checkAIAbilities(context.enemyShips, context.aiFaction, context.playerFaction, { sunkEnemyShips: context.myShips.filter(ship => ship.sunk).length });
-        return engine.recordDecision(neuralAction(selected), abilities, context.viewGrid);
+        return engine.recordDecision(unified ? unifiedAction(selected, observation) : neuralAction(selected), abilities, context.viewGrid);
     }
 }

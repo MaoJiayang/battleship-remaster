@@ -10,6 +10,7 @@ import { getAITuning } from '../../src/ai/aiTuning.js';
 import { DIFFICULTY_SETTINGS } from '../../src/data/difficulties.js';
 import { NavalNeuralNetwork } from '../../src/ai/neuralNetwork.js';
 import { MemoryNeuralNetwork } from '../../src/ai/memoryNetwork.js';
+import { UnifiedNeuralNetwork } from '../../src/ai/unifiedNetwork.js';
 import { DirectNeuralPolicy } from '../../src/ai/directPolicy.js';
 import { FACTIONS, mulberry32, hashSeed, boundedMeanInterval } from './core.mjs';
 
@@ -35,8 +36,9 @@ const modelSources = Object.fromEntries(['candidate', 'opponent'].map(role => {
 const models = Object.fromEntries(Object.entries(modelSources).map(([role, source]) => {
     const model = source ? JSON.parse(source) : null;
     if (spec[role]?.direct && !model) throw new Error('直接策略必须指定模型');
-    if (model?.format === 'naval-memory-v1' && !spec[role]?.direct) throw new Error('历史模型需要显式 direct=true');
-    return [role, model ? (model.format === 'naval-memory-v1' ? new MemoryNeuralNetwork(model) : new NavalNeuralNetwork(model)) : null];
+    if (['naval-memory-v1', 'naval-unified-v1'].includes(model?.format) && !spec[role]?.direct) throw new Error('历史模型需要显式 direct=true');
+    return [role, model ? (model.format === 'naval-unified-v1' ? new UnifiedNeuralNetwork(model)
+        : model.format === 'naval-memory-v1' ? new MemoryNeuralNetwork(model) : new NavalNeuralNetwork(model)) : null];
 }));
 
 function makeFleet(seed) {
