@@ -1,0 +1,8 @@
+https://stable.repo.amd.com/rocm/pytorch/whl-next/torch/torch-2.14.0%2Brocm10.1.0-cp312-cp312-win_amd64.whl#sha256=81e26c307846267d9490ff8c7421382b954909772abb7770a16baec740f44e4b
+https://stable.repo.amd.com/rocm/pytorch/whl-next/amd-torch-device-gfx12-0/amd_torch_device_gfx12_0-2.14.0%2Brocm10.1.0-cp312-cp312-win_amd64.whl#sha256=99a2ea25169bd7fa73db629d1f933b9ab1a719b6a1e4c7c94011d68b2dbc8425
+https://stable.repo.amd.com/rocm/pytorch/whl-next/amd-torch-device-gfx1200/amd_torch_device_gfx1200-2.14.0%2Brocm10.1.0-cp312-cp312-win_amd64.whl#sha256=1676d6a66da1fd411668518ac6d2e5a8a19bc0b5468e4758b988f5e7d9a48b82
+https://stable.repo.amd.com/rocm/core/whl-next/rocm/rocm-10.1.0.tar.gz#sha256=e6616e62ebd1324031681e6e59349d46ee4f143a8d8f4f901a91c35c993041fc
+https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-core/rocm_sdk_core-10.1.0-py3-none-win_amd64.whl#sha256=b12f1c4cde14ed1cd8864006d17586c6b1e6a4e4695b9597cfe04ed7715e952f
+https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-libraries/rocm_sdk_libraries-10.1.0-py3-none-win_amd64.whl#sha256=0c34bafbb4aa626cc710d8b130bb314f591194c3d79eeb5892b755ea0be06159
+https://stable.repo.amd.com/rocm/core/whl-next/rocm-bootstrap/rocm_bootstrap-0.3.0-py3-none-any.whl#sha256=62d0160ecdd86f7132dbab9aec257cb2c96327df2592b0633aa6bb56399cc095
+https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1200/rocm_sdk_device_gfx1200-10.1.0-py3-none-win_amd64.whl#sha256=8b670bee24ca4fc6c13c1eb58e9c6c39929913107ce00a8661c4db9d3e39d9fa

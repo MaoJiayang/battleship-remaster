@@ -80,6 +80,19 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 
 后续模拟先确认目录、空闲资源和当前源码，再创建独立实验目录，保留原有文件。进程数按任务规模和资源情况决定，避免简单按逻辑处理器数量开满。SSH 调用 PowerShell 时可用 `-EncodedCommand` 传递脚本，减少本机与远端两层转义问题。
 
+### 远端训练环境
+
+用户要求集中在 `C:\Users\Administrator\Desktop\naval\ai-training`，只保留最终采用的一套虚拟环境。解释器放 `python312/`、当前采用原生 ROCm 的 `venv-rocm/`；安装包放 `downloads/`，缓存、日志和检查结果分别放 `pip-cache/`、`logs/`、`results/`。训练脚本与依赖清单复制到该目录根；不要混用历史模拟目录的源码。
+
+- 2026-10-24 实查为 Windows 11，独立显卡 RX 9060 XT，驱动版本 `32.0.32015.7029`；另有核显和虚拟显示设备，验证脚本按名称明确选择独显。最初 `python/python3` 仅有微软商店别名，无可用 Python 或 `py`。
+- `downloads/python-3.12.10-amd64.exe` 来自华为镜像，Authenticode 签名有效，签名方为 Python Software Foundation；SHA256 为 `67B5635E80EA51072B87941312D00EC8927C4DB9BA18938F7AD2D27B328B95FB`。自动安装命令被工具策略拦截后由用户手动安装，随后实查 Python 3.12.10、64 位、解释器和虚拟环境路径正确，`include-system-site-packages=false`。无需重启，未改系统 PATH、系统脚本执行策略或显卡驱动。
+- 最终环境为 `torch==2.14.0+rocm10.1.0`，ROCm SDK 10.1.0，报告的 HIP 版本为 `7.16.26385`。AMD 的旧 Radeon 7.2.1 页面有 Windows 训练限制，后续依据[新版统一安装文档](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html)选择架构 `gfx1200`，并实际检查前向、反向和更新；不能仅凭显卡出现在支持表中判断训练可用。
+- 普通依赖固定在 `tools/training/requirements-common.txt`，使用阿里 HTTPS 源；清华源在远端返回 403，阿里与华为镜像可访问。用户已允许 AMD 专用包使用官方源，`requirements-rocm.txt` 固定 8 个官方安装包 URL 与 SHA256，其余依赖先从国内源安装；专用包安装使用 `--no-deps --no-build-isolation`。虚拟环境内保存 `pip.ini`，不修改全局 pip 配置。
+- 在远端 PowerShell 执行 `& 'C:\Users\Administrator\Desktop\naval\ai-training\python312\python.exe' 'C:\Users\Administrator\Desktop\naval\ai-training\prepare-environment.py' --root 'C:\Users\Administrator\Desktop\naval\ai-training'`。维护脚本创建或复用唯一的 ROCm 虚拟环境，分来源装依赖、运行 `pip check`、保存 `requirements-installed.txt`，再运行合成训练及注意力检查。采用 Python 入口，适配该机禁止直接运行 PowerShell 脚本的设置。
+- `check-environment.py --backend rocm --attention-smoke` 验证 64→64→32→1 网络的 CPU/显卡前向一致性、反向传播、参数更新及损失下降；另检查 32 维、2 头、16 个输入位置的注意力前向和有限梯度。显式按名称选择 RX 9060 XT，记录警告及含同步的训练吞吐；`--backend cpu` 可独立复查。它不训练游戏模型，也不是棋力、JavaScript 推理或手机性能验收。
+- 原生 ROCm 已通过上述检查，`results/rocm-check.json` 的 1024 批量、60 次更新约为显卡 55.3 毫秒、同版本单线程 CPU 145.2 毫秒；`rocm-large-attention-check.json` 的 16384 批量为显卡 213.3 毫秒、CPU 1066.4 毫秒，注意力前向最大差约 `1.34e-7`，两项均无捕获警告。它们是合成训练快照，不代表真实游戏网络或推理速度；最终维护入口另将最新验证存为 `environment-check.json`。
+- 早先 DirectML 0.2.5.dev240914＋PyTorch 2.4.1 也能完成小网络训练，但 `log_sigmoid_forward` 会回退 CPU；1024 批量的 60 次更新约 274.6 毫秒，同版本单线程 CPU 33.4 毫秒。与原生 ROCm 的 PyTorch 版本不同，不作为严格同版本后端对照。DirectML 需要在首次 CPU 反向传播前导入并初始化，否则本次实测触发自动求导设备队列断言；已在检查器中修正。按用户要求最终移除备用 DirectML 虚拟环境，仅保留结果及日志。
+
 ### 新旧算法配对验证
 
 `node tools/sim/strength.mjs <配置.json> <输出.json>` 用同学说、两套独立随机舰队交换算法座位，固定种子比较候选与旧 AI；与上面的阵营循环赛用途不同。
