@@ -8,7 +8,8 @@
     "ai:lab": "vite --mode ai-lab --port 5175 --strictPort",
     "build": "vite build",
     "preview": "vite preview",
-    "single": "vite build --mode single"
+    "single": "vite build --mode single",
+    "single:neural": "vite build --mode neural-preview"
   },
   "devDependencies": {
     "vite": "^5.2.0",

@@ -88,6 +88,8 @@ scheduleAiTurn 构建可克隆视野快照并立即请求 Worker
 
 - `playerModel.js` 在完成对局时记录玩家按舰长的布阵频率和去重射击格；旧计数每局乘 0.94。
 - 聚合画像存于 `hzq_player_model_v1`，输出布阵先验与射击注意热图；没有当前隐藏布阵输入。
+- 布阵先验按船长平滑、限制倍率，再以样本数收缩到均匀分布；旧 `BeliefState` 将候选船体各格先验的几何平均乘入抽样权重，与本局合法布局和命中约束共同生成占位概率。旧评分策略据此评估武器，不直接选择历史最热格。
+- 射击热图只统计去重射击位置，并非跨局武器偏好模型。稀疏布阵的候选抽样权重为 `1/(1+0.6×船体平均热度)`。当前神经观测未读取这两张历史图；射击图仍通过前置布阵间接改变己方舰队状态，网络第 6 平面则是仅根据本局观测重算的近似占位概率。
 - `aiDeployment.js` 随机打乱舰种，枚举合法位置并偏向分散，间距不足时逐步放宽；实战敌舰还轻度避开历史搜索热区。
 - 模拟双方分别持有决策实例，隔离伤害和水听历史；模拟入口目前未接入历史玩家画像。
 
@@ -97,9 +99,10 @@ scheduleAiTurn 构建可克隆视野快照并立即请求 Worker
 - `neuralNetwork.js`：纯 JavaScript 前向计算，支持小卷积＋单层双头交叉注意力和全连接基线；校验协议 `naval-belief-v1` 与物理学说规则指纹。规则调整使旧模型显式失效，需要重新验证和训练。
 - `tools/training/neural_model.py`、`train.py`：同结构 PyTorch 训练及权重导出。旧困难 AI 对局仅提供终局价值起步；自对弈搜索访问分布提供策略标签，终局胜负提供价值标签。按交换座位共享的布阵组划分训练/验证集。
 - `generate-data.mjs` 多进程生成真实模拟对局，`validate-model.mjs` 比较 JavaScript 与 PyTorch 数值并测单次推理；`selftest.mjs` 检查隐藏信息边界、机制输入、合法搜索和超时退路。
-- 决策器只有显式注入 `neuralModel` 时使用网络；`policyTrained=false` 时仅用价值头，保持原后续策略。真实游戏及普通实验入口没有自动加载模型。阶段成果和验收边界见 [AI 实验进度](ai-research.md#游戏网络首轮实现与验证)。
+- 搜索决策器只有显式注入 `neuralModel` 时使用网络；`policyTrained=false` 时仅用价值头，保持原后续策略。普通游戏及原 `ai-lab` 入口不自动加载权重；独立 `neural-preview` 构建显式接入冻结直接策略，见下条。阶段成果和验收边界见 [AI 实验进度](ai-research.md#游戏网络首轮实现与验证)。
 - `neuralHistory.js` 定义公开攻击事件：相对行动方、回合、武器坐标与能力、攻击前后公开视图，共 258 维；模拟器仅在 `recordPublicHistory=true` 时采集，不读取隐藏目标坐标或血量。`memoryNetwork.js` 支持 16 维 GRU 或历史交叉注意力的增量 JavaScript 推理，`directPolicy.js` 负责公平观测编码、记忆更新、合法动作过滤和直接选招。
 - `tools/training/policy-environment.mjs` 以 JSON 行协议批量运行真实模拟器；`memory_model.py` 定义对应 PyTorch 结构，`ppo.py` 采集当前策略轨迹，执行 PPO 自对弈并维护历史对手。`tools/sim/strength.mjs` 以 `candidate.direct=true` 显式测试直接策略，普通游戏及 Worker 不自动加载新模型。
+- `#naval-game-policy` 由 Vite 选择：普通构建指向 `gamePolicy.js`，只转发原策略；体验构建指向 `previewGamePolicy.js`，困难模式加载 GRU/PPO 第 48 轮权重，简单／中等仍为旧策略。主线程和内联 Worker 使用同一入口；`previewPolicyRuntime.js` 在实际成功结算后保存双方历史，出手前捕获能力，重开清空。后台线程不可用时，主线程从已执行的己方记录恢复伤害／水听状态并使用同一个模型，不静默切回旧困难 AI。
 - `expert_data.py` 从同一环境采集旧 HARD 实际执行的行动，按完整对局划分训练／验证；历史事件共享存储，局面仅引用当时前缀。`expert_train.py` 用合法行动交叉熵与正常终局价值预热现有 GRU／注意力，保留双集合逐轮指标及权重，再作为 PPO 起点；训练截断只提供行动标签。
 - 历史包含行动方视图，神经观测第 10–15 平面读取对手 `playerViewGrid`；它描述对手对己方舰队的认知，不是敌舰真实布阵。2026-10-24 实际房间水听测试确认双方接口均提供这些标记（`yourWaters=foe.view`），不能仅因读取链路就认定作弊。先前只固定己方攻击视图的差分未固定完整合法输入；后续仍核对实机追击与房间可见性一致，不因未经证明的隐私指控改变原算法路线。候选仍未通过学说平衡及实战验收。
 - `tools/training/ppo_audit.py` 冻结模型采集轨迹，比较采集与重算概率、策略分布及策略／价值／熵梯度；不执行参数更新。跨学说测试通过 `strength.mjs` 的显式 `matchups` 入口进行，逐对阵统计与阵营聚合含义见验证参考。

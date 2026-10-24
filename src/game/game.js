@@ -1,7 +1,9 @@
 import { BOARD_SIZE, CELL_SIZE as DEFAULT_CELL_SIZE, INTERACTION_TIMING } from "../config/constants";
 import { SHIP_TYPES } from "../data/ships";
 import { DIFFICULTY_SETTINGS, DEFAULT_DIFFICULTY } from "../data/difficulties";
-import { makeAIDecisionAsync, calculateProbabilityGrid, resetAIState } from '../ai/aiStrategy.js';
+import { calculateProbabilityGrid } from '../ai/aiStrategy.js';
+import { makeAIDecisionAsync, resetAIState, neuralPreview, policyLabel, policyMetadata, captureDecisionEvent,
+    completeDecisionEvent, decisionHistoryContext } from '#naval-game-policy';
 import AiDecisionWorker from '../ai/aiWorker.js?worker&inline';
 import { deployShips as aiDeployShips } from '../ai/aiDeployment.js';
 import { getPlayerModel, recordCompletedMatch } from '../ai/playerModel.js';
@@ -410,6 +412,11 @@ import { VIEW_STATE } from './battle/ViewState.js';
         initHelpDoctrines();
         updateDoctrineReadout();
         setDifficulty(currentDifficulty, { silent: true });
+        if (neuralPreview) {
+            document.title += ' · 神经 AI 体验版';
+            document.querySelector('.hdr-sub').textContent = policyLabel;
+            log(`${policyLabel}。困难模式使用当前冻结模型，简单／中等保留旧 AI。`, 'c-sys');
+        }
         
         // 初始化默认视图
         switchMobileView('player');
@@ -1636,6 +1643,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
             playerFaction,
             enemyFaction,
             level: currentDifficulty,
+            ...(neuralPreview ? { aiPolicy: policyMetadata } : {}),
             firstTurn: firstTurn === 'PLAYER' ? 'player' : 'ai',
             playerShips: myShips,
             playerHE: getHEProfile(playerFaction, myShips),
@@ -1838,6 +1846,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
             weaponService.setCurrentWeapon(currentWeapon);
             const context = buildPlayerWeaponContext();
             const viewBefore = getPlayerViewGrid();
+            const previewEvent = neuralPreview ? captureDecisionEvent('player', { weapon: currentWeapon, r, c },
+                viewBefore, myShips, enemyShips, playerFaction, enemyFaction) : null;
             const result = weaponService.executePlayerAction({ r, c }, context);
             
             if (!result.success) {
@@ -1866,6 +1876,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
             }
 
             recordStats(result.events, true, currentWeapon);
+            if (previewEvent) completeDecisionEvent(previewEvent, getPlayerViewGrid());
             recordAction({
                 seat: 'player',
                 weapon: currentWeapon,
@@ -1941,7 +1952,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
             aiWorker = new AiDecisionWorker();
             aiWorker.onmessage = (event) => {
                 const { id, decision, elapsedMs } = event.data || {};
-                if (import.meta.env?.MODE === 'ai-lab') console.debug('AI 实验线程耗时（毫秒）', elapsedMs);
+                if (import.meta.env?.MODE === 'ai-lab' || neuralPreview) console.debug('AI 实验线程耗时（毫秒）', elapsedMs);
                 const resolve = pendingAiDecisions.get(id);
                 if (resolve) {
                     pendingAiDecisions.delete(id);
@@ -2010,6 +2021,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
             enemyShips: aiOwnShips,
             difficultyConfig: AI_PROB_CONFIG,
             playerViewGrid,
+            ...decisionHistoryContext(viewGrid),
             placementPrior: getPlayerModel().placementPrior,
             areaContact: getAiAreaContact(),
             pursuit: { enabled: true, hunters: [{ ...endgameHunt.ai, areaContact: getAiAreaContact() }, { ...endgameHunt.player }] },
@@ -2051,10 +2063,13 @@ import { VIEW_STATE } from './battle/ViewState.js';
         if (weaponService) {
             const context = buildAIWeaponContext();
             const viewBefore = getAiViewGrid();
+            const previewEvent = neuralPreview ? captureDecisionEvent('ai', decision, viewBefore,
+                enemyShips, myShips, enemyFaction, playerFaction) : null;
             const result = weaponService.executeAIAction(decision, context);
 
             recordStats(result.events, false, decision.weapon);
             if (result.success) {
+                if (previewEvent) completeDecisionEvent(previewEvent, getAiViewGrid());
                 recordAction({
                     seat: 'ai',
                     weapon: decision.weapon,

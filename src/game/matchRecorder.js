@@ -413,7 +413,7 @@ function summarizeFootprint(view, r, c, offsets) {
     return counts;
 }
 
-export function beginMatch({ playerFaction, enemyFaction, level, firstTurn, playerShips, playerHE, aiHE }) {
+export function beginMatch({ playerFaction, enemyFaction, level, firstTurn, playerShips, playerHE, aiHE, aiPolicy }) {
     active = {
         id: makeId(),
         schemaVersion: STORE_VERSION,
@@ -423,6 +423,7 @@ export function beginMatch({ playerFaction, enemyFaction, level, firstTurn, play
         playerFaction,
         enemyFaction,
         level,
+        ...(aiPolicy ? { aiPolicy: { ...aiPolicy } } : {}),
         firstTurn,
         playerShips: normalizeShips(playerShips),
         playerHE: playerHE ? { shape: playerHE.shape, centerDamage: playerHE.centerDamage, outerDamage: playerHE.outerDamage } : null,
@@ -442,6 +443,7 @@ export function beginMatch({ playerFaction, enemyFaction, level, firstTurn, play
         playerFaction: active.playerFaction,
         enemyFaction: active.enemyFaction,
         level: active.level,
+        ...(active.aiPolicy ? { aiPolicy: active.aiPolicy } : {}),
         firstTurn: active.firstTurn,
         playerShips: active.playerShips,
         playerHE: active.playerHE,

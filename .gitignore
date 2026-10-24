@@ -7,3 +7,4 @@ match-logs/
 tools/sim/runs/
 tools/training/runs/
 tools/training/__pycache__/
+dist-neural-preview/
