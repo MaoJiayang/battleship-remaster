@@ -92,6 +92,10 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 - `check-environment.py --backend rocm --attention-smoke` 验证 64→64→32→1 网络的 CPU/显卡前向一致性、反向传播、参数更新及损失下降；另检查 32 维、2 头、16 个输入位置的注意力前向和有限梯度。显式按名称选择 RX 9060 XT，记录警告及含同步的训练吞吐；`--backend cpu` 可独立复查。它不训练游戏模型，也不是棋力、JavaScript 推理或手机性能验收。
 - 原生 ROCm 已通过上述检查，`results/rocm-check.json` 的 1024 批量、60 次更新约为显卡 55.3 毫秒、同版本单线程 CPU 145.2 毫秒；`rocm-large-attention-check.json` 的 16384 批量为显卡 213.3 毫秒、CPU 1066.4 毫秒，注意力前向最大差约 `1.34e-7`，两项均无捕获警告。它们是合成训练快照，不代表真实游戏网络或推理速度；最终维护入口另将最新验证存为 `environment-check.json`。
 - 早先 DirectML 0.2.5.dev240914＋PyTorch 2.4.1 也能完成小网络训练，但 `log_sigmoid_forward` 会回退 CPU；1024 批量的 60 次更新约 274.6 毫秒，同版本单线程 CPU 33.4 毫秒。与原生 ROCm 的 PyTorch 版本不同，不作为严格同版本后端对照。DirectML 需要在首次 CPU 反向传播前导入并初始化，否则本次实测触发自动求导设备队列断言；已在检查器中修正。按用户要求最终移除备用 DirectML 虚拟环境，仅保留结果及日志。
+- 原生 GRU 曾因 HIPRTC 缺少 `type_traits` 失败，CPU 检查及卷积／注意力通过不能覆盖这一融合内核。用户允许补齐依赖，并授权以后优先从本机同步必要环境，避免长期停留在有性能损失的替代路径。本机已有 VS Build Tools 2022 的 MSVC `14.44.35207` 与 Windows SDK `10.0.26100.0`；仅归档 VC `include` 与 SDK `ucrt/shared`，约 4.38MB，SHA256 `aa07e3d1a1c166d00aa44927619e7e2e6254f48e6b9a094bed22ee2016324c85`，远端放入 `toolchain-headers/msvc-14.44.35207-sdk-10.0.26100.0`。未安装 VS、未改驱动或系统 PATH。
+- `install-standard-headers.py --root <ai-training> --archive <目录内归档.tgz> --sha256 <校验值> --msvc 14.44.35207 --sdk 10.0.26100.0` 校验并准备头文件，先执行原生 GRU 验证，再写 `rocm-headers.json`。`rocm_runtime.py` 按虚拟环境位置读取配置，只为当前训练进程设置 `HIPRTC_COMPILE_OPTIONS_APPEND`；目录必须在集中根内且无空格。`check-gru-backend.py --output <新报告.json>` 复核自动配置，也可显式 `--includes` 诊断。
+- 首次显式路径验证 `results/gru-native-headers-first.json` 已通过批量 1／长度 1 和批量 32／长度 40 的前向、反向及 20 次更新，前向最大差约 `1.86e-7`、梯度差约 `7.45e-9`。首次编译约 15／5 秒，属于离线训练内核冷启动，不是玩家端推理时延。普通 ROCm 运行包外另检查了约 246MB 的 AMD 开发包，未安装；其内的 HIP/CUDA 标准库变体不能直接当作此处的 MSVC 标准头文件。
+- `results/gru-native-configured.json` 已在不传 `--includes` 的新进程中复测通过，确认自动配置有效；批量 32／长度 40 的 20 次更新约 0.128 秒，该微基准不能替代完整 PPO 吞吐对照。后续遇到类似缺失可按用户授权主动同步本机必要内容；需要下载时微软官方源也已允许，必要时可安装 VS，本机 7890 代理端口已确认可达。本次实际没有安装 VS。
 
 ### 新旧算法配对验证
 
