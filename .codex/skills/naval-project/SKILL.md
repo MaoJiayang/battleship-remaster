@@ -31,7 +31,7 @@ description: 在海战棋“海权：决战深蓝”仓库中开发、排查或�
 ## 关键边界
 
 1. **规则依据**：棋盘及舰队看 `src/config/constants.js`、`src/data/ships.js`；阵营能力看 `src/data/doctrines.js`；实际结算看 `src/game/battle/`。`docs/设定.md` 含早期 10×10、固定武器等旧说明，部分注释和赛规卡也已漂移。
-2. **AI 公平信息**：`game.js → buildAiDecisionContext()` 的目标舰只含身份、长度、最大舱室血量和沉没状态；真实坐标与当前血量只属于 AI 自己的舰队。历史画像来自已结束对局，残局接触是双方共有规则。
+2. **AI 公平信息**：`game.js → buildAiDecisionContext()` 的目标舰只含身份、长度、最大舱室血量和沉没状态；真实坐标与当前血量只属于 AI 自己的舰队。对手对己方海域的观测与对手的真实舰队信息要分开核对：房间 `yourWaters` 直接下发前者，不能仅凭变量名或不同 DOM 类名认定其私有。历史画像来自已结束对局，残局接触是双方共有规则；实机追击显示与房间视图的一致性仍需按具体字段审计。
 3. **状态与视图**：实战视野仍从格子 DOM 类名读取。调整 `hit/contact/destroyed/miss/detect/ai-detect` 或渲染顺序时，同时检查 `getAiViewGrid()`、`getPlayerViewGrid()` 和武器目标校验。
 4. **模拟与实战**：共享 `AIDecisionEngine`、学说、命中及水听结算器；实战武器封装与模拟执行流程仍分别存在。规则变更要核对两边，尤其是穿甲、航母沉没后的武器降级、水听接触和残局追击。模拟当前不带实战玩家画像。
 5. **异步回合**：AI 决策通过内联 Web Worker（浏览器后台线程）计算，动画计时到达后应用。重开通过 `aiTurnToken` 作废旧结果；维护先手、重开和难度切换时核对在途任务与视野快照。
