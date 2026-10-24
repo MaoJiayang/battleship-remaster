@@ -49,6 +49,33 @@ assert.equal(completed.results.length, 2);
 assert.ok(completed.results.every(result => result.truncated && !result.terminated && result.winner === null));
 assert.ok(completed.results.every(result => result.finalObservations.length === 2
     && result.finalObservations.every(observation => observation.events.length === 1)));
+assert.equal(completed.actions.length, 2);
+assert.ok(completed.actions.every(action => action.seat === 'A' && reset.observations[action.index].mask[action.action]));
+for (const limit of [1, 2, 3, 4]) {
+    const learnerSeats = ['A', 'B'];
+    const requests = [{ type: 'reset', games: 2, seed: 240124, maxPlies: limit, learnerSeats }];
+    for (let ply = 0; ply <= limit; ply++) {
+        const indices = learnerSeats.map((seat, index) => ({ seat, index }))
+            .filter(({ seat }) => ply < limit + Number(seat !== (limit % 2 === 0 ? 'A' : 'B')));
+        requests.push({ type: 'step', actions: indices.map(({ index }) => ({ index, action: null })) });
+    }
+    const aligned = spawnSync(globalThis.process.execPath, [fileURLToPath(new URL('./policy-environment.mjs', import.meta.url))],
+        { input: requests.map(request => JSON.stringify(request)).join('\n') + '\n', encoding: 'utf8', windowsHide: true });
+    assert.equal(aligned.status, 0, aligned.stderr);
+    const responses = aligned.stdout.trim().split('\n').map(line => JSON.parse(line));
+    assert.ok(responses.every(response => !response.error));
+    const results = responses.flatMap(response => response.results ?? []);
+    assert.equal(results.length, 2);
+    for (const result of results) {
+        assert.equal(result.currentSeat, learnerSeats[result.index], '自举必须发生在学习方决策前');
+        assert.equal(result.learnerSeat, result.currentSeat);
+        assert.ok(result.plies === limit || result.plies === limit + 1);
+        assert.equal(responses.flatMap(response => response.actions ?? []).filter(action => action.index === result.index).length,
+            result.plies, '只能记录实际执行的行动');
+        assert.equal(result.finalObservations.find(observation => observation.seat === result.currentSeat).events.length,
+            result.plies === 1 ? 1 : 2);
+    }
+}
 for (let attempt = 0; attempt < 100; attempt++) {
     const fleet = deployFleet('uniform');
     const cells = new Set();

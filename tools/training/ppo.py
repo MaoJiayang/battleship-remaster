@@ -68,7 +68,8 @@ def collect(environment, network, pool, games, seed, max_plies, device, generato
     opponents = generator.integers(0, len(pool) + 2, size=games)
     histories = {(index, seat): [] for index in range(games) for seat in ("A", "B")}
     trajectories = [[] for _ in range(games)]
-    response = environment.call({"type": "reset", "games": games, "seed": seed, "maxPlies": max_plies})
+    response = environment.call({"type": "reset", "games": games, "seed": seed, "maxPlies": max_plies,
+                                 "learnerSeats": learner_seats})
     outcomes = []
     while response["observations"]:
         observations = response["observations"]
@@ -104,6 +105,8 @@ def collect(environment, network, pool, games, seed, max_plies, device, generato
         for result in response["results"]:
             index = result["index"]
             if result["truncated"]:
+                if result["currentSeat"] != learner_seats[index] or result["learnerSeat"] != learner_seats[index]:
+                    raise RuntimeError("训练截断没有对齐下一次己方决策。")
                 final = next(item for item in result["finalObservations"] if item["seat"] == learner_seats[index])
                 histories[index, final["seat"]].extend(final.pop("events"))
                 final["history"] = histories[index, final["seat"]]

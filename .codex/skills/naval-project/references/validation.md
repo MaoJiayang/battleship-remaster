@@ -136,7 +136,7 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 - `node tools/training/validate-memory.mjs <模型.json> <parity.json>` 检查 PyTorch／JavaScript 误差、完整历史与分段增量缓存一致，以及单次追加事件的预热耗时；它不包含当前棋盘观测编码。历史注意力为当前局面查询过去事件、双头、顺序位置编码，不能称作完整自回归 Transformer。
 - 配对配置 `candidate: { model: "相对配置文件的模型.json", direct: true, tuning: { search: false } }` 启用直接策略；默认贪心决策，训练按合法分布采样。可选 `stochastic=true` 评估训练行为分布，`layout=uniform` 使用联合均匀布阵对照，默认仍为原分散布阵。历史模型必须显式 `direct=true`，避免静默以空历史参加搜索。
 - 报告新增 `truncations/scoreBounds`，存在未解决的截断时 `rate=null`、区间不作有效胜率证据；保留原 `winner='DRAW'` 仅作旧字段兼容。另报告获胜对局的总手数中位及每次行动实际伤害，作为效率辅助指标；胜局样本变化会影响这些条件统计，不能直接当作普遍因果收益。
-- 当前截断自测覆盖终局标记、无伪造行动及末端价值数值一致，尚未验证行动阶段对齐：己方行动后立即截止时，末端可能不是该价值头训练的己方决策阶段。已向用户提出对齐决策边界或扩展行动方输入的选择；确认前不改该语义，也不宣称截断自举已完整验收。所有已用于棋力分析的正式规模 PPO 批次目前均为 0 截断。
+- 用户已批准对齐训练截止到下一次学习方决策；PPO 重置传 `learnerSeats`，环境最多延长一手对手行动，末端返回并核对 `currentSeat/learnerSeat`。未传学习座位时保持原手数上限。`policy-selftest.mjs` 覆盖 1–4 手、双方座位、实际行动数及正常制胜优先；`ppo-selftest.py` 复演对手补走后再比较末端价值。2026-10-24 本机 Node 与远端 r19 的 Node／CPU PyTorch 行为验证均通过；本机 Python 没有 PyTorch，未在本机执行该 Python 自测。所有已用于棋力分析的正式规模 PPO 批次均为 0 截断。
 - 这些路径当前仅用于模拟实验，浏览器及多人桩没有自动装载新权重；节点计时包含候选决策与该手实际模拟结算，真机、浏览器动画及模型单文件打包仍需在候选通过棋力筛选后验证。
 
 `node tools/sim/calibration.mjs <配置.json> <输出.json>` 捕获模型通过复核的行动，在相同的真实布局快照上分别强制执行候选与基准，再用旧困难 AI 继续双方对局；继续策略的随机条件配对。配置支持 `games`、`limit`、`continuations`、`modelContinuations`（默认 128）、`seedOffset` 和 `tuning`。完整布局仅供外部评估器执行物理环境，决策输入仍由模拟引擎过滤。

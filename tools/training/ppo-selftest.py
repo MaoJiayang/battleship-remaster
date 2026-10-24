@@ -27,13 +27,17 @@ try:
     records, outcomes = collect(environment, network, [], 2, 240124, 1, device, generator)
     assert len(records) == 1, "截断后记录了未执行的己方行动。"
     assert len(outcomes) == 2 and all(result["truncated"] for result in outcomes)
+    assert [result["plies"] for result in sorted(outcomes, key=lambda result: result["index"])] == [2, 1]
     assert records[0]["mask"][records[0]["action"]]
     with torch.no_grad():
         action_distribution, _ = distribution(network, records, device)
         actual_log = action_distribution.log_prob(torch.tensor([records[0]["action"]])).item()
     assert math.isclose(actual_log, records[0]["old_log"], abs_tol=1e-6), "采集概率与训练策略不一致。"
-    environment.call({"type": "reset", "games": 2, "seed": 240124, "maxPlies": 1})
+    environment.call({"type": "reset", "games": 2, "seed": 240124, "maxPlies": 1, "learnerSeats": ["A", "B"]})
     replay = environment.call({"type": "step", "actions": [{"index": 0, "action": records[0]["action"]}]})
+    assert not replay["results"] and replay["observations"][0]["seat"] == "B"
+    replay = environment.call({"type": "step", "actions": [{"index": 0, "action": None}]})
+    assert replay["results"][0]["currentSeat"] == "A"
     final = next(item for item in replay["results"][0]["finalObservations"] if item["seat"] == "A")
     final["history"] = final.pop("events")
     with torch.no_grad():

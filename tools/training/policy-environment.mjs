@@ -25,12 +25,14 @@ function observation(index, seat = games[index].currentSeat) {
 
 function reset(spec) {
     if (!Number.isInteger(spec.games) || spec.games < 2 || !Number.isInteger(spec.maxPlies) || spec.maxPlies < 1) throw new Error('环境配置无效');
+    if (spec.learnerSeats && (!Array.isArray(spec.learnerSeats) || spec.learnerSeats.length !== spec.games
+        || spec.learnerSeats.some(seat => seat !== 'A' && seat !== 'B'))) throw new Error('学习座位配置无效');
     games = [];
     cursors = [];
     const saved = Math.random;
     try {
         for (let index = 0; index < spec.games; index++) {
-            const group = Math.floor(index / 2);
+            const group = spec.paired === false ? index : Math.floor(index / 2);
             const seed = hashSeed(`ppo-layout|${spec.seed}|${group}`);
             const layout = hashSeed(`ppo-layout-kind|${spec.seed}|${group}`) % 2 ? 'uniform' : 'spread';
             Math.random = mulberry32(seed);
@@ -39,10 +41,14 @@ function reset(spec) {
             const fleetB = deployFleet(layout);
             const factionA = FACTIONS[group % 7];
             const factionB = FACTIONS[Math.floor(group / 7) % 7];
+            const learnerSeat = spec.learnerSeats?.[index];
+            const nextSeat = spec.maxPlies % 2 === 0 ? 'A' : 'B';
+            const maxPlies = spec.maxPlies + Number(Boolean(learnerSeat && learnerSeat !== nextSeat));
             const game = new SimulationEngine({ faction: factionA }, { faction: factionB }, {
-                fleetA, fleetB, maxPlies: spec.maxPlies, recordPublicHistory: true
+                fleetA, fleetB, maxPlies, recordPublicHistory: true
             });
             game.policySeed = seed;
+            game.learnerSeat = learnerSeat;
             games.push(game);
             cursors.push({ A: 0, B: 0 });
         }
@@ -53,6 +59,7 @@ function reset(spec) {
 function step(commands) {
     const observations = [];
     const results = [];
+    const actions = [];
     for (const command of commands) {
         const { index } = command;
         const game = games[index];
@@ -73,6 +80,7 @@ function step(commands) {
             }
             const action = game.step();
             if (action && command.action !== null && neuralActionIndex(action) !== command.action) throw new Error('实际执行行动不一致');
+            if (action) actions.push({ index, seat, action: neuralActionIndex(action) });
             if (!game.finished && game.plies >= game.maxPlies) game.step();
         } finally {
             side.engine.decide = original;
@@ -82,11 +90,12 @@ function step(commands) {
         else {
             const result = game.getResult();
             results.push({ index, winner: game.winner, terminated: result.terminated, truncated: result.truncated,
+                currentSeat: game.currentSeat, learnerSeat: game.learnerSeat,
                 plies: game.plies, damage: [result.A.stats.damage, result.B.stats.damage],
                 finalObservations: result.truncated ? [observation(index, 'A'), observation(index, 'B')] : [] });
         }
     }
-    return { observations, results };
+    return { observations, results, actions };
 }
 
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
