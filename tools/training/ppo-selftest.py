@@ -5,6 +5,7 @@ import torch
 
 from memory_model import MemoryNetwork
 from ppo import Environment, collect, distribution, update, opponent_statistics
+from ppo_audit import audit_batch
 
 
 torch.set_num_threads(2)
@@ -39,6 +40,14 @@ try:
         _, expected = distribution(network, [final], device)
     assert math.isclose(records[0]["return"], expected.item(), abs_tol=1e-6), "训练截断没有使用后续价值。"
     assert not math.isclose(records[0]["return"], 0.5, abs_tol=1e-5), "训练截断被固定写成平局。"
+    records[0]["advantage"] = 0.0
+    diagnostic_before = [parameter.detach().clone() for parameter in network.parameters()]
+    diagnostics = audit_batch(network, records, device)
+    assert not network.training, "诊断改变了模型模式。"
+    assert diagnostics["max_log_probability_error"] < 1e-6
+    assert diagnostics["gradient_norms"]["actor"] == 0
+    assert all(math.isfinite(value) for value in diagnostics["gradient_norms"].values())
+    assert all(torch.equal(previous, parameter) for previous, parameter in zip(diagnostic_before, network.parameters())), "诊断改变了策略。"
     optimizer = torch.optim.AdamW(network.parameters(), lr=0.0003, foreach=False)
     before = [parameter.detach().clone() for parameter in network.parameters()]
     statistics = update(network, optimizer, records, device, generator, 1, 1)
