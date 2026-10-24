@@ -25,6 +25,7 @@
  */
 
 import { BOARD_SIZE } from '../config/constants.js';
+import { coverageHasPotential, isValidActionTarget } from '../game/battle/ActionRules.js';
 import {
     getAPDamage,
     getAPMaxDamage,
@@ -105,35 +106,6 @@ export function getActionCoverage(weapon, r, c, abilities = null) {
     const cells = [];
     forEachCoverage(weapon, r, c, abilities, (nr, nc) => cells.push({ r: nr, c: nc }));
     return cells;
-}
-
-/**
- * 范围内是否还有未知海域（用于判断水听是否值得再扫）
- */
-function hasUnknownInArea(viewGrid, r, c, radius) {
-    for (let dr = -radius; dr <= radius; dr++) {
-        for (let dc = -radius; dc <= radius; dc++) {
-            const nr = r + dr;
-            const nc = c + dc;
-            if (inBounds(nr, nc) && viewGrid[nr][nc] === CellState.UNKNOWN) return true;
-        }
-    }
-    return false;
-}
-
-/**
- * 攻击覆盖中是否还有可打击/可侦察的格子
- */
-function coverageHasPotential(viewGrid, weapon, r, c, abilities) {
-    let potential = false;
-    forEachCoverage(weapon, r, c, abilities, (nr, nc) => {
-        if (potential) return;
-        const state = viewGrid[nr][nc];
-        if (state !== CellState.MISS && state !== CellState.SUNK && state !== CellState.DESTROYED) {
-            potential = true;
-        }
-    });
-    return potential;
 }
 
 // ============================================================================
@@ -1054,26 +1026,21 @@ export function checkAIAbilities(ships, factionId = 'us', opponentFaction = null
  * 枚举所有可用行动
  * - 主炮可打未知/命中/疑似格
  * - 空袭中心可落在水面（用于覆盖周围未知格）
- * - 水听只在扫描范围内仍有未知海域时考虑
+ * - 水听排除根据已有观测可以确定无效的扫描
  * 
  * @param {number[][]} viewGrid - 视角网格
  * @param {Object} abilities - 能力状态
  * @returns {Array<{weapon: string, r: number, c: number}>} 行动列表
  */
-export function enumerateAllActions(viewGrid, abilities) {
+export function enumerateAllActions(viewGrid, abilities, evidence = []) {
     const actions = [];
-    const radius = abilities?.sonarRadius ?? 1;
     
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
             const state = viewGrid[r][c];
             
-            if (state === CellState.SUNK) {
-                continue;
-            }
-            
-            // 水听：扫描圈内仍有未知海域才值得
-            if (abilities.canUseSonar && hasUnknownInArea(viewGrid, r, c, radius)) {
+            // 水听：排除根据已有观测可以确定无效的扫描
+            if (isValidActionTarget({ weapon: 'SONAR', r, c }, viewGrid, abilities, evidence)) {
                 actions.push({ weapon: 'SONAR', r, c });
             }
             
@@ -1085,7 +1052,7 @@ export function enumerateAllActions(viewGrid, abilities) {
                 continue;
             }
             
-            if (state === CellState.DESTROYED) {
+            if (state === CellState.DESTROYED || state === CellState.SUNK) {
                 if (abilities.canUseAir && coverageHasPotential(viewGrid, 'HE', r, c, abilities)) {
                     actions.push({ weapon: 'HE', r, c });
                 }
@@ -1439,25 +1406,18 @@ export function calculateRiskBonus(action, shipThreats, beliefState, abilities, 
  * @param {Object} abilities - 能力状态
  * @returns {{r: number, c: number, weapon: string}} 随机行动
  */
-export function makeRandomDecision(viewGrid, abilities) {
-    let r, c;
-    let attempts = 0;
-    
-    do {
-        r = Math.floor(Math.random() * BOARD_SIZE);
-        c = Math.floor(Math.random() * BOARD_SIZE);
-        attempts++;
-    } while ((viewGrid[r][c] === CellState.MISS || 
-              viewGrid[r][c] === CellState.DESTROYED || 
-              viewGrid[r][c] === CellState.SUNK) && attempts < 200);
-    
+export function makeRandomDecision(viewGrid, abilities, evidence = []) {
+    const actions = enumerateAllActions(viewGrid, abilities, evidence);
+    let weapon = 'AP';
     // 随机选择武器
     if (abilities.canUseAir && Math.random() < 0.1) {
-        return { r, c, weapon: 'HE' };
+        weapon = 'HE';
     } else if (abilities.canUseSonar && Math.random() < 0.1) {
-        return { r, c, weapon: 'SONAR' };
+        weapon = 'SONAR';
     }
-    return { r, c, weapon: 'AP' };
+    const selected = actions.filter(action => action.weapon === weapon);
+    const choices = selected.length ? selected : actions;
+    return choices.length ? choices[Math.floor(Math.random() * choices.length)] : findFallbackTarget(viewGrid);
 }
 
 /**

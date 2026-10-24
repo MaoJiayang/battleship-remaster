@@ -25,6 +25,7 @@ import { deployShips } from '../../src/ai/aiDeployment.js';
 import { SHIP_TYPES } from '../../src/data/ships.js';
 import { BOARD_SIZE } from '../../src/config/constants.js';
 import { VIEW_STATE } from '../../src/game/battle/ViewState.js';
+import { isValidActionTarget } from '../../src/game/battle/ActionRules.js';
 import {
     getAPDamage,
     getAPMaxDamage,
@@ -84,6 +85,7 @@ function serializeSide(side) {
         ships: side.ships,
         grid: side.grid,
         view: side.view,
+        sonarEvidence: side.sonarEvidence,
         engine: {
             damageDealtGrid: side.engine.damageDealtGrid,
             actionHistory: side.engine.actionHistory || [],
@@ -132,7 +134,7 @@ export function reviveEngine(saved) {
         ai.damageDealtGrid = savedSide.engine.damageDealtGrid;
         ai.actionHistory = savedSide.engine.actionHistory || [];
         ai.sonarHistory = new Set(savedSide.engine.sonarHistory);
-        return { ...savedSide, engine: ai };
+        return { ...savedSide, sonarEvidence: savedSide.sonarEvidence || [], engine: ai };
     };
     engine.sides = {
         A: reviveSide(saved.sides.A),
@@ -243,11 +245,12 @@ function applyPlayerAction(engine, session, action) {
         engine._finish(null);
         return;
     }
-    engine.plies++;
     const seat = engine.currentSeat;
     const attacker = engine.sides[seat];
     const defender = engine.sides[OTHER[seat]];
     const abilities = engine._abilities(attacker, defender);
+    if (!isValidActionTarget(action, attacker.view, abilities, attacker.sonarEvidence)) throw new ArenaError('行动无效：没有可更新的海域');
+    engine.plies++;
     engine._executeAction(attacker, defender, action, abilities);
 
     if (defender.ships.every(s => s.sunk)) {
@@ -435,22 +438,22 @@ export function validateAction(engine, session, weapon, r, c) {
     const defender = engine.sides[session.enemySeat];
 
     if (weapon === 'AP') {
-        const cell = defender.grid[r][c];
-        if (cell.hit && cell.shipId === -1) return '该格已确认未中，不能再用主炮';
-        if (cell.hit && cell.shipId !== -1) {
-            const ship = defender.ships[cell.shipId];
-            if (ship.hp[cell.segmentIndex] <= 0) return '该舱室已被摧毁，不能再用主炮';
-        }
+        if (attacker.view[r][c] === VIEW_STATE.MISS) return '该格已确认未中，不能再用主炮';
+        if (!isValidActionTarget({ weapon, r, c }, attacker.view)) return '该舱室已被摧毁，不能再用主炮';
         return null;
     }
     if (weapon === 'HE') {
         const profile = getHEProfile(attacker.faction, attacker.ships);
         if (!profile.available) return '空袭不可用：航母已沉没';
+        if (!isValidActionTarget({ weapon, r, c }, attacker.view, { canUseAir: true, heShape: profile.shape })) return '覆盖范围内没有可更新的海域';
         return null;
     }
     if (weapon === 'SONAR') {
         const usable = attacker.ships.some(s => (s.code === 'DD' || s.code === 'SS') && !s.sunk);
         if (!usable) return '水听不可用：DD/SS 已沉没';
+        const profile = getSonarProfile(attacker.faction);
+        if (!isValidActionTarget({ weapon, r, c }, attacker.view,
+            { canUseSonar: true, sonarRadius: profile.radius, sonarReveal: profile.reveal }, attacker.sonarEvidence)) return '扫描范围内没有可更新的海域';
         return null;
     }
     return `未知武器 ${weapon}`;

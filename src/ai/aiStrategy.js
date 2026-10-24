@@ -28,6 +28,7 @@
  */
 
 import { BOARD_SIZE } from '../config/constants.js';
+import { isValidActionTarget } from '../game/battle/ActionRules.js';
 import {
     BeliefState,
     CellState,
@@ -95,6 +96,7 @@ export class AIDecisionEngine {
     }
 
     recordDecision(action, abilities, viewGrid) {
+        if (!isValidActionTarget(action, viewGrid, abilities)) throw new Error('AI 选择了无效行动');
         this.recordDamageDealt(action, abilities, viewGrid);
         if (action.weapon === 'SONAR') this.sonarHistory.add(`${action.r},${action.c}`);
         if (!this.actionHistory) this.actionHistory = [];
@@ -205,22 +207,14 @@ export class AIDecisionEngine {
 
         // 3. 难度控制：随机扰动
         if (Math.random() < randomness) {
-            return this.recordDecision(makeRandomDecision(viewGrid, abilities), abilities, viewGrid);
+            return this.recordDecision(makeRandomDecision(viewGrid, abilities, context.sonarEvidence), abilities, viewGrid);
         }
 
         // 4. 构建置信状态（蒙特卡洛采样；历史布阵先验与区域接触观测参与概率更新）
         const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount, { placementPrior, areaContact, fastSampling: tuning.fastSampling });
 
-        // 5. 枚举行动，过滤已用过的声呐点
-        let actions = enumerateAllActions(viewGrid, abilities);
-        if (this.sonarHistory.size > 0) {
-            actions = actions.filter(action => {
-                if (action.weapon === 'SONAR') {
-                    return !this.sonarHistory.has(`${action.r},${action.c}`);
-                }
-                return true;
-            });
-        }
+        // 5. 枚举行动，过滤已有观测可以确定无效的目标
+        const actions = enumerateAllActions(viewGrid, abilities, context.sonarEvidence);
 
         if (actions.length === 0) {
             return findFallbackTarget(viewGrid);

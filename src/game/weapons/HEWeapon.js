@@ -3,6 +3,7 @@
 
 import { WeaponBase } from './WeaponBase.js';
 import { resolveHit } from '../battle/HitResolver.js';
+import { isValidActionTarget } from '../battle/ActionRules.js';
 import { createLogEvent, createEffectEvent, isInBounds } from './WeaponTypes.js';
 import { getHEProfile, getHEOffsets, applyHEDefense, getHEVulnerability } from '../../data/doctrines.js';
 
@@ -48,8 +49,9 @@ export class HEWeapon extends WeaponBase {
      * 中心点可以在任意位置（包括已摧毁格，用于打击周围）
      */
     isValidTarget(target, context) {
-        if (!this.canUse(context)) return false;
-        return isInBounds(target.r, target.c);
+        const profile = this._profile(context);
+        return isValidActionTarget({ weapon: 'HE', ...target }, context.attackerViewGrid,
+            { canUseAir: profile.available, heShape: profile.shape });
     }
     
     /**

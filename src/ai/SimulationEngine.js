@@ -16,6 +16,7 @@ import { deployShips } from './aiDeployment.js';
 import { AIDecisionEngine } from './aiStrategy.js';
 import { getAITuning } from './aiTuning.js';
 import { publicDecisionEvent } from './neuralHistory.js';
+import { isValidActionTarget, recordSonarEvidence, recordContactEvidence } from '../game/battle/ActionRules.js';
 import { checkAIAbilities } from './aiCore.js';
 import { DIFFICULTY_SETTINGS } from '../data/difficulties.js';
 import { VIEW_STATE } from '../game/battle/ViewState.js';
@@ -190,6 +191,7 @@ export class SimulationEngine {
             ships,
             grid: buildGrid(ships),
             view: createView(),
+            sonarEvidence: [],
             engine: new AIDecisionEngine(),
             hunt: { turns: 0, first: true, areaContact: null },
             oneLeftPly: null,
@@ -223,6 +225,7 @@ export class SimulationEngine {
             enemyShips: describeOwnShips(attacker.ships),
             difficultyConfig: this._decisionConfig(attacker),
             playerViewGrid: defender.view,
+            sonarEvidence: attacker.sonarEvidence,
             ...(this.recordPublicHistory ? { publicEvents: this.publicHistory, decisionSeat: attacker === this.sides.A ? 'A' : 'B' } : {}),
             areaContact,
             pursuit: { enabled: this.enablePursuit, hunters: [{ ...attacker.hunt }, { ...defender.hunt }] },
@@ -248,14 +251,15 @@ export class SimulationEngine {
             return null;
         }
 
-        this.plies++;
         const seat = this.currentSeat;
         const attacker = this.sides[seat];
         const defender = this.sides[OTHER_SEAT[seat]];
 
         const decision = attacker.engine.decide(this._decisionContext(attacker, defender));
         const abilities = this._abilities(attacker, defender);
+        if (!isValidActionTarget(decision, attacker.view, abilities, attacker.sonarEvidence)) throw new Error('行动无效：目标没有可更新的海域或武器不可用');
         const before = this.recordPublicHistory ? attacker.view.map(row => [...row]) : null;
+        this.plies++;
         const action = this._executeAction(attacker, defender, decision, abilities);
 
         if (before) this.publicHistory.push(publicDecisionEvent(seat, this.plies, action, abilities, before, attacker.view));
@@ -324,6 +328,7 @@ export class SimulationEngine {
     }
 
     _executeAction(attacker, defender, action, abilities) {
+        if (!isValidActionTarget(action, attacker.view, abilities, attacker.sonarEvidence)) throw new Error('行动无效：目标没有可更新的海域或武器不可用');
         const { weapon, r, c } = action;
         attacker.stats.weapons[weapon] = (attacker.stats.weapons[weapon] || 0) + 1;
 
@@ -427,6 +432,7 @@ export class SimulationEngine {
             abilities.sonarReveal || 'center'
         );
         applyEventsToView(result.events, attacker.view);
+        recordSonarEvidence(attacker.sonarEvidence, result.events);
         attacker.stats.pings++;
     }
 
@@ -434,6 +440,8 @@ export class SimulationEngine {
         const view = hunter.view.flat();
         const contact = advancePursuit(hunter.hunt, target.ships, view);
         if (!contact) return;
+        recordContactEvidence(hunter.sonarEvidence, contact.cells.map(cell => cell.r * BOARD_SIZE + cell.c)
+            .filter(cell => view[cell] === VIEW_STATE.SUSPECT));
         for (let row = 0; row < BOARD_SIZE; row++) {
             for (let col = 0; col < BOARD_SIZE; col++) hunter.view[row][col] = view[row * BOARD_SIZE + col];
         }

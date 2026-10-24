@@ -55,9 +55,19 @@ export function resolveHit(r, c, damage, grid, ships, isPlayer, options = {}) {
         const order = [segIdx];
         if (options.penetrate) {
             if (maxPenetrations > 1) {
+                let forwardOpen = true;
+                let backwardOpen = true;
                 for (let d = 1; d < ship.len; d++) {
-                    if (segIdx + d < ship.len) order.push(segIdx + d);
-                    if (segIdx - d >= 0) order.push(segIdx - d);
+                    const forward = segIdx + d;
+                    const backward = segIdx - d;
+                    if (forwardOpen && forward < ship.len) {
+                        if (ship.hp[forward] <= 0) forwardOpen = false;
+                        else order.push(forward);
+                    }
+                    if (backwardOpen && backward >= 0) {
+                        if (ship.hp[backward] <= 0) backwardOpen = false;
+                        else order.push(backward);
+                    }
                 }
             } else {
                 if (segIdx + 1 < ship.len) order.push(segIdx + 1);

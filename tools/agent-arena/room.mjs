@@ -23,6 +23,7 @@ import { deployShips } from '../../src/ai/aiDeployment.js';
 import { SHIP_TYPES } from '../../src/data/ships.js';
 import { getAITuning } from '../../src/ai/aiTuning.js';
 import { VIEW_STATE } from '../../src/game/battle/ViewState.js';
+import { isValidActionTarget } from '../../src/game/battle/ActionRules.js';
 import { ArenaError, reviveEngine, serializeEngine, statusText, validateAction } from './arena.mjs';
 
 const OTHER = { A: 'B', B: 'A' };
@@ -169,10 +170,11 @@ function applyAction(engine, seat, action) {
         engine._finish(null);
         return null;
     }
-    engine.plies++;
     const attacker = engine.sides[seat];
     const defender = engine.sides[OTHER[seat]];
     const abilities = engine._abilities(attacker, defender);
+    if (!isValidActionTarget(action, attacker.view, abilities, attacker.sonarEvidence)) throw new ArenaError('行动无效：没有可更新的海域');
+    engine.plies++;
     engine._executeAction(attacker, defender, action, abilities);
     if (defender.ships.every(s => s.sunk)) {
         engine._finish(seat);

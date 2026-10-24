@@ -3,6 +3,7 @@
 
 import { WeaponBase } from './WeaponBase.js';
 import { resolveSonar } from '../battle/SonarResolver.js';
+import { isValidActionTarget } from '../battle/ActionRules.js';
 import { createEffectEvent, isInBounds } from './WeaponTypes.js';
 import { getSonarProfile } from '../../data/doctrines.js';
 
@@ -48,10 +49,12 @@ export class SonarWeapon extends WeaponBase {
     }
     
     /**
-     * 声纳目标只需要在边界内即可
+     * 声纳目标根据可见状态与已有观测校验
      */
-    isValidTarget(target) {
-        return isInBounds(target.r, target.c);
+    isValidTarget(target, context) {
+        const profile = this._profile(context);
+        return isValidActionTarget({ weapon: 'SONAR', ...target }, context.attackerViewGrid,
+            { canUseSonar: this.canUse(context), sonarRadius: profile.radius, sonarReveal: profile.reveal }, context.sonarEvidence);
     }
     
     /**

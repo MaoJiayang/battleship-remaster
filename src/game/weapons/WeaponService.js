@@ -2,6 +2,7 @@
 // 武器服务 - 协调武器执行、事件注入和渲染
 
 import { EventType } from './WeaponTypes.js';
+import { recordSonarEvidence } from '../battle/ActionRules.js';
 
 /**
  * 武器服务
@@ -69,6 +70,7 @@ export class WeaponService {
         }
         
         const result = weapon.resolve(target, context);
+        if (weapon.id === 'SONAR') recordSonarEvidence(context.sonarEvidence, result.events);
         
         // 注入 grid 标识（玩家攻击敌方网格）
         this._injectGrid(result.events, 'ENEMY');
@@ -106,6 +108,7 @@ export class WeaponService {
         }
         
         const result = weapon.resolve({ r, c }, context);
+        if (weaponId === 'SONAR') recordSonarEvidence(context.sonarEvidence, result.events);
         
         // 注入 grid 标识和 AI 攻击标记（AI 攻击玩家网格）
         this._injectGrid(result.events, 'PLAYER', 'last-enemy-attack');

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
+import { neuralRulesId } from './src/ai/neuralRules.js';
 
 // 开发服务器把对局记录逐行追加到项目内 match-logs/hzq-YYYYMMDD.jsonl
 function matchLogPlugin() {
@@ -93,6 +94,7 @@ export default defineConfig(({ mode }) => {
     const hash = createHash('sha256').update(source).digest('hex');
     if (hash !== 'bc91d7b32a7257b189d64b26d13dc508e643d63778b62fb6123f71dc859dfa9a') throw new Error('体验模型不是已冻结的 GRU/PPO 第 48 轮候选');
     if (model.format !== 'naval-memory-v1' || model.memoryKind !== 'gru') throw new Error('体验模型格式不符');
+    if (model.rulesId !== neuralRulesId()) throw new Error('冻结体验模型属于旧规则；保留既有体验包，修复规则后需重新训练并验收权重');
     aliases['#naval-preview-model'] = modelPath;
     console.info(`神经 AI 体验模型 SHA256: ${hash}`);
   }

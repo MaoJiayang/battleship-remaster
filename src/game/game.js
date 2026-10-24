@@ -44,6 +44,7 @@ import {
     getSonarProfile
 } from '../data/doctrines.js';
 import { VIEW_STATE } from './battle/ViewState.js';
+import { recordContactEvidence } from './battle/ActionRules.js';
 
     // === 动态尺寸获取 ===
     function getCellSize() {
@@ -100,6 +101,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
     let playerStreak = 0;
     // 本局玩家的射击格（结算时写入历史画像）
     const playerShotCells = new Set();
+    const sonarEvidence = { player: [], ai: [] };
 
     // 追击阶段：一方仅剩最后 1 艘舰艇时，对方在下个己方回合获得接触区，之后每 3 回合刷新
     const ENDGAME_PING_INTERVAL = 3;
@@ -129,6 +131,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
         };
         playerStreak = 0;
         playerShotCells.clear();
+        sonarEvidence.player.length = 0;
+        sonarEvidence.ai.length = 0;
         endgameHunt.player.turns = 0;
         endgameHunt.player.first = true;
         endgameHunt.ai.turns = 0;
@@ -460,7 +464,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
             isPlayer: true,
             attackerFaction: playerFaction,
             defenderFaction: enemyFaction,
-            attackerViewGrid: getPlayerViewGrid()
+            attackerViewGrid: getPlayerViewGrid(),
+            sonarEvidence: sonarEvidence.player
         };
     }
 
@@ -475,7 +480,8 @@ import { VIEW_STATE } from './battle/ViewState.js';
             isPlayer: false,
             attackerFaction: enemyFaction,
             defenderFaction: playerFaction,
-            attackerViewGrid: getAiViewGrid()
+            attackerViewGrid: getAiViewGrid(),
+            sonarEvidence: sonarEvidence.ai
         };
     }
 
@@ -1867,9 +1873,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
                     }
                 }
                 const reason = result.reason === '目标无效'
-                    ? (cell && cell.classList.contains('destroyed')
-                        ? '该舱室已被摧毁，无法重复打击。'
-                        : '该海域已确认无目标，换一格试试。')
+                    ? '根据已有观测，该操作不会改变状态，请更换目标。'
                     : result.reason;
                 log(reason, 'c-sys');
                 return;
@@ -2021,6 +2025,7 @@ import { VIEW_STATE } from './battle/ViewState.js';
             enemyShips: aiOwnShips,
             difficultyConfig: AI_PROB_CONFIG,
             playerViewGrid,
+            sonarEvidence: sonarEvidence.ai,
             ...decisionHistoryContext(viewGrid),
             placementPrior: getPlayerModel().placementPrior,
             areaContact: getAiAreaContact(),
@@ -2248,6 +2253,9 @@ import { VIEW_STATE } from './battle/ViewState.js';
                     log('敌方侦察机标出了我方最后舰艇所在的海域。', 'c-warn');
                 }
             }
+            const view = hunter === 'player' ? getPlayerViewGrid() : getAiViewGrid();
+            recordContactEvidence(sonarEvidence[hunter], areaCells.filter(cell => view[cell.r][cell.c] === VIEW_STATE.SUSPECT)
+                .map(cell => cell.r * BOARD_SIZE + cell.c));
             return;
         }
     }

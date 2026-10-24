@@ -3,6 +3,7 @@
 
 import { WeaponBase } from './WeaponBase.js';
 import { resolveHit } from '../battle/HitResolver.js';
+import { isValidActionTarget } from '../battle/ActionRules.js';
 import { createLogEvent, createEffectEvent } from './WeaponTypes.js';
 import { VIEW_STATE } from '../battle/ViewState.js';
 import { sfx } from '../../audio/sfx.js';
@@ -31,20 +32,8 @@ export class APWeapon extends WeaponBase {
      * 判断目标是否有效
      */
     isValidTarget(target, context) {
-        if (!super.isValidTarget(target, context)) return false;
-        
-        const { r, c } = target;
-        const cell = context.defenderGrid[r][c];
-        
         // 已摧毁的格子不能再打
-        if (cell.hit && cell.shipId !== -1) {
-            const ship = context.defenderShips[cell.shipId];
-            if (ship.hp[cell.segmentIndex] <= 0) {
-                return false;
-            }
-        }
-        
-        return true;
+        return isValidActionTarget({ weapon: 'AP', ...target }, context.attackerViewGrid);
     }
     
     /**

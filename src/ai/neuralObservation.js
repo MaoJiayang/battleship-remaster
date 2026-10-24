@@ -3,8 +3,9 @@ import { SHIP_TYPES } from '../data/ships.js';
 import { DOCTRINES } from '../data/doctrines.js';
 import { CellState, checkAIAbilities, enumerateAllActions } from './aiCore.js';
 import { activeSensorRegions, approximatePosterior } from './rolloutBelief.js';
+import { NEURAL_SCHEMA, neuralRulesId } from './neuralRules.js';
 
-export const NEURAL_SCHEMA = 'naval-belief-v1';
+export { NEURAL_SCHEMA, neuralRulesId } from './neuralRules.js';
 export const NEURAL_WEAPONS = ['AP', 'HE', 'SONAR'];
 export const NEURAL_CHANNELS = 17;
 export const NEURAL_CELLS = BOARD_SIZE * BOARD_SIZE;
@@ -17,15 +18,6 @@ export function neuralActionIndex(action) {
 export function neuralAction(index) {
     const cell = index % NEURAL_CELLS;
     return { weapon: NEURAL_WEAPONS[Math.floor(index / NEURAL_CELLS)], r: Math.floor(cell / BOARD_SIZE), c: cell % BOARD_SIZE };
-}
-
-export function neuralRulesId() {
-    const mechanics = Object.fromEntries(Object.entries(DOCTRINES).map(([faction, doctrine]) => [faction,
-        Object.fromEntries(Object.entries(doctrine).filter(([key]) => ['ap', 'he', 'sonar', 'defense'].includes(key)))]));
-    const source = JSON.stringify([NEURAL_SCHEMA, BOARD_SIZE, SHIP_TYPES, mechanics]);
-    let hash = 2166136261;
-    for (const character of source) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619) >>> 0;
-    return hash.toString(16).padStart(8, '0');
 }
 
 export function neuralSensorRegions(context, history = []) {
@@ -108,8 +100,7 @@ export function encodeNeuralObservation(context, options = {}) {
     }
     globals.push(Number(context.pursuit?.enabled !== false));
     const mask = new Uint8Array(NEURAL_ACTIONS);
-    for (const action of enumerateAllActions(context.viewGrid, abilities)) {
-        if (action.weapon === 'SONAR' && options.sonarHistory?.has(`${action.r},${action.c}`)) continue;
+    for (const action of enumerateAllActions(context.viewGrid, abilities, context.sonarEvidence)) {
         mask[neuralActionIndex(action)] = 1;
     }
     return { schema: NEURAL_SCHEMA, rulesId: neuralRulesId(), planes, globals: Float32Array.from(globals), mask };

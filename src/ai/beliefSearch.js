@@ -3,7 +3,7 @@ import { getHEOffsets } from '../data/doctrines.js';
 import { resolveHit } from '../game/battle/HitResolver.js';
 import { resolveSonar } from '../game/battle/SonarResolver.js';
 import { advancePursuit } from '../game/battle/PursuitResolver.js';
-import { BeliefState, CellState, checkAIAbilities, getActionCoverage, evaluateAction } from './aiCore.js';
+import { BeliefState, CellState, checkAIAbilities, getActionCoverage, evaluateAction, enumerateAllActions } from './aiCore.js';
 import { approximatePosterior, activeSensorRegions } from './rolloutBelief.js';
 import { PairedEvidence, scenarioRandom } from './pairedEvidence.js';
 import { encodeNeuralObservation, neuralActionIndex, NEURAL_ACTIONS } from './neuralObservation.js';
@@ -174,16 +174,9 @@ function collectParticles(belief, view, history, context, tuning, deadline) {
     return particles;
 }
 
-function legalActions(view, abilities, includeSonar = true) {
-    const actions = [];
-    for (let cell = 0; cell < CELL_COUNT; cell++) {
-        const r = Math.floor(cell / BOARD_SIZE);
-        const c = cell % BOARD_SIZE;
-        if (isOpen(view[cell])) actions.push({ weapon: 'AP', r, c });
-        if (abilities.canUseAir && getActionCoverage('HE', r, c, abilities).some(point => isOpen(view[point.r * BOARD_SIZE + point.c]))) actions.push({ weapon: 'HE', r, c });
-        if (includeSonar && abilities.canUseSonar && getActionCoverage('SONAR', r, c, abilities).some(point => view[point.r * BOARD_SIZE + point.c] === CellState.UNKNOWN || view[point.r * BOARD_SIZE + point.c] === CellState.SUSPECT)) actions.push({ weapon: 'SONAR', r, c });
-    }
-    return actions;
+function legalActions(view, abilities, includeSonar = true, evidence = []) {
+    const grid = Array.from({ length: BOARD_SIZE }, (_, row) => Array.from(view.subarray(row * BOARD_SIZE, (row + 1) * BOARD_SIZE)));
+    return enumerateAllActions(grid, abilities, evidence).filter(action => includeSonar || action.weapon !== 'SONAR');
 }
 
 function victory(state) {
@@ -232,7 +225,7 @@ export class BeliefSearch {
         this.damageGrid = Float64Array.from(damageGrid.flat());
         const compiledHistory = compileHistory(history, this.view);
         this.compiledHistory = compiledHistory;
-        this.sensorRegions = [[], []];
+        this.sensorRegions = [[...(context.sonarEvidence || [])], []];
         for (const entry of compiledHistory) {
             if (!entry.scan || !entry.before || !entry.observed) continue;
             const cells = [...entry.scan].filter(cell => entry.before[cell] === CellState.UNKNOWN || entry.before[cell] === CellState.SUSPECT);
@@ -313,6 +306,7 @@ export class BeliefSearch {
             myShips: [...target.ships, ...(seat === 0 ? initialSunk : [])],
             aiFaction: own.faction, playerFaction: target.faction,
             areaContact: this.hunters(state)[seat].areaContact,
+            sonarEvidence: (state.regions || this.sensorRegions)[seat],
             pursuit: { enabled: this.pursuit?.enabled !== false, hunters: [this.hunters(state)[seat], this.hunters(state)[1 - seat]] }
         };
         const observation = encodeNeuralObservation(context, {
@@ -323,7 +317,7 @@ export class BeliefSearch {
     }
 
     nodeActions(state) {
-        const actions = legalActions(state.views[0], abilitiesFor(state.models[0], state.models[1]));
+        const actions = legalActions(state.views[0], abilitiesFor(state.models[0], state.models[1]), true, (state.regions || this.sensorRegions)[0]);
         if (!this.neuralModel) return actions;
         const { observation } = this.neuralPrediction(state, 0);
         return actions.filter(action => observation.mask[neuralActionIndex(action)]);
@@ -376,7 +370,7 @@ export class BeliefSearch {
             const { observation, prediction } = this.neuralPrediction(state, seat);
             let best = null;
             let maximum = -Infinity;
-            for (const action of legalActions(state.views[seat], abilitiesFor(state.models[seat], state.models[1 - seat]))) {
+            for (const action of legalActions(state.views[seat], abilitiesFor(state.models[seat], state.models[1 - seat]), true, (state.regions || this.sensorRegions)[seat])) {
                 const index = neuralActionIndex(action);
                 if (observation.mask[index] && prediction.logits[index] > maximum) { maximum = prediction.logits[index]; best = action; }
             }
@@ -401,6 +395,7 @@ export class BeliefSearch {
                 aiFaction: own.faction,
                 playerFaction: target.faction,
                 areaContact: this.hunters(state)[seat].areaContact,
+                sonarEvidence: (state.regions || this.sensorRegions)[seat],
                 difficultyConfig: { ...this.context.difficultyConfig, tuning: { ...this.tuning, search: false } }
             });
             engine.damageDealtGrid = damage;
