@@ -31,4 +31,26 @@ for (const search of [false, true]) {
     }
     assert.deepEqual(runs[0], runs[1], '提高并行度须保留全部对局，且不改变固定种子下的行为和结局');
 }
+const crossRuns = [];
+for (const jobs of [1, 4]) {
+    const specPath = path.join(directory, `cross-${jobs}.json`);
+    const outputPath = path.join(directory, `cross-out-${jobs}.json`);
+    const tuning = { search: false, fastSampling: true, sampleCount: 32, opponentSampleCount: 8, lookaheadSteps: 1 };
+    fs.writeFileSync(specPath, JSON.stringify({ matchups: [['us', 'ijn'], ['ijn', 'us']], pairs: 2, jobs, seedOffset: 20261024,
+        candidate: { tuning }, opponent: { tuning } }));
+    const result = spawnSync(process.execPath, [script, specPath, outputPath], { encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+    assert.equal(report.overall.games, 8, '跨学说对阵应各自交换算法座位');
+    assert.equal(report.matchups['us-ijn'].games, 4);
+    assert.equal(report.matchups['ijn-us'].games, 4);
+    assert.equal(report.factions.us.games, 4);
+    assert.equal(report.factions.ijn.games, 4);
+    const rows = Array.from({ length: jobs }, (_, shard) => JSON.parse(fs.readFileSync(outputPath.replace('.json', `-shard${shard}.json`), 'utf8')).rows)
+        .flat().map(({ decisionMs, phaseTimings, ...row }) => row)
+        .sort((left, right) => `${left.faction}-${left.opponentFaction}-${left.pair}-${left.seat}`.localeCompare(`${right.faction}-${right.opponentFaction}-${right.pair}-${right.seat}`));
+    assert.ok(rows.every(row => row.faction !== row.opponentFaction));
+    crossRuns.push(rows);
+}
+assert.deepEqual(crossRuns[0], crossRuns[1], '跨学说对局不应随并行度改变');
 console.log(`STRENGTH SELFTEST OK: ${directory}`);

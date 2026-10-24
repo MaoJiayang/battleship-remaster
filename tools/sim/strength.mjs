@@ -20,6 +20,10 @@ if (!specPath || !outputPath) {
 }
 const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
 const factions = spec.factions || FACTIONS;
+const matchups = spec.matchups ?? factions.map(faction => [faction, faction]);
+if (!Array.isArray(matchups) || !matchups.length || matchups.some(matchup => !Array.isArray(matchup) || matchup.length !== 2
+    || matchup.some(faction => !FACTIONS.includes(faction))) || new Set(matchups.map(matchup => matchup.join('-'))).size !== matchups.length) throw new Error('对阵必须为不重复的有效学说二元组');
+const candidateFactions = [...new Set(matchups.map(matchup => matchup[0]))];
 const pairs = spec.pairs ?? 50;
 const seedOffset = spec.seedOffset ?? 0;
 const candidate = { level: 'HARD', ...DIFFICULTY_SETTINGS.HARD, ...spec.candidate, tuning: { ...getAITuning('HARD'), search: true, fastSampling: true, searchFixedIterations: true, ...spec.candidate?.tuning } };
@@ -50,11 +54,12 @@ if (shardArg !== undefined) {
     const shard = Number(shardArg);
     const workers = Number(workersArg);
     const rows = [];
-    for (let task = shard; task < factions.length * pairs * 2; task += workers) {
+    for (let task = shard; task < matchups.length * pairs * 2; task += workers) {
         const group = Math.floor(task / 2);
-        const faction = factions[Math.floor(group / pairs)];
+        const [faction, opponentFaction] = matchups[Math.floor(group / pairs)];
         const pair = group % pairs;
-        const seed = hashSeed(`strength|${faction}|${seedOffset}|${pair}`);
+        const matchupSeed = faction === opponentFaction ? faction : `${faction}|${opponentFaction}`;
+        const seed = hashSeed(`strength|${matchupSeed}|${seedOffset}|${pair}`);
         const fleetA = makeFleet(seed);
         const fleetB = spec.sameFleet ? fleetA : makeFleet(seed ^ 0x9E3779B9);
         const seat = task % 2 === 0 ? 'A' : 'B';
@@ -70,8 +75,8 @@ if (shardArg !== undefined) {
         try {
             Math.random = mulberry32(hashSeed(`strength|${seed}|${seat}`));
             const engine = new SimulationEngine(
-                { ...(seat === 'A' ? candidate : opponent), faction },
-                { ...(seat === 'B' ? candidate : opponent), faction },
+                { ...(seat === 'A' ? candidate : opponent), faction: seat === 'A' ? faction : opponentFaction },
+                { ...(seat === 'B' ? candidate : opponent), faction: seat === 'B' ? faction : opponentFaction },
                 { fleetA, fleetB, maxPlies: spec.maxPlies ?? 320, recordPublicHistory: !!spec.candidate?.direct || !!spec.opponent?.direct }
             );
             for (const [role, side] of [['candidate', seat], ['opponent', seat === 'A' ? 'B' : 'A']]) {
@@ -98,13 +103,13 @@ if (shardArg !== undefined) {
         } finally {
             Math.random = saved;
         }
-        rows.push({ faction, pair, seed, seat, winner: result.winner, truncated: result.truncated, plies: result.plies,
+        rows.push({ faction, opponentFaction, pair, seed, seat, winner: result.winner, truncated: result.truncated, plies: result.plies,
             candidateStats: result[seat].stats, opponentStats: result[seat === 'A' ? 'B' : 'A'].stats, decisionMs: elapsed,
             inferenceFallbacks, searchCalls, improvedDecisions, validationSamples, timeStops, phaseTimings });
     }
     fs.writeFileSync(outputPath, JSON.stringify({ rows }), 'utf8');
 } else {
-    const workers = Math.min(factions.length * pairs * 2, Math.max(1, spec.jobs ?? 8));
+    const workers = Math.min(matchups.length * pairs * 2, Math.max(1, spec.jobs ?? 8));
     const output = path.resolve(outputPath);
     fs.mkdirSync(path.dirname(output), { recursive: true });
     const started = Date.now();
@@ -129,7 +134,7 @@ if (shardArg !== undefined) {
         const rate = games ? (wins + draws / 2) / games : 0;
         const groups = new Map();
         for (const row of selected) {
-            const key = `${row.faction}-${row.pair}`;
+            const key = `${row.faction}-${row.opponentFaction}-${row.pair}`;
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key).push(row.winner === row.seat ? 1 : row.winner === 'DRAW' ? 0.5 : 0);
         }
@@ -169,9 +174,12 @@ if (shardArg !== undefined) {
     hashDirectory(sourceRoot);
     const report = { generatedAt: new Date().toISOString(), sourceHash: sourceHash.digest('hex'),
         modelHashes: Object.fromEntries(Object.entries(modelSources).map(([role, source]) => [role, source ? crypto.createHash('sha256').update(source).digest('hex') : null])),
-        harnessHash: crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex'), randomness: 'per-seat-turn', node: process.version,
+        harnessHash: crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex'),
+        layoutHash: crypto.createHash('sha256').update(fs.readFileSync(new URL('./layouts.mjs', import.meta.url))).digest('hex'), randomness: 'per-seat-turn', node: process.version,
         options: { ...spec, pairs, seedOffset, candidate, opponent }, elapsedSec: (Date.now() - started) / 1000,
-        overall: summarize(rows), factions: Object.fromEntries(factions.map(faction => [faction, summarize(rows.filter(row => row.faction === faction))])) };
+        overall: summarize(rows), factions: Object.fromEntries(candidateFactions.map(faction => [faction, summarize(rows.filter(row => row.faction === faction))])),
+        matchups: Object.fromEntries(matchups.map(([faction, opponentFaction]) => [`${faction}-${opponentFaction}`,
+            summarize(rows.filter(row => row.faction === faction && row.opponentFaction === opponentFaction))])) };
     fs.writeFileSync(output, JSON.stringify(report, null, 2), 'utf8');
     console.log(JSON.stringify(report, null, 2));
 }
