@@ -173,6 +173,7 @@ python tools/training/ppo.py --initial <模型.json> --output <新自对弈目�
 - r34 已在本机完成全部 1960 局新规则教师采集、清单及错误注入审计、704 条新规则冒烟分片往返。远端确认旧任务结束后，源码／数据归档与独立启动脚本已同步到集中训练目录 `downloads/` 并启动；归档哈希及当前阶段见 AI 实验参考。用唯一 `venv-rocm` 执行脚本并传入 `--data-sha256 e6bd1b989a805f76c0700657036b1aebb7afe988a46a764d8279d9a589ab57e9`，保持 SSH 监督直至实际退出；不要重新使用仍未执行的 r32 计划而重复采集。跨机重放比较数组，不要求含 ZIP 时间戳的数据文件字节相同。先完成所有检查，再逐结构执行监督、开发对战、PPO、开发对战；尚未完成的排队阶段不能报告成功。
 - 监督模型的 `training.seconds` 是包含评估及暂停的累计经过时间。遇到断连、休眠或突增，先比较各 `epoch-*.json` 的累计秒数及文件时间，并核对远端系统电源事件，再解释吞吐。r29 注意力的约 6.7 小时含约 5 小时 45 分钟休眠，不能据此认定 GPU 训练缓慢；具体正常轮间隔见 AI 实验参考。
 - `unified-parity.mjs` 性能段会从头处理完整历史；实战 `DirectNeuralPolicy` 增量处理。`unified-runtime-selftest.mjs` 当前计时包围完整 `engine.decide()`，另报编码部分，不含动画及结算；r27／r28 旧计时是编码＋选招，两者范围不同。只有 Node CPU 证据，未做手机／浏览器帧率或统一模型的单文件发布验收。
+- 训练后数值对照按 [PyTorch 单精度默认容差](https://docs.pytorch.org/docs/2.14/testing.html#torch.testing.assert_close) 逐元素检查 `|实际−参考| ≤ 1e-5 + 1.3e-6×|参考|`，同时要求合法动作概率和胜率概率误差低于 `1e-5`，报告保留最大原始评分误差。浮点求和次序会造成 CPU／GPU／JavaScript 的单精度差异，不能仅放大固定阈值消除失败；先保留失败并用同权重 CPU 单／双精度参照核对，再检查真实概率、增量历史和集合重排。r40 的 GRU 已完成这组核对；最终注意力模型仍待验证。
 
 - `node tools/training/generate-data.mjs <配置.json> <全新数据目录>`。`mode=warmup` 使用无搜索旧困难 AI，仅记录终局价值；`mode=selfplay` 必须指定相对配置文件的 `model`，固定 `searchIterations`（默认 64）、按根访问概率探索。训练无 16 毫秒逐手约束，可显式增加搜索量；`games/jobs/seed/tuning` 全部存入清单。
 - 数据包含 `features.f32`、`targets.f32`、`masks.u8` 和分片清单；完整清单记录模型及源码哈希。布局交换组 `splitGroup` 跨分片保持一致，按该组哈希分出验证集，避免镜像布局泄漏；物理规则指纹不同的数据不能混合。
