@@ -103,6 +103,8 @@ node tools/sim/compare.mjs tools/sim/runs/base.json tools/sim/runs/variant.json
 
 后续模拟先确认目录、空闲资源和当前源码，再创建独立实验目录，保留原有文件。进程数按任务规模和资源情况决定，避免简单按逻辑处理器数量开满。SSH 调用 PowerShell 时可用 `-EncodedCommand` 传递脚本，减少本机与远端两层转义问题。
 
+2026-10-25 连接恢复记录：训练机 `100.93.35.70` 的 `sshd` 运行并监听全部地址，但 SSH 连接超时，Tailscale 探测及用户 RustDesk 连接正常。用户添加窄范围入站规则 `Naval-SSH-Tailscale` 后，SSH 及原专用密钥认证恢复；已通过 `IdentitiesOnly=yes` 实连验证，并远端核对 ActiveStore：启用、入站允许、TCP 22、全部配置文件，目标地址仅 `100.93.35.70`、来源仅本客户端 `100.102.231.18`。没有关闭防火墙、扩大到全部来源或重装密钥。连接时使用别名 `desktop-a1e0nc0`，其账户为 `Administrator`、密钥为本机 `.ssh/desktop-a1e0nc0_key`；`100.100.6.106` 对应另一台 `ecs-3807`，裸 IP 连接默认 `lenovo`，不能混作训练机认证故障。地址变更时先核对规则范围，不直接放开公网。
+
 ### 远端训练环境
 
 用户要求集中在 `C:\Users\Administrator\Desktop\naval\ai-training`，只保留最终采用的一套虚拟环境。解释器放 `python312/`、当前采用原生 ROCm 的 `venv-rocm/`；安装包放 `downloads/`，缓存、日志和检查结果分别放 `pip-cache/`、`logs/`、`results/`。训练脚本与依赖清单复制到该目录根；不要混用历史模拟目录的源码。
