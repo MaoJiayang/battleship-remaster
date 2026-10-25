@@ -8,10 +8,7 @@ import torch
 from torch import nn
 
 from neural_model import NavalNetwork
-
-
-HISTORY_FEATURES = 258
-HISTORY_SCHEMA = "naval-public-events-v1"
+from simulation_data import HISTORY_FEATURES, HISTORY_SCHEMA
 
 
 class MemoryNetwork(nn.Module):

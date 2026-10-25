@@ -2,8 +2,6 @@ import argparse
 import copy
 import hashlib
 import json
-import os
-import subprocess
 import time
 from pathlib import Path
 
@@ -17,35 +15,7 @@ import torch
 from torch.nn import functional
 
 from memory_model import MemoryNetwork, HISTORY_FEATURES, load_board, load_memory
-
-
-class Environment:
-    def __init__(self, encoding="legacy"):
-        self.encoding = encoding
-        self.process = subprocess.Popen(["node", str(Path(__file__).with_name("policy-environment.mjs"))],
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8",
-                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-
-    def call(self, request):
-        if request.get("type") == "reset":
-            request = {**request, "encoding": self.encoding}
-        self.process.stdin.write(json.dumps(request) + "\n")
-        self.process.stdin.flush()
-        line = self.process.stdout.readline()
-        if not line:
-            raise RuntimeError("模拟环境提前退出。")
-        result = json.loads(line)
-        if "error" in result:
-            raise RuntimeError(result["error"])
-        return result
-
-    def close(self):
-        self.process.stdin.close()
-        try:
-            self.process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait()
+from simulation_data import Environment
 
 
 def batch(records, device):

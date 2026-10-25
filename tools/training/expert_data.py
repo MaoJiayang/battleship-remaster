@@ -6,23 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from memory_model import HISTORY_FEATURES, HISTORY_SCHEMA
-from ppo import Environment
-
-
-def validation_group(seed, index):
-    return int(hashlib.sha256(f"expert|{seed}|{index}".encode()).hexdigest(), 16) % 5 == 0
-
-
-def source_hash():
-    root = Path(__file__).resolve().parents[2]
-    filenames = sorted((root / "src").rglob("*.js")) + sorted(Path(__file__).parent.glob("*.py"))
-    filenames += sorted(Path(__file__).parent.glob("*.mjs")) + sorted((root / "tools/sim").glob("*.mjs"))
-    digest = hashlib.sha256()
-    for filename in filenames:
-        digest.update(filename.relative_to(root).as_posix().encode())
-        digest.update(filename.read_bytes())
-    return digest.hexdigest()
+from simulation_data import Environment, HISTORY_FEATURES, HISTORY_SCHEMA, source_hash, validation_group
 
 
 def collect_expert(environment, games, seed, max_plies):

@@ -153,6 +153,7 @@ python tools/training/ppo.py --initial <模型.json> --output <新自对弈目�
 - 结构验证覆盖真实七学说隐藏敌舰字段禁读、当前能力相同但依赖不同、显式先验、3 种尺寸及 2／3／4 武器、集合顺序无关、增量与完整历史一致、跨语言数值，以及真实整局合法行动。5×7、8×4 为合成结构用例，不是其他尺寸游戏的实战验收。
 - `unified-pipeline-selftest.py <数据目录> <gru.json> <attention.json> <新输出目录>` 检查真实终局胜负回报、教师截断排除价值、末端自举、旧教师／当前策略／历史快照、采样概率重算和实际 PPO 更新。检查点恢复另经 `ppo.py --resume` 验证。
 - `audit-unified-data.py <数据目录> --output <报告.json> --rules-id <预期规则指纹>` 可单独用 NumPy 审计，无需 PyTorch：核对分片哈希、49 个有序学说对位、整局划分、每座位可见历史前缀、实际胜负标签、合法动作及敌舰未知血量。报告还列出各学说／武器样本数和历史画像覆盖；完整规模训练前确认 `complete=true`、规则指纹正确，再启动监督。`audit-unified-selftest.py <真实数据目录>` 重算哈希后注入历史越界、跨集合、错误赢家及非法动作，另验证错误规则指纹，确保语义错误确实被拒绝。
+- 教师采集现只需 Node＋NumPy：`python tools/training/unified_data.py --output <全新目录> --games 98 --batches 20 --seed 251033`。`unified-data-selftest.py <真实统一数据目录>` 以已有分片逐数组对照整理结果和历史前缀，再真实采集统一协议终局／截断及原协议截断；无需安装本机 PyTorch。2026-10-25 本机用 r27 的 626 条已保存真实记录全部精确往返，新规则 `4bce9d7c` 采集测试通过。旧记录只作数据兼容参照，不混入新训练；抽出的张量转换仍需远端 GPU 梯度／跨语言链路复验。
 - `unified-parity.mjs` 性能段会从头处理完整历史；实战 `DirectNeuralPolicy` 增量处理。`unified-runtime-selftest.mjs` 当前计时包围完整 `engine.decide()`，另报编码部分，不含动画及结算；r27／r28 旧计时是编码＋选招，两者范围不同。只有 Node CPU 证据，未做手机／浏览器帧率或统一模型的单文件发布验收。
 
 - `node tools/training/generate-data.mjs <配置.json> <全新数据目录>`。`mode=warmup` 使用无搜索旧困难 AI，仅记录终局价值；`mode=selfplay` 必须指定相对配置文件的 `model`，固定 `searchIterations`（默认 64）、按根访问概率探索。训练无 16 毫秒逐手约束，可显式增加搜索量；`games/jobs/seed/tuning` 全部存入清单。

@@ -6,9 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
-from expert_data import source_hash, validation_group
-from ppo import Environment
-from unified_model import unified_batch, CHANNELS, EVENT_CHANNELS, SCHEMA
+from simulation_data import Environment, source_hash, validation_group
+from unified_inputs import unified_arrays, CHANNELS, EVENT_CHANNELS, SCHEMA
 
 
 def collect_unified_expert(environment, games, seed, max_plies):
@@ -55,8 +54,8 @@ def collect_unified_expert(environment, games, seed, max_plies):
                              "truncated": result["truncated"], "validation": validation_group(seed, index)})
     if len(outcomes) != games or any("return" not in record for record in records):
         raise RuntimeError("统一冷启动轨迹不完整。")
-    packed = unified_batch(records, "cpu")
-    arrays = {key: value.numpy() for key, value in packed.items() if key not in ("actionCount", "events", "eventMask")}
+    packed, _ = unified_arrays(records)
+    arrays = {key: value for key, value in packed.items() if key not in ("events", "eventMask")}
     arrays.update({key: np.asarray([record[key] for record in records], dtype=dtype)
                    for key, dtype in (("action", np.int64), ("return", np.float32), ("value_valid", np.bool_),
                                       ("validation", np.bool_), ("slot", np.int64), ("length", np.int64))})

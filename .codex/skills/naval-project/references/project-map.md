@@ -117,6 +117,7 @@ scheduleAiTurn 构建可克隆视野快照并立即请求 Worker
 - `unifiedNetwork.js` 与 `tools/training/unified_model.py` 对应：共享两层 12 通道卷积、集合编码、逐格 8 维 GRU／时间注意力、按武器覆盖汇聚的共享动作评分、全局胜率头。参数量分别 7014／6830；JavaScript 增量更新历史，参数不含固定棋盘、五舰种槽或三武器输出维数。
 - `unified_data.py` 采集新规则下真实旧 HARD 出招、完整终局及共享历史前缀，按整局分割并保存压缩数值数组；`expert_train.py` 按数据格式显式选择新模型，随后复用 `ppo.py` 的胜负回报、截断自举及历史池。只有显式 `encoding=unified`、统一格式权重及 `direct=true` 才启用新链路；普通游戏与冻结体验包未替换。
 - 原型显式支持历史布阵先验及置信度；当前离线模拟没有玩家画像，不能宣称已学会使用这些输入。射击热图继续仅影响部署。r26–r29 的已训练真实规则域为旧 `27fe331d`；当前 `4bce9d7c` 须新采数据与训练，结构测试不授权任意新规则零样本上线。
+- `simulation_data.py` 提供不依赖训练框架的 Node 环境客户端、整局划分、源码哈希及原历史协议常量；旧模块保持导入兼容。`unified_inputs.py` 共用 NumPy 批次整理，`unified_data.py` 可在仅有 NumPy 的 CPU 环境采集；`unified_model.py` 在同一数组上转 PyTorch 张量供原 GPU 网络训练。网络、标签、随机协议和数据格式保持，CPU 采集不等于 CPU 训练。
 
 ## 联机已有基础
 
