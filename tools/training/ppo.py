@@ -18,6 +18,16 @@ from memory_model import MemoryNetwork, HISTORY_FEATURES, load_board, load_memor
 from simulation_data import Environment
 
 
+OPPONENT_PROTOCOL = "neural-current-history-v1"
+
+
+class NeuralSelfPlayEnvironment(Environment):
+    def call(self, request):
+        if request.get("type") == "step" and any(action.get("action") is None for action in request["actions"]):
+            raise ValueError("神经自对弈不允许请求程序化 AI 代走。")
+        return super().call(request)
+
+
 def batch(records, device):
     planes = torch.tensor(np.asarray([record["planes"] for record in records]), dtype=torch.float32, device=device).reshape(-1, 17, 11, 11)
     globals = torch.tensor(np.asarray([record["globals"] for record in records]), dtype=torch.float32, device=device)
@@ -43,7 +53,7 @@ def distribution(network, records, device):
 
 def collect(environment, network, pool, games, seed, max_plies, device, generator, expected_layout=None):
     learner_seats = ["A" if index % 2 == 0 else "B" for index in range(games)]
-    opponents = generator.integers(0, len(pool) + 2, size=games)
+    opponents = generator.integers(1, len(pool) + 2, size=games)
     histories = {(index, seat): [] for index in range(games) for seat in ("A", "B")}
     trajectories = [[] for _ in range(games)]
     response = environment.call({"type": "reset", "games": games, "seed": seed, "maxPlies": max_plies,
@@ -66,9 +76,6 @@ def collect(environment, network, pool, games, seed, max_plies, device, generato
             observation["history"] = list(history)
             learner = seat == learner_seats[index]
             opponent = opponents[index]
-            if not learner and opponent == 0:
-                commands.append({"index": index, "action": None})
-                continue
             kind = -1 if learner or opponent == 1 else int(opponent - 2)
             groups.setdefault(kind, []).append(observation)
         with torch.no_grad():
@@ -157,7 +164,9 @@ def update(network, optimizer, records, device, generator, epochs, minibatch):
 def opponent_statistics(outcomes):
     groups = {}
     for result in outcomes:
-        name = "old-HARD" if result["opponent"] == 0 else "current" if result["opponent"] == 1 else "history"
+        if result["opponent"] < 1:
+            raise ValueError("神经自对弈轨迹含非神经对手。")
+        name = "current" if result["opponent"] == 1 else "history"
         group = groups.setdefault(name, {"games": 0, "wins": 0, "draws": 0, "truncated": 0})
         group["games"] += 1
         group["wins"] += int(result["winner"] == result["learnerSeat"])
@@ -237,6 +246,8 @@ def main():
     previous_iterations = 0
     if arguments.resume:
         checkpoint = torch.load(arguments.resume, map_location=device, weights_only=True)
+        if checkpoint.get("opponent_protocol") != OPPONENT_PROTOCOL:
+            raise ValueError("PPO 检查点的对手协议不一致；含旧 AI 的训练需保留为独立对照。")
         if checkpoint["kind"] != arguments.kind or checkpoint["layout"] != layout or checkpoint["seed"] != arguments.seed:
             raise ValueError("PPO 检查点的结构或规则不一致。")
         network.load_state_dict(checkpoint["network"])
@@ -253,7 +264,7 @@ def main():
                 parameter.requires_grad_(False)
             pool.append(frozen)
     (arguments.output / "initial-model.json").write_text(json.dumps(network.export(metadata)), encoding="utf-8")
-    environment = Environment("unified" if unified else "legacy")
+    environment = NeuralSelfPlayEnvironment("unified" if unified else "legacy")
     source = hashlib.sha256()
     source_root = Path(__file__).resolve().parents[2]
     filenames = sorted((source_root / "src").rglob("*.js")) + sorted(Path(__file__).parent.glob("*.py")) + sorted(Path(__file__).parent.glob("*.mjs")) + sorted((source_root / "tools/sim").glob("*.mjs"))
@@ -273,6 +284,7 @@ def main():
                        "mean_plies": float(np.mean([result["plies"] for result in outcomes]))}
             history.append(summary)
             metadata["training"] = {"algorithm": "PPO-clip", "gamma": 1, "advantage": "Monte-Carlo return minus frozen value",
+                                    "opponent_protocol": OPPONENT_PROTOCOL,
                                     "reward": "terminal win=1 draw=0.5 loss=0; time-limit bootstraps own value",
                                     "initial_sha256": hashlib.sha256(arguments.initial.read_bytes()).hexdigest(),
                                     "source_sha256": source.hexdigest(), "torch": str(torch.__version__), "device": str(device),
@@ -291,6 +303,7 @@ def main():
                 if len(pool) > 4:
                     pool.pop(0)
             torch.save({"network": network.state_dict(), "optimizer": optimizer.state_dict(), "kind": arguments.kind,
+                        "opponent_protocol": OPPONENT_PROTOCOL,
                         "layout": layout, "seed": arguments.seed, "iteration": iteration + 1, "history": history, "numpy_rng": generator.bit_generator.state,
                         "torch_rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state_all(),
                         "pool": [opponent.state_dict() for opponent in pool]}, arguments.output / f"checkpoint-{iteration + 1:03d}.pt")

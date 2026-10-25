@@ -105,6 +105,7 @@ scheduleAiTurn 构建可克隆视野快照并立即请求 Worker
 - `tools/training/policy-environment.mjs` 以 JSON 行协议批量运行真实模拟器；`memory_model.py` 定义对应 PyTorch 结构，`ppo.py` 采集当前策略轨迹，执行 PPO 自对弈并维护历史对手。`tools/sim/strength.mjs` 以 `candidate.direct=true` 显式测试直接策略，普通游戏及 Worker 不自动加载新模型。
 - `#naval-game-policy` 由 Vite 选择：普通构建指向 `gamePolicy.js`，只转发原策略；体验构建指向 `previewGamePolicy.js`。原 `neural-preview` 仍固定旧 GRU/PPO 第 48 轮，当前规则会拒绝它；新增 `unified-preview` 可显式指定当前规则的已训练统一模型与预期哈希，独立输出 `dist-unified-preview/`，简单／中等仍为旧策略。模型来源和标签由构建写入，记录格式、记忆种类、规则、权重哈希及监督轮次／PPO 迭代。主线程和内联 Worker 使用同一入口；`previewPolicyRuntime.js` 按协议创建历史模型或统一模型，在实际成功结算后保存双方历史，出手前捕获能力，重开清空。后台线程不可用时，主线程从已执行的己方记录恢复伤害／水听状态并使用同一个模型，不静默切回旧困难 AI。
 - `expert_data.py` 从同一环境采集旧 HARD 实际执行的行动，按完整对局划分训练／验证；历史事件共享存储，局面仅引用当时前缀。`expert_train.py` 用合法行动交叉熵与正常终局价值预热现有 GRU／注意力，保留双集合逐轮指标及权重，再作为 PPO 起点；训练截断只提供行动标签。
+- 用户确认旧 AI 只用于冷启动及诊断，`ppo.py` 的训练对手仅为当前神经策略和冻结历史快照；空池直接自对弈。`NeuralSelfPlayEnvironment` 禁止空行动请求程序化 AI 代走，训练与检查点记录 `neural-current-history-v1` 对手协议，恢复拒绝协议不符；旧混合对手结果保留为历史实验，不按此单一诊断选模。
 - 历史包含行动方视图，神经观测第 10–15 平面读取对手 `playerViewGrid`；它描述对手对己方舰队的认知，不是敌舰真实布阵。2026-10-24 实际房间水听测试确认双方接口均提供这些标记（`yourWaters=foe.view`），不能仅因读取链路就认定作弊。先前只固定己方攻击视图的差分未固定完整合法输入；自动追击现已整体取消，水听公开观测契约保留。候选仍未通过学说平衡及实战验收。
 - `tools/training/ppo_audit.py` 冻结模型采集轨迹，比较采集与重算概率、策略分布及策略／价值／熵梯度；不执行参数更新。跨学说测试通过 `strength.mjs` 的显式 `matchups` 入口进行，逐对阵统计与阵营聚合含义见验证参考。
 - 模拟器结果新增 `terminated/truncated`，手数上限归为训练截断，旧 `winner='DRAW'` 字段保留兼容。PPO 截断从该玩家最后的公平观测估值，不固定填 0.5；配对测试若有截断，单一胜率与置信区间不作为有效结论，并报告结果上下界。

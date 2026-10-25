@@ -13,7 +13,7 @@ import torch
 from torch.nn import functional
 
 from memory_model import MemoryNetwork, load_memory
-from ppo import Environment, collect, distribution, opponent_statistics
+from ppo import NeuralSelfPlayEnvironment, collect, distribution, opponent_statistics, OPPONENT_PROTOCOL
 
 
 def audit_batch(network, records, device):
@@ -78,7 +78,7 @@ def main():
     network = MemoryNetwork(model["globalSize"], model["memoryKind"]).to(device).eval()
     load_memory(network, model)
     before = [parameter.detach().clone() for parameter in network.parameters()]
-    environment = Environment()
+    environment = NeuralSelfPlayEnvironment()
     try:
         records, outcomes = collect(environment, network, [], arguments.games, arguments.seed, 320, device, generator, model)
     finally:
@@ -89,7 +89,6 @@ def main():
         record["advantage"] = float(advantage)
     reports = {}
     for name, indices in (("all", {result["index"] for result in outcomes}),
-                          ("old-HARD", {result["index"] for result in outcomes if result["opponent"] == 0}),
                           ("current", {result["index"] for result in outcomes if result["opponent"] == 1})):
         selected = [record for record in records if record["index"] in indices]
         order = generator.permutation(len(selected))
@@ -98,6 +97,7 @@ def main():
     if any(not torch.equal(previous, parameter) for previous, parameter in zip(before, network.parameters())):
         raise RuntimeError("诊断过程改变了模型参数。")
     report = {"model_sha256": hashlib.sha256(arguments.model.read_bytes()).hexdigest(), "seed": arguments.seed,
+              "opponent_protocol": OPPONENT_PROTOCOL,
               "memory_kind": model["memoryKind"], "opponents": opponent_statistics(outcomes),
               "gradient_advantage_normalization": "entire frozen rollout, matching PPO updates",
               "batches": reports}

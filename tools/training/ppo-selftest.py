@@ -1,30 +1,58 @@
+import copy
 import math
 
 import numpy as np
 import torch
 
 from memory_model import MemoryNetwork
-from ppo import Environment, collect, distribution, update, opponent_statistics
+from ppo import NeuralSelfPlayEnvironment, collect, distribution, update, opponent_statistics
 from ppo_audit import audit_batch
 
 
 torch.set_num_threads(2)
 torch.manual_seed(240124)
 summary = opponent_statistics([
-    {"opponent": 0, "winner": "A", "learnerSeat": "A", "truncated": False},
-    {"opponent": 0, "winner": "B", "learnerSeat": "A", "truncated": False},
+    {"opponent": 1, "winner": "A", "learnerSeat": "A", "truncated": False},
+    {"opponent": 1, "winner": "B", "learnerSeat": "A", "truncated": False},
     {"opponent": 1, "winner": None, "learnerSeat": "A", "truncated": False},
     {"opponent": 2, "winner": None, "learnerSeat": "A", "truncated": True}
 ])
-assert summary["old-HARD"]["rate"] == 0.5
+assert "old-HARD" not in summary
 assert summary["current"]["rate"] == 0.5 and summary["current"]["draws"] == 1
 assert summary["history"]["rate"] is None and summary["history"]["draws"] == 0
+try:
+    opponent_statistics([{"opponent": 0}])
+except ValueError:
+    pass
+else:
+    raise AssertionError("神经自对弈统计接受了旧 AI 对手。")
+
+
+class RecordedSelfPlayEnvironment(NeuralSelfPlayEnvironment):
+    def __init__(self):
+        super().__init__()
+        self.steps = []
+
+    def call(self, request):
+        if request.get("type") == "step":
+            self.steps.append(copy.deepcopy(request))
+        return super().call(request)
+
+
 device = torch.device("cpu")
 network = MemoryNetwork().eval()
 generator = np.random.default_rng(240124)
-environment = Environment()
+environment = RecordedSelfPlayEnvironment()
 try:
+    try:
+        environment.call({"type": "step", "actions": [{"index": 0, "action": None}]})
+    except ValueError:
+        environment.steps.clear()
+    else:
+        raise AssertionError("神经自对弈允许了程序化 AI 代走。")
     records, outcomes = collect(environment, network, [], 2, 240124, 1, device, generator)
+    assert all(result["opponent"] == 1 for result in outcomes), "空历史池须只使用当前神经策略。"
+    opponent_action = next(action for action in environment.steps[1]["actions"] if action["index"] == 0)
     assert len(records) == 1, "截断后记录了未执行的己方行动。"
     assert len(outcomes) == 2 and all(result["truncated"] for result in outcomes)
     assert [result["plies"] for result in sorted(outcomes, key=lambda result: result["index"])] == [2, 1]
@@ -36,7 +64,7 @@ try:
     environment.call({"type": "reset", "games": 2, "seed": 240124, "maxPlies": 1, "learnerSeats": ["A", "B"]})
     replay = environment.call({"type": "step", "actions": [{"index": 0, "action": records[0]["action"]}]})
     assert not replay["results"] and replay["observations"][0]["seat"] == "B"
-    replay = environment.call({"type": "step", "actions": [{"index": 0, "action": None}]})
+    replay = environment.call({"type": "step", "actions": [opponent_action]})
     assert replay["results"][0]["currentSeat"] == "A"
     final = next(item for item in replay["results"][0]["finalObservations"] if item["seat"] == "A")
     final["history"] = final.pop("events")

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ppo import Environment, collect, distribution, update, parity
+from ppo import Environment, NeuralSelfPlayEnvironment, OPPONENT_PROTOCOL, collect, distribution, update, parity
 from unified_data import UnifiedDataset, collect_unified_expert
 from unified_model import UnifiedNetwork, load_unified
 
@@ -27,6 +27,7 @@ def main():
     device = torch.device("cuda", devices[0])
     dataset = UnifiedDataset(arguments.data)
     environment = Environment("unified")
+    self_play = NeuralSelfPlayEnvironment("unified")
     reports = []
     try:
         truncated, _, outcomes = collect_unified_expert(environment, 2, 251027, 1)
@@ -42,7 +43,7 @@ def main():
             for parameter in frozen.parameters():
                 parameter.requires_grad_(False)
             layout = {key: model[key] for key in ("schema", "rulesId")}
-            records, outcomes = collect(environment, network, [frozen], 14, 251027, 320, device, generator, layout)
+            records, outcomes = collect(self_play, network, [frozen], 14, 251027, 320, device, generator, layout)
             if any(item["truncated"] for item in outcomes):
                 raise RuntimeError("统一真实终局流程自测发生截断，需要单独检查。")
             by_game = {item["index"]: item for item in outcomes}
@@ -50,8 +51,8 @@ def main():
                 expected = float(by_game[record["index"]]["winner"] == record["seat"])
                 if record["return"] != expected:
                     raise RuntimeError("统一 PPO 终局回报与实际赢家不符。")
-            if {item["opponent"] for item in outcomes} != {0, 1, 2}:
-                raise RuntimeError("统一流程没有覆盖旧教师、当前策略及历史快照。")
+            if {item["opponent"] for item in outcomes} != {1, 2}:
+                raise RuntimeError("统一神经自对弈没有覆盖当前策略及历史快照，或混入旧教师。")
             selected = records[:32]
             with torch.no_grad():
                 probabilities, _ = distribution(network, selected, device)
@@ -65,7 +66,7 @@ def main():
             statistics = update(network, optimizer, records, device, generator, 1, 32)
             if not statistics["updates"] or not any(not torch.equal(before[name], parameter) for name, parameter in network.named_parameters()):
                 raise RuntimeError("统一 PPO 未发生真实参数更新。")
-            short, cutoffs = collect(environment, network, [], 2, 251028, 3, device, generator, layout)
+            short, cutoffs = collect(self_play, network, [], 2, 251028, 3, device, generator, layout)
             if not all(item["truncated"] for item in cutoffs) or all(record["return"] == 0.5 for record in short):
                 raise RuntimeError("统一 PPO 截断没有自举末端价值。")
             metadata = {**dataset.layout, "validatedRules": model["validatedRules"], "policyTrained": True,
@@ -73,9 +74,11 @@ def main():
             (arguments.output / f"{kind}.json").write_text(json.dumps(network.export(metadata)), encoding="utf-8")
             parity(network, records, metadata, arguments.output / f"{kind}-parity.json", device)
             reports.append({"kind": kind, "games": len(outcomes), "records": len(records), "updates": statistics,
+                            "opponentProtocol": OPPONENT_PROTOCOL, "opponents": sorted({item["opponent"] for item in outcomes}),
                             "logProbabilityError": log_error, "truncatedSmokeGames": len(cutoffs),
                             "meanPlies": float(np.mean([item["plies"] for item in outcomes]))})
     finally:
+        self_play.close()
         environment.close()
     report = {"device": str(device), "name": torch.cuda.get_device_name(device), "reports": reports,
               "scope": "仅验证新模型的端到端训练及真实终局流程，未作独立棋力或平衡验收"}
