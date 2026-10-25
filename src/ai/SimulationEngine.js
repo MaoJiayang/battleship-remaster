@@ -5,7 +5,7 @@
  * - AP 伤害、防御减伤与连续穿甲
  * - HE / 火箭的形状、中心伤害与防空弱点
  * - 声呐中心显形 / 最近接触
- * - 沉船标记与最后一舰追击阶段
+ * - 沉船标记
  *
  * AI 决策仍走 AIDecisionEngine，双方各自持有独立引擎实例。
  */
@@ -16,14 +16,13 @@ import { deployShips } from './aiDeployment.js';
 import { AIDecisionEngine } from './aiStrategy.js';
 import { getAITuning } from './aiTuning.js';
 import { publicDecisionEvent } from './neuralHistory.js';
-import { isValidActionTarget, recordSonarEvidence, recordContactEvidence } from '../game/battle/ActionRules.js';
+import { isValidActionTarget, recordSonarEvidence } from '../game/battle/ActionRules.js';
 import { checkAIAbilities } from './aiCore.js';
 import { DIFFICULTY_SETTINGS } from '../data/difficulties.js';
 import { VIEW_STATE } from '../game/battle/ViewState.js';
 import { EventType } from '../game/weapons/WeaponTypes.js';
 import { resolveHit } from '../game/battle/HitResolver.js';
 import { resolveSonar } from '../game/battle/SonarResolver.js';
-import { advancePursuit } from '../game/battle/PursuitResolver.js';
 import {
     getAPDamage,
     getAPMaxPenetrations,
@@ -151,7 +150,6 @@ export class SimulationEngine {
      * @param {'A'|'B'} [options.firstSeat='A']
      * @param {Array} [options.fleetA] - 固定舰队放置（用于配对模拟）
      * @param {Array} [options.fleetB]
-     * @param {boolean} [options.enablePursuit=true]
      * @param {boolean} [options.recordHistory=false]
      */
     constructor(configA, configB, options = {}) {
@@ -161,7 +159,6 @@ export class SimulationEngine {
         this.fleetB = options.fleetB || null;
         this.maxPlies = options.maxPlies ?? MAX_PLIES;
         this.firstSeat = options.firstSeat === 'B' ? 'B' : 'A';
-        this.enablePursuit = options.enablePursuit !== false;
         this.recordHistory = !!options.recordHistory;
         this.recordPublicHistory = !!options.recordPublicHistory;
         this.verbose = !!options.verbose;
@@ -193,14 +190,12 @@ export class SimulationEngine {
             view: createView(),
             sonarEvidence: [],
             engine: new AIDecisionEngine(),
-            hunt: { turns: 0, first: true, areaContact: null },
             oneLeftPly: null,
             stats: {
                 shots: 0,
                 hits: 0,
                 damage: 0,
                 pings: 0,
-                pursuitContacts: 0,
                 weapons: { AP: 0, HE: 0, SONAR: 0 },
                 damageByWeapon: { AP: 0, HE: 0 }
             }
@@ -213,12 +208,6 @@ export class SimulationEngine {
     }
 
     _decisionContext(attacker, defender) {
-        const alive = defender.ships.filter(s => !s.sunk);
-        let areaContact = null;
-        if (alive.length === 1 && attacker.hunt.areaContact) {
-            const zone = attacker.hunt.areaContact;
-            if (zone.shipId == null || zone.shipId === alive[0].id) areaContact = zone;
-        }
         return {
             viewGrid: attacker.view,
             myShips: sanitizeTargets(defender.ships),
@@ -227,8 +216,6 @@ export class SimulationEngine {
             playerViewGrid: defender.view,
             sonarEvidence: attacker.sonarEvidence,
             ...(this.recordPublicHistory ? { publicEvents: this.publicHistory, decisionSeat: attacker === this.sides.A ? 'A' : 'B' } : {}),
-            areaContact,
-            pursuit: { enabled: this.enablePursuit, hunters: [{ ...attacker.hunt }, { ...defender.hunt }] },
             aiFaction: attacker.faction,
             playerFaction: defender.faction
         };
@@ -272,8 +259,6 @@ export class SimulationEngine {
             this._finish(seat);
             return action;
         }
-
-        if (this.enablePursuit) this._tickPursuit(attacker, defender);
 
         this.currentSeat = OTHER_SEAT[seat];
         return action;
@@ -357,7 +342,6 @@ export class SimulationEngine {
             hits: stats.hits,
             damage: stats.damage,
             pings: stats.pings,
-            pursuitContacts: stats.pursuitContacts,
             weapons: { ...stats.weapons },
             damageByWeapon: { ...stats.damageByWeapon }
         };
@@ -436,17 +420,6 @@ export class SimulationEngine {
         attacker.stats.pings++;
     }
 
-    _tickPursuit(hunter, target) {
-        const view = hunter.view.flat();
-        const contact = advancePursuit(hunter.hunt, target.ships, view);
-        if (!contact) return;
-        recordContactEvidence(hunter.sonarEvidence, contact.cells.map(cell => cell.r * BOARD_SIZE + cell.c)
-            .filter(cell => view[cell] === VIEW_STATE.SUSPECT));
-        for (let row = 0; row < BOARD_SIZE; row++) {
-            for (let col = 0; col < BOARD_SIZE; col++) hunter.view[row][col] = view[row * BOARD_SIZE + col];
-        }
-        hunter.stats.pursuitContacts++;
-    }
 }
 
 export function runSimulatedGame(configA, configB, options = {}) {

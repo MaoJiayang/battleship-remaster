@@ -26,6 +26,7 @@ import { SHIP_TYPES } from '../../src/data/ships.js';
 import { BOARD_SIZE } from '../../src/config/constants.js';
 import { VIEW_STATE } from '../../src/game/battle/ViewState.js';
 import { isValidActionTarget } from '../../src/game/battle/ActionRules.js';
+import { neuralRulesId } from '../../src/ai/neuralRules.js';
 import {
     getAPDamage,
     getAPMaxDamage,
@@ -91,7 +92,6 @@ function serializeSide(side) {
             actionHistory: side.engine.actionHistory || [],
             sonarHistory: [...side.engine.sonarHistory]
         },
-        hunt: side.hunt,
         oneLeftPly: side.oneLeftPly,
         stats: side.stats
     };
@@ -99,11 +99,11 @@ function serializeSide(side) {
 
 export function serializeEngine(engine) {
     return {
+        rulesId: neuralRulesId(),
         configA: engine.configA,
         configB: engine.configB,
         maxPlies: engine.maxPlies,
         firstSeat: engine.firstSeat,
-        enablePursuit: engine.enablePursuit,
         plies: engine.plies,
         winner: engine.winner,
         currentSeat: engine.currentSeat,
@@ -117,6 +117,7 @@ export function serializeEngine(engine) {
 }
 
 export function reviveEngine(saved) {
+    if (saved.rulesId !== neuralRulesId()) throw new ArenaError('存档规则已变更，请创建新对局');
     const engine = new SimulationEngine(
         saved.configA,
         saved.configB,
@@ -124,8 +125,7 @@ export function reviveEngine(saved) {
             firstSeat: saved.firstSeat,
             fleetA: saved.sides.A.ships,
             fleetB: saved.sides.B.ships,
-            maxPlies: saved.maxPlies,
-            enablePursuit: saved.enablePursuit
+            maxPlies: saved.maxPlies
         }
     );
     const AIEngine = engine.sides.A.engine.constructor;
@@ -257,7 +257,6 @@ function applyPlayerAction(engine, session, action) {
         engine._finish(seat);
         return;
     }
-    if (engine.enablePursuit) engine._tickPursuit(attacker, defender);
     engine.currentSeat = OTHER[seat];
 }
 
@@ -484,8 +483,7 @@ export function createSession({
             firstSeat: playerFirst ? 'A' : 'B',
             fleetA: fleets.A,
             fleetB: fleets.B,
-            maxPlies,
-            enablePursuit: true
+            maxPlies
         }
     );
 
@@ -578,15 +576,6 @@ export function statusText(engine, session, contacts) {
         for (const entry of session.log.slice(-10)) {
             lines.push(`第 ${entry.ply} 手 ${entry.text}`);
         }
-    }
-
-    if (eAlive === 1 && !over) {
-        lines.push('');
-        lines.push('追击：敌方只剩 1 舰，你的视野会周期性出现 3×3 疑似区（黄色 ?）。');
-    }
-    if (pAlive === 1 && !over) {
-        lines.push('');
-        lines.push('警告：你只剩 1 舰，敌方会周期性获得你舰周围的 3×3 追击区。');
     }
 
     if (over) {

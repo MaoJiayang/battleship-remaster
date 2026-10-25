@@ -2,7 +2,6 @@ import { BOARD_SIZE } from '../config/constants.js';
 import { getHEOffsets } from '../data/doctrines.js';
 import { resolveHit } from '../game/battle/HitResolver.js';
 import { resolveSonar } from '../game/battle/SonarResolver.js';
-import { advancePursuit } from '../game/battle/PursuitResolver.js';
 import { BeliefState, CellState, checkAIAbilities, getActionCoverage, evaluateAction, enumerateAllActions } from './aiCore.js';
 import { approximatePosterior, activeSensorRegions } from './rolloutBelief.js';
 import { PairedEvidence, scenarioRandom } from './pairedEvidence.js';
@@ -219,7 +218,6 @@ export class BeliefSearch {
         this.policyCache = new Map();
         this.createPolicyEngine = createPolicyEngine;
         this.sonarHistory = new Set(history.filter(entry => entry.action.weapon === 'SONAR').map(entry => `${entry.action.r},${entry.action.c}`));
-        this.pursuit = context.pursuit;
         this.view = Uint8Array.from(context.viewGrid.flat());
         this.opponentView = Uint8Array.from((context.playerViewGrid || Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(0))).flat());
         this.damageGrid = Float64Array.from(damageGrid.flat());
@@ -230,14 +228,6 @@ export class BeliefSearch {
             if (!entry.scan || !entry.before || !entry.observed) continue;
             const cells = [...entry.scan].filter(cell => entry.before[cell] === CellState.UNKNOWN || entry.before[cell] === CellState.SUSPECT);
             if (cells.some(cell => entry.observed[cell] === CellState.HIT || entry.observed[cell] === CellState.SUSPECT)) this.sensorRegions[0].push(cells);
-        }
-        for (const seat of [0, 1]) {
-            const area = this.pursuit?.hunters?.[seat]?.areaContact || (seat === 0 ? context.areaContact : null);
-            const targets = seat === 0 ? context.myShips : context.enemyShips;
-            if (area && targets.filter(ship => !ship.sunk).length === 1) {
-                const cells = area.cells.map(cell => cell.r * BOARD_SIZE + cell.c);
-                if (cells.length) this.sensorRegions[seat].push(cells);
-            }
         }
         const ownFleet = context.enemyShips.map(ship => ({ ship, cells: Array.from({ length: ship.len }, (_, segment) => (ship.r + ((ship.vertical ?? ship.v) ? segment : 0)) * BOARD_SIZE + ship.c + ((ship.vertical ?? ship.v) ? 0 : segment)) }));
         this.own = createModel(ownFleet, true);
@@ -305,9 +295,7 @@ export class BeliefSearch {
             enemyShips: [...own.ships, ...(seat === 1 ? initialSunk : [])],
             myShips: [...target.ships, ...(seat === 0 ? initialSunk : [])],
             aiFaction: own.faction, playerFaction: target.faction,
-            areaContact: this.hunters(state)[seat].areaContact,
-            sonarEvidence: (state.regions || this.sensorRegions)[seat],
-            pursuit: { enabled: this.pursuit?.enabled !== false, hunters: [this.hunters(state)[seat], this.hunters(state)[1 - seat]] }
+            sonarEvidence: (state.regions || this.sensorRegions)[seat]
         };
         const observation = encodeNeuralObservation(context, {
             damageGrid: matrix(state.dealt[seat]), regions: (state.regions || this.sensorRegions)[seat],
@@ -340,19 +328,6 @@ export class BeliefSearch {
             state.legacyEngines[seat] = engine;
         }
         return state.legacyEngines[seat];
-    }
-
-    hunters(state) {
-        if (!state.hunters) {
-            state.hunters = [0, 1].map(seat => {
-                const saved = this.pursuit?.hunters?.[seat];
-                const area = saved?.areaContact || (seat === 0 ? this.context.areaContact : null);
-                return { turns: saved?.turns ?? 0, first: saved?.first ?? true,
-                    areaContact: area && state.models[1 - seat].ships.filter(ship => !ship.sunk).length === 1
-                        ? { ...area, shipId: state.models[1 - seat].ships.find(ship => !ship.sunk).id } : null };
-            });
-        }
-        return state.hunters;
     }
 
     rolloutPolicy(state, seat) {
@@ -394,7 +369,6 @@ export class BeliefSearch {
                 enemyShips: own.ships,
                 aiFaction: own.faction,
                 playerFaction: target.faction,
-                areaContact: this.hunters(state)[seat].areaContact,
                 sonarEvidence: (state.regions || this.sensorRegions)[seat],
                 difficultyConfig: { ...this.context.difficultyConfig, tuning: { ...this.tuning, search: false } }
             });
@@ -461,10 +435,6 @@ export class BeliefSearch {
         }
         const observation = applyAction(state.models[1 - seat], describeAttack(action, abilities, state.views[seat]), state.views[seat], state.dealt[seat]);
         if (scan?.some(cell => state.views[seat][cell] === CellState.HIT || state.views[seat][cell] === CellState.SUSPECT)) state.regions[seat].push(scan);
-        if (this.pursuit?.enabled !== false && state.models[1 - seat].ships.some(ship => !ship.sunk)) {
-            const contact = advancePursuit(this.hunters(state)[seat], state.models[1 - seat].ships, state.views[seat]);
-            if (contact) state.regions[seat].push(contact.cells.map(cell => cell.r * BOARD_SIZE + cell.c).filter(cell => state.views[seat][cell] === CellState.SUSPECT));
-        }
         if (state.policyTurns) state.policyTurns[seat]++;
         if (state.sonarUsed && action.weapon === 'SONAR') state.sonarUsed[seat].add(`${action.r},${action.c}`);
         state.neuralPredictions = null;

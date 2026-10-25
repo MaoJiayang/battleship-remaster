@@ -129,7 +129,7 @@ for (const fastSampling of [false, true]) {
     for (const cell of cells) assert.ok(Math.abs(marginal[cell] - legacyMarginal[cell] / acceptedWeight) < 0.035, '快速条件拒绝采样须保持旧策略的舰队分布');
 }
 
-let pursuitContacts = 0;
+let endgameActions = 0;
 for (const faction of ['us', 'ijn', 'rn', 'km', 'fn', 'rm', 'sn']) {
     Math.random = mulberry32(20261024);
     const simulation = new SimulationEngine({ faction, tuning: { ...getAITuning('HARD'), search: false } }, { faction: 'rm', tuning: { ...getAITuning('HARD'), search: false } });
@@ -137,6 +137,7 @@ for (const faction of ['us', 'ijn', 'rn', 'km', 'fn', 'rm', 'sn']) {
         const seat = simulation.currentSeat;
         const attacker = simulation.sides[seat];
         const defender = simulation.sides[seat === 'A' ? 'B' : 'A'];
+        if (defender.ships.filter(ship => !ship.sunk).length === 1) endgameActions++;
         const current = simulation._decisionContext(attacker, defender);
         const previous = attacker.engine.actionHistory.at(-1);
         if (previous) previous.afterView = current.viewGrid.map(row => [...row]);
@@ -157,8 +158,7 @@ for (const faction of ['us', 'ijn', 'rn', 'km', 'fn', 'rm', 'sn']) {
             assert.deepEqual(predicted.hp, actual.hp, `${faction} ${actual.code} 的预测血量须等于实际血量`);
         }
     }
-    pursuitContacts += simulation.sides.A.stats.pursuitContacts + simulation.sides.B.stats.pursuitContacts;
 }
-assert.ok(pursuitContacts > 0, '逐手一致性验证须实际覆盖残局接触区刷新');
+assert.ok(endgameActions > 0, '逐手一致性验证须实际覆盖最后一舰阶段');
 
 console.log('SEARCH SELFTEST OK');

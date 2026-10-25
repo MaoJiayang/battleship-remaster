@@ -136,19 +136,6 @@ function masksOverlap(masks, base, filter) {
     return false;
 }
 
-function buildCellMask(cells) {
-    if (!Array.isArray(cells) || cells.length === 0) return null;
-    const mask = new Uint32Array(MASK_WORDS);
-    let any = false;
-    for (const cell of cells) {
-        if (!cell || !inBounds(cell.r, cell.c)) continue;
-        const idx = cell.r * BOARD_SIZE + cell.c;
-        mask[idx >>> 5] |= 1 << (idx & 31);
-        any = true;
-    }
-    return any ? mask : null;
-}
-
 /**
  * 某舰长的全部棋盘放置（与视角无关，进程内共享）
  * 每项用 121 位掩码表示占格，附带展开后的格子索引
@@ -224,21 +211,17 @@ export class BeliefState {
      * @param {number} [sampleCount=DEFAULT_SAMPLE_COUNT] - 采样数量
      * @param {Object} [options]
      * @param {Object} [options.placementPrior] - 玩家历史布阵先验 { byLen: { [len]: { cells, strength } } }
-     * @param {Object} [options.areaContact] - 区域接触观测 { cells: [{r,c}] }：单艘目标舰至少有一格落在该区域
      */
     constructor(ships, viewGrid, sampleCount = DEFAULT_SAMPLE_COUNT, options = {}) {
         this.ships = ships;
         this.viewGrid = viewGrid;
         this.boardSize = BOARD_SIZE;
         this.placementPrior = options?.placementPrior?.byLen ? options.placementPrior : null;
-        this.areaContact = options?.areaContact?.cells ? options.areaContact : null;
         this.sampleFirstTurn = !!options.sampleFirstTurn;
         this.posterior = !!options.posterior;
         this.fastSampling = !!options.fastSampling;
         this.deadline = options.deadline ?? Infinity;
         this._deadlineReached = false;
-        // 区域接触只对“最后 1 艘目标舰”有确定含义
-        this._areaMask = this.ships.length === 1 ? buildCellMask(this.areaContact?.cells) : null;
         
         // 预计算约束信息
         this.constraints = this._buildConstraints();
@@ -248,7 +231,7 @@ export class BeliefState {
 
         // 蒙特卡洛采样（使用传入的采样数）
         // 第一回合且没有历史先验时跳过采样，保持概率图完全平均
-        if (this.isFirstTurn && !this.placementPrior && !this._areaMask && !this.sampleFirstTurn) {
+        if (this.isFirstTurn && !this.placementPrior && !this.sampleFirstTurn) {
             this._sampleCount = 0;
         } else {
             this._placementCache = this._buildPlacementCache();
@@ -268,16 +251,6 @@ export class BeliefState {
             this._samplePlacements = null;
             this._sampleCount = 0;
             this._sampleConfigurations(sampleCount);
-            // 区域观测与已命中信息冲突时忽略该观测，保证仍有可用假设
-            if (this._sampleCount === 0 && this._areaMask && !this._deadlineReached) {
-                this._areaMask = null;
-                this._placementCache = this._buildPlacementCache();
-                this._shipEntries = this._sortedShips.map(ship => ({
-                    ship,
-                    entry: this._placementCache.get(ship.len)
-                }));
-                this._sampleConfigurations(sampleCount);
-            }
         }
         
         // 缓存边缘概率分布
@@ -388,14 +361,9 @@ export class BeliefState {
         
         const cache = new Map();
         const lengths = new Set(this.ships.map(s => s.len));
-        const areaMask = this._areaMask;
         
         for (const len of lengths) {
-            let entry = this._buildLengthCache(len, blockedMask, hitMask, suspectMask, areaMask);
-            // 观测与命中信息冲突时退回无区域约束，避免整局采样为空
-            if (areaMask && entry.n === 0) {
-                entry = this._buildLengthCache(len, blockedMask, hitMask, suspectMask, null);
-            }
+            const entry = this._buildLengthCache(len, blockedMask, hitMask, suspectMask);
             cache.set(len, entry);
         }
         
@@ -404,9 +372,8 @@ export class BeliefState {
 
     /**
      * 单个舰长的合法放置与权重
-     * areaMask 为区域接触观测：区外摆放的似然为 0，直接排除
      */
-    _buildLengthCache(len, blockedMask, hitMask, suspectMask, areaMask) {
+    _buildLengthCache(len, blockedMask, hitMask, suspectMask) {
         const staticEntry = getStaticPlacements(len);
         const { count, masks, cells: flatCells } = staticEntry;
         const priorCells = this.placementPrior?.byLen?.[len]?.cells || null;
@@ -421,7 +388,6 @@ export class BeliefState {
         for (let p = 0; p < count; p++) {
             const base = p * MASK_WORDS;
             if (masksOverlap(masks, base, blockedMask)) continue;
-            if (areaMask && !masksOverlap(masks, base, areaMask)) continue;
             // 原权重：基础上 1，每个命中舱 +10，每个疑似格 +1.25
             let weight = 1
                 + 10 * andPopcount(masks, base, hitMask)
@@ -612,7 +578,7 @@ export class BeliefState {
         }
         
         // 特殊处理第一回合：无历史先验时返回完全平均的概率
-        if (this.isFirstTurn && !this.placementPrior && !this._areaMask && !this.sampleFirstTurn) {
+        if (this.isFirstTurn && !this.placementPrior && !this.sampleFirstTurn) {
             const totalShipCells = this.ships.reduce((sum, s) => sum + s.len, 0);
             const totalCells = this.boardSize * this.boardSize;
             const avgProb = totalCells > 0 ? totalShipCells / totalCells : 0;

@@ -118,7 +118,7 @@ export class AIDecisionEngine {
         if (previous && !previous.afterView) previous.afterView = context.viewGrid.map(row => [...row]);
         const targets = context.myShips.filter(ship => !ship.sunk);
         const createBelief = deadline => new BeliefState(targets, context.viewGrid, tuning.sampleCount, {
-            placementPrior: context.placementPrior, areaContact: context.areaContact,
+            placementPrior: context.placementPrior,
             sampleFirstTurn: true, posterior: true, fastSampling: tuning.fastSampling, deadline
         });
         const belief = baseline && performance.now() >= deadline ? null : createBelief(deadline);
@@ -173,7 +173,6 @@ export class AIDecisionEngine {
             difficultyConfig,
             playerViewGrid,
             placementPrior = null,
-            areaContact = null,
             aiFaction = 'us',
             playerFaction = 'us'
         } = context;
@@ -211,7 +210,7 @@ export class AIDecisionEngine {
         }
 
         // 4. 构建置信状态（蒙特卡洛采样；历史布阵先验与区域接触观测参与概率更新）
-        const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount, { placementPrior, areaContact, fastSampling: tuning.fastSampling });
+        const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount, { placementPrior, fastSampling: tuning.fastSampling });
 
         // 5. 枚举行动，过滤已有观测可以确定无效的目标
         const actions = enumerateAllActions(viewGrid, abilities, context.sonarEvidence);
@@ -299,7 +298,7 @@ export function resetAIState() {
 /**
  * 计算概率热力图，供 AI 视角调试显示
  */
-export function calculateProbabilityGrid(viewGrid, targets, difficultyConfig = null, placementPrior = null, areaContact = null) {
+export function calculateProbabilityGrid(viewGrid, targets, difficultyConfig = null, placementPrior = null) {
     if (!targets || targets.length === 0) {
         return Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
     }
@@ -311,6 +310,6 @@ export function calculateProbabilityGrid(viewGrid, targets, difficultyConfig = n
 
     const tuning = difficultyConfig?.tuning
         || getAITuning(difficultyConfig?.level || 'HARD');
-    const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount, { placementPrior, areaContact });
+    const beliefState = new BeliefState(aliveTargets, viewGrid, tuning.sampleCount, { placementPrior });
     return beliefState.getProbabilityGrid();
 }

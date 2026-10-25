@@ -31,7 +31,7 @@ import { BattleRenderer } from './battle/BattleRenderer.js';
 import { APWeapon } from './weapons/APWeapon.js';
 import { HEWeapon } from './weapons/HEWeapon.js';
 import { SonarWeapon } from './weapons/SonarWeapon.js';
-import { ShipState, isInBounds, EventType } from './weapons/WeaponTypes.js';
+import { ShipState, EventType } from './weapons/WeaponTypes.js';
 import { sfx } from '../audio/sfx.js';
 import { FACTIONS, RANDOM_FACTION, pickRandomEnemyFaction } from '../data/factions.js';
 import { getShipSvg, getPlaneSquadronDataUrl } from './shipArt.js';
@@ -43,8 +43,6 @@ import {
     getHEProfile,
     getSonarProfile
 } from '../data/doctrines.js';
-import { VIEW_STATE } from './battle/ViewState.js';
-import { recordContactEvidence } from './battle/ActionRules.js';
 
     // === 动态尺寸获取 ===
     function getCellSize() {
@@ -103,18 +101,6 @@ import { recordContactEvidence } from './battle/ActionRules.js';
     const playerShotCells = new Set();
     const sonarEvidence = { player: [], ai: [] };
 
-    // 追击阶段：一方仅剩最后 1 艘舰艇时，对方在下个己方回合获得接触区，之后每 3 回合刷新
-    const ENDGAME_PING_INTERVAL = 3;
-    const ENDGAME_FIRST_DELAY = 2;
-    const RECON_RADIUS = 1;
-    const endgameHunt = {
-        player: { turns: 0, first: true },
-        ai: { turns: 0, first: true }
-    };
-    const aiReconCells = new Set();
-    // 区域接触观测：把“最后 1 艘舰至少有一格在该区域”作为一次传感器观测交给 AI
-    let aiAreaContact = null;
-
     // 阵营选择（敌方可选“随机”：按集团对立逻辑每局重新抽取）
     let playerFaction = localStorage.getItem('playerFaction') || 'us';
     let enemyFactionRandom = localStorage.getItem('enemyFactionRandom') === '1';
@@ -133,12 +119,6 @@ import { recordContactEvidence } from './battle/ActionRules.js';
         playerShotCells.clear();
         sonarEvidence.player.length = 0;
         sonarEvidence.ai.length = 0;
-        endgameHunt.player.turns = 0;
-        endgameHunt.player.first = true;
-        endgameHunt.ai.turns = 0;
-        endgameHunt.ai.first = true;
-        aiReconCells.clear();
-        aiAreaContact = null;
     }
 
     /**
@@ -1158,7 +1138,7 @@ import { recordContactEvidence } from './battle/ActionRules.js';
         // 概率图即使在准备阶段也可查看，便于调试
         const viewGrid = getAiViewGrid();
         const targets = myShips.filter(s => !s.sunk);
-        const probabilityMap = precomputedMap || (targets.length > 0 ? calculateProbabilityGrid(viewGrid, targets, AI_PROB_CONFIG, getPlayerModel().placementPrior, getAiAreaContact()) : Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0)));
+        const probabilityMap = precomputedMap || (targets.length > 0 ? calculateProbabilityGrid(viewGrid, targets, AI_PROB_CONFIG, getPlayerModel().placementPrior) : Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0)));
 
         const pGrid = document.getElementById('player-grid');
         for(let r=0; r<BOARD_SIZE; r++) {
@@ -1900,7 +1880,6 @@ import { recordContactEvidence } from './battle/ActionRules.js';
         }
 
         updateStatus();
-        tickEndgameHunt('player');
         document.getElementById('enemy-grid').style.pointerEvents = 'none';
         if (gameState === 'PLAYING') {
             setTurnIndicator('ai');
@@ -1988,15 +1967,6 @@ import { recordContactEvidence } from './battle/ActionRules.js';
         if (aiWorker) aiWorker.postMessage({ type: 'reset' });
     }
 
-    /** AI 的区域接触观测只在玩家仅剩 1 艘舰时有效 */
-    function getAiAreaContact() {
-        if (!aiAreaContact) return null;
-        const alive = myShips.filter(s => !s.sunk);
-        if (alive.length !== 1) return null;
-        if (aiAreaContact.shipId != null && aiAreaContact.shipId !== alive[0].id) return null;
-        return aiAreaContact;
-    }
-
     /** 决策上下文：只含可结构化克隆的公开信息，AI 目标船不携带坐标 */
     function buildAiDecisionContext() {
         const viewGrid = getAiViewGrid();
@@ -2028,8 +1998,6 @@ import { recordContactEvidence } from './battle/ActionRules.js';
             sonarEvidence: sonarEvidence.ai,
             ...decisionHistoryContext(viewGrid),
             placementPrior: getPlayerModel().placementPrior,
-            areaContact: getAiAreaContact(),
-            pursuit: { enabled: true, hunters: [{ ...endgameHunt.ai, areaContact: getAiAreaContact() }, { ...endgameHunt.player }] },
             aiFaction: enemyFaction,
             playerFaction
         };
@@ -2103,7 +2071,6 @@ import { recordContactEvidence } from './battle/ActionRules.js';
 
         updateStatus();
         if (showAiDebug) updateAiHeatmapVisuals(); // 实时更新热力图
-        tickEndgameHunt('ai');
         const enemyGridEl = document.getElementById('enemy-grid');
         if (gameState === 'PLAYING') {
             setTurnIndicator('player');
@@ -2131,12 +2098,6 @@ import { recordContactEvidence } from './battle/ActionRules.js';
             else if (cell.classList.contains('miss')) grid[r][c] = 1;
             else if (cell.classList.contains('ai-detect')) grid[r][c] = 4;
         });
-
-        // 追击阶段的侦察接触只进入 AI 认知，不在玩家棋盘上伪装成受损
-        for (const key of aiReconCells) {
-            const [r, c] = key.split(',').map(Number);
-            if (grid[r][c] === 0 || grid[r][c] === 4) grid[r][c] = 4;
-        }
 
         // 标记已沉没船只的位置为 5 (Sunk)，视为不可穿越的障碍
         myShips.forEach(s => {
@@ -2185,96 +2146,6 @@ import { recordContactEvidence } from './battle/ActionRules.js';
         });
         
         return grid;
-    }
-
-    /** 该格是否已在猎杀方的认知中（命中/击沉/未命中，无需再标定） */
-    function isLastShipCellKnown(hunter, r, c) {
-        const gridId = hunter === 'player' ? 'enemy-grid' : 'player-grid';
-        const cell = document.querySelector(`#${gridId} .cell[data-r="${r}"][data-c="${c}"]`);
-        if (!cell) return true;
-        return cell.classList.contains('hit')
-            || cell.classList.contains('destroyed')
-            || cell.classList.contains('miss');
-    }
-
-    function revealLastShipContact(hunter) {
-        const fleet = hunter === 'player' ? enemyShips : myShips;
-        const alive = fleet.filter(s => !s.sunk);
-        if (alive.length !== 1) return;
-
-        const last = alive[0];
-        const vertical = last.v ?? last.vertical ?? false;
-        const gridId = hunter === 'player' ? 'enemy-grid' : 'player-grid';
-
-        // 只标定最后一个尚未受创的舱室，避免重复覆盖同一片海域
-        for (let i = 0; i < last.len; i++) {
-            if (last.hp[i] <= 0) continue;
-            const r = vertical ? last.r + i : last.r;
-            const c = vertical ? last.c : last.c + i;
-            if (isLastShipCellKnown(hunter, r, c)) continue;
-
-            const zone = [];
-            const areaCells = [];
-            for (let dr = -RECON_RADIUS; dr <= RECON_RADIUS; dr++) {
-                for (let dc = -RECON_RADIUS; dc <= RECON_RADIUS; dc++) {
-                    const nr = r + dr;
-                    const nc = c + dc;
-                    if (!isInBounds(nr, nc)) continue;
-                    areaCells.push({ r: nr, c: nc });
-                    const cell = document.querySelector(`#${gridId} .cell[data-r="${nr}"][data-c="${nc}"]`);
-                    if (!cell) continue;
-                    if (cell.classList.contains('hit')
-                        || cell.classList.contains('destroyed')
-                        || cell.classList.contains('miss')) continue;
-                    if (hunter === 'player') {
-                        if (cell.classList.contains('detect')) continue;
-                    } else {
-                        if (cell.classList.contains('ai-detect')) continue;
-                        if (aiReconCells.has(`${nr},${nc}`)) continue;
-                        aiReconCells.add(`${nr},${nc}`);
-                    }
-                    zone.push({ r: nr, c: nc });
-                }
-            }
-
-            if (hunter === 'ai' && areaCells.length > 0) {
-                aiAreaContact = { shipId: last.id, cells: areaCells };
-            }
-
-            if (zone.length > 0) {
-                if (hunter === 'player') {
-                    battleRenderer.render(zone.map(({ r: zr, c: zc }) => ({
-                        type: EventType.CELL_UPDATE,
-                        payload: { grid: 'ENEMY', r: zr, c: zc, state: 'SUSPECT' }
-                    })));
-                    sfx.play('detect');
-                    log('侦察接触：最后敌舰所在海域已标出疑似接触区。', 'c-warn');
-                } else {
-                    log('敌方侦察机标出了我方最后舰艇所在的海域。', 'c-warn');
-                }
-            }
-            const view = hunter === 'player' ? getPlayerViewGrid() : getAiViewGrid();
-            recordContactEvidence(sonarEvidence[hunter], areaCells.filter(cell => view[cell.r][cell.c] === VIEW_STATE.SUSPECT)
-                .map(cell => cell.r * BOARD_SIZE + cell.c));
-            return;
-        }
-    }
-
-    function tickEndgameHunt(hunter) {
-        if (gameState !== 'PLAYING') return;
-        const fleet = hunter === 'player' ? enemyShips : myShips;
-        if (fleet.filter(s => !s.sunk).length !== 1) {
-            endgameHunt[hunter].turns = 0;
-            endgameHunt[hunter].first = true;
-            return;
-        }
-        endgameHunt[hunter].turns++;
-        // 最后一艘暴露后的下个回合给出接触区，之后每 3 回合刷新
-        const threshold = endgameHunt[hunter].first ? ENDGAME_FIRST_DELAY : ENDGAME_PING_INTERVAL;
-        if (endgameHunt[hunter].turns < threshold) return;
-        endgameHunt[hunter].turns = 0;
-        endgameHunt[hunter].first = false;
-        revealLastShipContact(hunter);
     }
 
     function checkWin(who) {

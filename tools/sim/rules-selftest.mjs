@@ -7,9 +7,11 @@ import { WeaponRegistry } from '../../src/game/weapons/WeaponRegistry.js';
 import { SimulationEngine } from '../../src/ai/SimulationEngine.js';
 import { checkAIAbilities, enumerateAllActions } from '../../src/ai/aiCore.js';
 import { neuralRulesId } from '../../src/ai/neuralRules.js';
+import { encodeNeuralObservation } from '../../src/ai/neuralObservation.js';
+import { encodeGameUnifiedObservation } from '../../src/ai/unifiedAdapter.js';
 import { NavalNeuralNetwork } from '../../src/ai/neuralNetwork.js';
 import { validateAction, serializeEngine, reviveEngine } from '../agent-arena/arena.mjs';
-import { createRoom, submit } from '../agent-arena/room.mjs';
+import { createRoom, submit, viewFor } from '../agent-arena/room.mjs';
 import { FACTIONS, mulberry32 } from './core.mjs';
 
 Math.random = mulberry32(641236);
@@ -97,7 +99,7 @@ for (const residualContact of [false, true]) {
     const probe = new SimulationEngine({ faction: 'us' }, { faction: 'us' }, {
         fleetB: [{ code: 'SS', name: '已接触舰', len: 1, maxHp: 2, r: 6, c: 5 },
             { code: 'DD', name: '未暴露舰', len: 1, maxHp: 1, r: residualContact ? 4 : 0, c: residualContact ? 4 : 0 }],
-        enablePursuit: false, recordPublicHistory: true
+        recordPublicHistory: true
     });
     const attacker = probe.sides.A;
     const defender = probe.sides.B;
@@ -142,7 +144,7 @@ for (const residualContact of [false, true]) {
     }
 }
 const contactProbe = new SimulationEngine({ faction: 'us' }, { faction: 'us' }, {
-    fleetB: [{ code: 'SS', len: 1, maxHp: 2, r: 5, c: 5 }, { code: 'DD', len: 1, maxHp: 1, r: 0, c: 0 }], enablePursuit: false
+    fleetB: [{ code: 'SS', len: 1, maxHp: 2, r: 5, c: 5 }, { code: 'DD', len: 1, maxHp: 1, r: 0, c: 0 }]
 });
 contactProbe.sides.A.engine.decide = () => ({ weapon: 'SONAR', r: 5, c: 5 });
 contactProbe.step();
@@ -159,8 +161,47 @@ assert.equal(isValidActionTarget({ weapon: 'AP', r: 5, c: 6 }, own.view), true, 
 assert.equal(isValidActionTarget({ weapon: 'AP', r: -1, c: 0 }, own.view), false);
 assert.equal(isValidActionTarget({ weapon: 'AP', r: 0.5, c: 0 }, own.view), false);
 assert.equal(isValidActionTarget({ weapon: 'UNKNOWN', r: 0, c: 0 }, own.view), false);
-assert.ok(BATTLE_RULES_VERSION >= 2);
+const lastFleet = [{ code: 'DD', name: '最后一舰', len: 1, maxHp: 1, r: 5, c: 5 }];
+let endgame = new SimulationEngine('HARD', 'HARD', {
+    fleetA: lastFleet, fleetB: lastFleet, enablePursuit: true, recordPublicHistory: true
+});
+const expectedViews = { A: Array.from({ length: 11 }, () => Array(11).fill(VIEW_STATE.UNKNOWN)),
+    B: Array.from({ length: 11 }, () => Array(11).fill(VIEW_STATE.UNKNOWN)) };
+const endgameRoom = createRoom({ id: `endgame-${process.pid}-${Date.now()}`, seed: 641237,
+    seats: { A: { faction: 'us', controller: 'human' }, B: { faction: 'us', controller: 'human' } },
+    fleets: { A: lastFleet, B: lastFleet } }).room;
+for (let ply = 0; ply < 12; ply++) {
+    const seat = ply % 2 ? 'B' : 'A';
+    const action = { weapon: 'AP', r: 0, c: Math.floor(ply / 2) };
+    endgame.sides[seat].engine.decide = () => action;
+    endgame.step();
+    expectedViews[seat][action.r][action.c] = VIEW_STATE.MISS;
+    for (const observer of ['A', 'B']) {
+        assert.deepEqual(endgame.sides[observer].view, expectedViews[observer], '最后一舰阶段只能由实际行动改变视图');
+        assert.deepEqual(endgame.sides[observer].sonarEvidence, [], '普通炮击不能凭空获得侦察证据');
+    }
+    submit(endgameRoom, { type: 'action', roomId: endgameRoom.id, seat, version: endgameRoom.version,
+        weapon: action.weapon, r: action.r + 1, c: action.c + 1 });
+    for (const observer of ['A', 'B']) {
+        assert.deepEqual(viewFor(endgameRoom, observer).enemyWaters, expectedViews[observer], '房间与模拟的残局信息须一致');
+    }
+    endgame = reviveEngine(serializeEngine(endgame));
+}
+const oldSave = serializeEngine(endgame);
+oldSave.rulesId = '27fe331d';
+assert.throws(() => reviveEngine(oldSave), /存档规则已变更/);
+delete oldSave.rulesId;
+assert.throws(() => reviveEngine(oldSave), /存档规则已变更/, '旧无版本存档不能恢复旧追击标记');
+const cleanContext = endgame._decisionContext(endgame.sides.A, endgame.sides.B);
+const staleContext = { ...cleanContext, areaContact: { cells: [{ r: 5, c: 5 }] },
+    pursuit: { enabled: true, hunters: [{ turns: 2, first: false, areaContact: { cells: [{ r: 5, c: 5 }] } }] } };
+assert.deepEqual(encodeNeuralObservation(staleContext), encodeNeuralObservation(cleanContext), '旧追击上下文不能进入神经输入');
+assert.deepEqual(encodeGameUnifiedObservation(staleContext), encodeGameUnifiedObservation(cleanContext), '统一模型须忽略旧追击上下文');
+assert.ok(BATTLE_RULES_VERSION >= 3);
 assert.notEqual(neuralRulesId(), '56fb56a3');
+assert.notEqual(neuralRulesId(), '27fe331d');
 assert.throws(() => new NavalNeuralNetwork({ format: 'naval-network-v1', schema: 'naval-belief-v1', rulesId: '56fb56a3' }), /不兼容/,
     '旧规则权重不得被当作修复后已验收模型');
+assert.throws(() => new NavalNeuralNetwork({ format: 'naval-network-v1', schema: 'naval-belief-v1', rulesId: '27fe331d' }), /不兼容/,
+    '保留自动追击规则的权重须重新训练验证');
 console.log(`RULES SELFTEST OK: ${neuralRulesId()}`);

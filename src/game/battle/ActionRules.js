@@ -2,7 +2,7 @@ import { BOARD_SIZE } from '../../config/constants.js';
 import { getHEOffsets } from '../../data/doctrines.js';
 import { VIEW_STATE } from './ViewState.js';
 
-export const BATTLE_RULES_VERSION = 2;
+export const BATTLE_RULES_VERSION = 3;
 
 const coverageOffsets = new Map();
 

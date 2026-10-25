@@ -64,7 +64,7 @@ export function encodeGameUnifiedObservation(context, options = {}) {
         ownViewGrid: context.playerViewGrid ?? Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(0)),
         ownShips: own, targetShips: targets, damageGrid: options.damageGrid,
         posterior: approximatePosterior(targets.filter(ship => !ship.sunk), context.viewGrid.flat(), regions), sensorRegions: regions,
-        placementPrior: context.placementPrior, pursuit: context.pursuit, ply: context.publicEvents?.length ?? 0,
+        placementPrior: context.placementPrior, ply: context.publicEvents?.length ?? 0,
         ownWeapons: cache.ownWeapons, opponentWeapons: cache.opponentWeapons,
         legalActions: enumerateAllActions(context.viewGrid, abilities, context.sonarEvidence) });
 }

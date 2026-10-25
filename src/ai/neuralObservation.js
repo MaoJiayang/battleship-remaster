@@ -34,7 +34,6 @@ export function neuralSensorRegions(context, history = []) {
         }
         if (cells.some(cell => [CellState.HIT, CellState.SUSPECT].includes(entry.afterView[Math.floor(cell / BOARD_SIZE)][cell % BOARD_SIZE]))) regions.push(cells);
     }
-    if (context.areaContact?.cells) regions.push(context.areaContact.cells.map(cell => cell.r * BOARD_SIZE + cell.c));
     return activeSensorRegions(regions, context.viewGrid.flat());
 }
 
@@ -94,11 +93,7 @@ export function encodeNeuralObservation(context, options = {}) {
             (doctrine.ap?.damagePenalty ?? 0) / 8, (doctrine.defense?.apReduction ?? 0) / 8,
             (doctrine.defense?.apReductionMinDamage ?? 0) / 8, (doctrine.defense?.heVulnerability ?? 0) / 8);
     }
-    for (let seat = 0; seat < 2; seat++) {
-        const hunter = context.pursuit?.hunters?.[seat];
-        globals.push((hunter?.turns ?? 0) / 3, Number(hunter?.first ?? true));
-    }
-    globals.push(Number(context.pursuit?.enabled !== false));
+    globals.push(0, 0, 0, 0, 0);
     const mask = new Uint8Array(NEURAL_ACTIONS);
     for (const action of enumerateAllActions(context.viewGrid, abilities, context.sonarEvidence)) {
         mask[neuralActionIndex(action)] = 1;

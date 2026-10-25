@@ -119,9 +119,7 @@ export function encodeUnifiedObservation(input) {
     const observation = { schema: UNIFIED_SCHEMA, rulesId: input.rulesId, height, width, planes, ships,
         weapons: [...ownWeapons.map(weapon => encodeWeapon(weapon, 1, size)),
             ...input.opponentWeapons.map(weapon => encodeWeapon(weapon, -1, size))], actionWeapons,
-        globals: Float32Array.from([height / 32, width / 32, (input.pursuit?.hunters?.[0]?.turns ?? 0) / 3,
-            Number(input.pursuit?.hunters?.[0]?.first ?? true), (input.pursuit?.hunters?.[1]?.turns ?? 0) / 3,
-            Number(input.pursuit?.hunters?.[1]?.first ?? true), Number(input.pursuit?.enabled !== false),
+        globals: Float32Array.from([height / 32, width / 32, 0, 0, 0, 0, 0,
             Math.log1p(input.ply ?? 0) / Math.log(401)]), mask: new Uint8Array(ownWeapons.length * cells) };
     for (const action of input.legalActions) observation.mask[unifiedActionIndex(action, observation)] = 1;
     if (!observation.mask.some(Boolean)) throw new Error('统一观测没有合法行动');

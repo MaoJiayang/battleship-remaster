@@ -180,7 +180,6 @@ function applyAction(engine, seat, action) {
         engine._finish(seat);
         return action;
     }
-    if (engine.enablePursuit) engine._tickPursuit(attacker, defender);
     engine.currentSeat = OTHER[seat];
     return action;
 }
@@ -242,8 +241,7 @@ export function createRoom({
             firstSeat,
             fleetA: dealt.A,
             fleetB: dealt.B,
-            maxPlies,
-            enablePursuit: true
+            maxPlies
         }
     );
 
