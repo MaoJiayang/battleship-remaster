@@ -49,7 +49,7 @@ export class PreviewPolicyRuntime {
     }
 
     async decide(context) {
-        if (!Array.isArray(context.ownDecisions)) throw new Error('体验版缺少已执行的己方行动');
+        if (!Array.isArray(context.ownDecisions)) throw new Error('神经策略缺少已执行的己方行动');
         if (this.engine.actionHistory.length !== context.ownDecisions.length) {
             this.reset();
             for (const record of context.ownDecisions) {

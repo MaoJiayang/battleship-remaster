@@ -118,7 +118,7 @@ export default defineConfig(({ mode }) => {
         : !(training?.algorithm === 'PPO-clip' && iteration > 0 && training.history.some(entry => entry.updates > 0))) throw new Error('统一体验模型缺少实际训练记录');
       policyMetadata = { format: model.format, kind: model.memoryKind, rulesId: model.rulesId, sha256: hash,
         algorithm: training.algorithm, ...(supervised ? { epoch: training.best_epoch } : { iteration }) };
-      policyLabel = `统一模型体验版 · ${model.memoryKind === 'attention' ? '注意力' : 'GRU'}/${supervised ? `监督 ${training.best_epoch}` : `PPO ${iteration}`} · 棋力与平衡未验收`;
+      policyLabel = '';
     }
     aliases['#naval-preview-model'] = modelPath;
     console.info(`神经 AI 体验模型 SHA256: ${hash}`);

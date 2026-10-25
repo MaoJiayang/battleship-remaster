@@ -27,7 +27,7 @@ try {
         assert.equal(metadata.kind, model.memoryKind);
         assert.equal(metadata.rulesId, model.rulesId);
         assert.equal(metadata.algorithm, model.training.algorithm);
-        assert.match(JSON.parse(valid.define.__NAVAL_PREVIEW_LABEL__), /棋力与平衡未验收/);
+        assert.equal(JSON.parse(valid.define.__NAVAL_PREVIEW_LABEL__), '');
         const reject = (change, pattern) => {
             const invalid = structuredClone(model);
             change(invalid);

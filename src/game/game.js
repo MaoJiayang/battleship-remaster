@@ -396,7 +396,7 @@ import {
         initHelpDoctrines();
         updateDoctrineReadout();
         setDifficulty(currentDifficulty, { silent: true });
-        if (neuralPreview) {
+        if (neuralPreview && policyLabel) {
             document.title += ' · 神经 AI 体验版';
             document.querySelector('.hdr-sub').textContent = policyLabel;
             log(`${policyLabel}。困难模式使用当前冻结模型，简单／中等保留旧 AI。`, 'c-sys');
