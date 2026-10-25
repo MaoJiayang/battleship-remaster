@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from ppo import Environment, NeuralSelfPlayEnvironment, OPPONENT_PROTOCOL, collect, distribution, update, parity
+from ppo_audit import audit_batch
 from unified_data import UnifiedDataset, collect_unified_expert
 from unified_model import UnifiedNetwork, load_unified
 
@@ -63,6 +64,13 @@ def main():
                 raise RuntimeError("统一 PPO 采样概率与训练重算不一致。")
             optimizer = torch.optim.AdamW(network.parameters(), lr=0.0003, foreach=False)
             before = {name: parameter.detach().clone() for name, parameter in network.named_parameters()}
+            for record in selected:
+                record["advantage"] = record["return"] - record["old_value"]
+            diagnostics = audit_batch(network, selected, device)
+            if network.training or any(not torch.equal(before[name], parameter) for name, parameter in network.named_parameters()):
+                raise RuntimeError("统一模型梯度诊断改变了参数或没有恢复推理模式。")
+            if not np.isfinite(diagnostics["combined_gradient_norm"]) or diagnostics["max_log_probability_error"] > 2e-5:
+                raise RuntimeError("统一模型梯度诊断非有限或概率重算不一致。")
             statistics = update(network, optimizer, records, device, generator, 1, 32)
             if not statistics["updates"] or not any(not torch.equal(before[name], parameter) for name, parameter in network.named_parameters()):
                 raise RuntimeError("统一 PPO 未发生真实参数更新。")
@@ -75,6 +83,7 @@ def main():
             parity(network, records, metadata, arguments.output / f"{kind}-parity.json", device)
             reports.append({"kind": kind, "games": len(outcomes), "records": len(records), "updates": statistics,
                             "opponentProtocol": OPPONENT_PROTOCOL, "opponents": sorted({item["opponent"] for item in outcomes}),
+                            "diagnostic": diagnostics,
                             "logProbabilityError": log_error, "truncatedSmokeGames": len(cutoffs),
                             "meanPlies": float(np.mean([item["plies"] for item in outcomes]))})
     finally:

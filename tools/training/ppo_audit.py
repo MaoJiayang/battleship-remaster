@@ -75,10 +75,16 @@ def main():
         raise RuntimeError("需要唯一的 RX 9060 XT。")
     device = torch.device("cuda", devices[0])
     model = json.loads(arguments.model.read_text(encoding="utf-8"))
-    network = MemoryNetwork(model["globalSize"], model["memoryKind"]).to(device).eval()
-    load_memory(network, model)
+    unified = model["format"] == "naval-unified-v1"
+    if unified:
+        from unified_model import UnifiedNetwork, load_unified
+        network = UnifiedNetwork(model["memoryKind"]).to(device).eval()
+        load_unified(network, model)
+    else:
+        network = MemoryNetwork(model["globalSize"], model["memoryKind"]).to(device).eval()
+        load_memory(network, model)
     before = [parameter.detach().clone() for parameter in network.parameters()]
-    environment = NeuralSelfPlayEnvironment()
+    environment = NeuralSelfPlayEnvironment("unified" if unified else "legacy")
     try:
         records, outcomes = collect(environment, network, [], arguments.games, arguments.seed, 320, device, generator, model)
     finally:
@@ -97,6 +103,9 @@ def main():
     if any(not torch.equal(previous, parameter) for previous, parameter in zip(before, network.parameters())):
         raise RuntimeError("诊断过程改变了模型参数。")
     report = {"model_sha256": hashlib.sha256(arguments.model.read_bytes()).hexdigest(), "seed": arguments.seed,
+              "audit_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+              "format": model["format"], "rules_id": model["rulesId"], "device": str(device),
+              "device_name": torch.cuda.get_device_name(device), "torch": str(torch.__version__),
               "opponent_protocol": OPPONENT_PROTOCOL,
               "memory_kind": model["memoryKind"], "opponents": opponent_statistics(outcomes),
               "gradient_advantage_normalization": "entire frozen rollout, matching PPO updates",
