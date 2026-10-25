@@ -19,6 +19,7 @@ def main():
     parser.add_argument("fixtures", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--cpu", action="store_true")
+    parser.add_argument("--width-multiplier", type=int, choices=(1, 2), default=1)
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(2)
@@ -38,7 +39,7 @@ def main():
     reports = []
     for kind in ("gru", "attention"):
         torch.manual_seed(251026)
-        network = UnifiedNetwork(kind).to(device)
+        network = UnifiedNetwork(kind, {"widthMultiplier": arguments.width_multiplier}).to(device)
         optimizer = torch.optim.AdamW(network.parameters(), lr=0.001, foreach=False)
         labels = torch.tensor([record["action"] for record in trained], device=device)
         losses = []
@@ -60,8 +61,18 @@ def main():
         network.eval()
         exported = network.export({"validatedRules": sorted({record["observation"]["rulesId"] for record in records}),
                                    "validationOnly": True, "testUpdates": 4})
-        restored = UnifiedNetwork(kind).to(device)
+        restored = UnifiedNetwork(kind, exported["architecture"]).to(device)
         load_unified(restored, exported)
+        incompatible = {**exported, "architecture": {"widthMultiplier": 3 - arguments.width_multiplier}}
+        try:
+            load_unified(restored, incompatible)
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError("统一模型接受了不匹配的宽度标识。")
+        if arguments.width_multiplier == 1:
+            legacy = {key: value for key, value in exported.items() if key != "architecture"}
+            load_unified(restored, legacy)
         restored.eval()
         fixtures = []
         padding_error = 0.0
@@ -82,7 +93,8 @@ def main():
             raise RuntimeError(f"补齐批次改变了预测：{padding_error}")
         (arguments.output / f"{kind}.json").write_text(json.dumps(exported), encoding="utf-8")
         (arguments.output / f"{kind}-parity.json").write_text(json.dumps(fixtures), encoding="utf-8")
-        reports.append({"kind": kind, "parameters": sum(parameter.numel() for parameter in network.parameters()),
+        reports.append({"kind": kind, "architecture": network.architecture,
+                        "parameters": sum(parameter.numel() for parameter in network.parameters()),
                         "losses": losses, "paddingError": padding_error, "cases": len(fixtures)})
     report = {"device": str(device), "name": "CPU" if arguments.cpu else torch.cuda.get_device_name(device),
               "torch": str(torch.__version__), "reports": reports,

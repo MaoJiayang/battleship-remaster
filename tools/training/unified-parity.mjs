@@ -30,6 +30,9 @@ assert.throws(() => close([NaN], [0]), /单精度/);
 for (const kind of ['gru', 'attention']) {
     const model = JSON.parse(fs.readFileSync(path.join(root, `${kind}.json`)));
     const network = new UnifiedNeuralNetwork(model);
+    const multiplier = model.architecture?.widthMultiplier ?? 1;
+    assert.throws(() => new UnifiedNeuralNetwork({ ...model, architecture: { widthMultiplier: 3 } }), /宽度/);
+    assert.throws(() => new UnifiedNeuralNetwork({ ...model, architecture: { widthMultiplier: 3 - multiplier } }), /模型层/);
     const fixtures = JSON.parse(fs.readFileSync(path.join(root, `${kind}-parity.json`)));
     let error = 0;
     let permutationError = 0;
@@ -37,6 +40,12 @@ for (const kind of ['gru', 'attention']) {
     for (const fixture of fixtures) {
         const observation = fixture.observation;
         const actual = network.predict(observation, fixture.history);
+        if (multiplier === 1) {
+            const { architecture, ...legacy } = model;
+            const restored = new UnifiedNeuralNetwork(legacy).predict(observation, fixture.history);
+            assert.equal(difference(actual.logits, restored.logits), 0, '旧版未标宽度模型的预测改变');
+            assert.equal(actual.valueLogit, restored.valueLogit);
+        }
         error = Math.max(error, difference(actual.logits, fixture.expected.logits), Math.abs(actual.valueLogit - fixture.expected.valueLogit));
         close([...actual.logits, actual.valueLogit], [...fixture.expected.logits, fixture.expected.valueLogit]);
         const actualProbabilities = probabilities(actual.logits, observation.mask);
@@ -70,7 +79,7 @@ for (const kind of ['gru', 'attention']) {
         times.push(performance.now() - start);
     }
     times.sort((first, second) => first - second);
-    reports.push({ kind, cases: fixtures.length, error, permutationError, probabilityError,
+    reports.push({ kind, widthMultiplier: multiplier, cases: fixtures.length, error, permutationError, probabilityError,
         networkFullHistoryMedianMs: times[25], networkFullHistoryP95Ms: times[47] });
 }
 fs.writeFileSync(path.join(root, 'javascript-report.json'), JSON.stringify({ node: process.version,

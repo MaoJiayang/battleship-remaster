@@ -78,7 +78,7 @@ def main():
     unified = model["format"] == "naval-unified-v1"
     if unified:
         from unified_model import UnifiedNetwork, load_unified
-        network = UnifiedNetwork(model["memoryKind"]).to(device).eval()
+        network = UnifiedNetwork(model["memoryKind"], model.get("architecture")).to(device).eval()
         load_unified(network, model)
     else:
         network = MemoryNetwork(model["globalSize"], model["memoryKind"]).to(device).eval()

@@ -24,31 +24,38 @@ def masked_mean(values, mask, dimension):
 class UnifiedNetwork(nn.Module):
     unified = True
 
-    def __init__(self, kind="gru"):
+    def __init__(self, kind="gru", architecture=None):
         super().__init__()
         if kind not in ("gru", "attention"):
             raise ValueError("统一空间记忆模块必须为 gru 或 attention。")
         self.kind = kind
-        self.conv1 = nn.Conv2d(CHANNELS, 12, 3, padding=1)
-        self.conv2 = nn.Conv2d(12, 12, 3, padding=1)
-        self.ship = nn.Linear(6, 8)
-        self.offset = nn.Linear(6, 8)
-        self.variant = nn.Linear(25, 8)
-        self.weapon = nn.Linear(24, 12)
-        self.context = nn.Linear(60, 12)
-        self.event = nn.Linear(EVENT_CHANNELS, 8)
+        self.architecture = dict(architecture) if architecture is not None else {"widthMultiplier": 1}
+        multiplier = self.architecture.get("widthMultiplier")
+        if set(self.architecture) != {"widthMultiplier"} or type(multiplier) is not int or multiplier not in (1, 2):
+            raise ValueError("统一模型宽度倍率必须为 1 或 2。")
+        spatial_size = 12 * multiplier
+        token_size = 8 * multiplier
+        self.memory_size = 8 * multiplier
+        self.conv1 = nn.Conv2d(CHANNELS, spatial_size, 3, padding=1)
+        self.conv2 = nn.Conv2d(spatial_size, spatial_size, 3, padding=1)
+        self.ship = nn.Linear(6, token_size)
+        self.offset = nn.Linear(6, token_size)
+        self.variant = nn.Linear(17 + token_size, token_size)
+        self.weapon = nn.Linear(8 + 2 * token_size, spatial_size)
+        self.context = nn.Linear(8 + 2 * token_size + 3 * spatial_size, spatial_size)
+        self.event = nn.Linear(EVENT_CHANNELS, self.memory_size)
         if kind == "gru":
-            self.memory = nn.GRU(8, 8, batch_first=True)
+            self.memory = nn.GRU(self.memory_size, self.memory_size, batch_first=True)
         else:
-            self.query = nn.Linear(12, 8)
-            self.key = nn.Linear(8, 8)
-            self.memoryValue = nn.Linear(8, 8)
-        self.fusion = nn.Linear(32, 12)
-        self.coverage = nn.Linear(20, 12)
-        self.policyHidden = nn.Linear(37, 12)
-        self.policy = nn.Linear(12, 1)
-        self.valueHidden = nn.Linear(20, 12)
-        self.value = nn.Linear(12, 1)
+            self.query = nn.Linear(spatial_size, self.memory_size)
+            self.key = nn.Linear(self.memory_size, self.memory_size)
+            self.memoryValue = nn.Linear(self.memory_size, self.memory_size)
+        self.fusion = nn.Linear(2 * spatial_size + self.memory_size, spatial_size)
+        self.coverage = nn.Linear(spatial_size + token_size, spatial_size)
+        self.policyHidden = nn.Linear(3 * spatial_size + 1, spatial_size)
+        self.policy = nn.Linear(spatial_size, 1)
+        self.valueHidden = nn.Linear(spatial_size + self.memory_size, spatial_size)
+        self.value = nn.Linear(spatial_size, 1)
 
     def forward(self, batch):
         spatial = torch.relu(self.conv2(torch.relu(self.conv1(batch["planes"]))))
@@ -74,20 +81,20 @@ class UnifiedNetwork(nn.Module):
             lengths = event_valid.sum(1).reshape(-1)
             steps = max(1, int(lengths.max().item()))
             order = (~event_valid).to(torch.int64).argsort(dim=1, stable=True)[:, :steps]
-            compact = embedded.gather(1, order.unsqueeze(-1).expand(-1, -1, -1, 8))
-            compact = compact.permute(0, 2, 1, 3).reshape(count * cells, steps, 8)
+            compact = embedded.gather(1, order.unsqueeze(-1).expand(-1, -1, -1, self.memory_size))
+            compact = compact.permute(0, 2, 1, 3).reshape(count * cells, steps, self.memory_size)
             sequence, _ = self.memory(compact)
             memory = sequence[torch.arange(count * cells, device=spatial.device), lengths.clamp_min(1) - 1]
-            memory = (memory * (lengths > 0).unsqueeze(-1)).reshape(count, cells, 8)
+            memory = (memory * (lengths > 0).unsqueeze(-1)).reshape(count, cells, self.memory_size)
         else:
             positions = torch.arange(events.shape[1], device=spatial.device)[:, None]
-            frequencies = torch.exp(torch.arange(0, 8, 2, device=spatial.device) * (-math.log(10000) / 8))
+            frequencies = torch.exp(torch.arange(0, self.memory_size, 2, device=spatial.device) * (-math.log(10000) / self.memory_size))
             position = torch.stack((torch.sin(positions * frequencies), torch.cos(positions * frequencies)), dim=-1).flatten(1)
             embedded = embedded + position[None, :, None]
             query = self.query(spatial)
             keys = self.key(embedded)
             values = self.memoryValue(embedded)
-            scores = (query[:, None] * keys).sum(-1) / math.sqrt(8)
+            scores = (query[:, None] * keys).sum(-1) / math.sqrt(self.memory_size)
             weights = scores.masked_fill(~event_valid, -1e9).softmax(1)
             memory = (weights.unsqueeze(-1) * values).sum(1) * event_valid.any(1).unsqueeze(-1)
         fused = torch.relu(self.fusion(torch.cat((spatial, memory, context[:, None].expand(-1, cells, -1)), dim=-1)))
@@ -121,12 +128,15 @@ class UnifiedNetwork(nn.Module):
                 weight = getattr(self.memory, f"weight_{suffix}_l0").detach().cpu()
                 bias = getattr(self.memory, f"bias_{suffix}_l0").detach().cpu()
                 layers[name] = {"shape": list(weight.shape), "weight": weight.flatten().tolist(), "bias": bias.tolist()}
-        return {**metadata, "format": "naval-unified-v1", "schema": SCHEMA, "memoryKind": self.kind, "layers": layers}
+        return {**metadata, "format": "naval-unified-v1", "schema": SCHEMA, "memoryKind": self.kind,
+                "architecture": dict(self.architecture), "layers": layers}
 
 
 def load_unified(network, model):
     if model["format"] != "naval-unified-v1" or model["schema"] != SCHEMA or model["memoryKind"] != network.kind:
         raise ValueError("统一模型协议不一致。")
+    if model.get("architecture", {"widthMultiplier": 1}) != network.architecture:
+        raise ValueError("统一模型宽度与参数不一致。")
     expected = {name for name, module in network.named_children() if isinstance(module, (nn.Linear, nn.Conv2d))}
     if network.kind == "gru":
         expected.update(("memoryInput", "memoryHidden"))

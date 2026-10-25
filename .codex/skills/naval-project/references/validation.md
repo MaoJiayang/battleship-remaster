@@ -167,6 +167,8 @@ python tools/training/expert_train.py <数据目录> --output <新模型目录> 
 python tools/training/ppo.py --initial <模型.json> --output <新自对弈目录> --kind gru --iterations 16 --games 98
 ```
 
+容量对照可向上述 Python 自测追加 `--width-multiplier 2`，监督预热 `expert_train.py` 也支持该参数；PPO、冻结诊断和真实终局自测按起步权重自动恢复宽度。省略结构元数据的旧权重按倍率 1 加载；自测覆盖宽度错配拒绝、旧元数据兼容、导出恢复与增量历史，远端显卡及训练后跨语言数值结果仍需逐次记录。正式包与两个冻结试玩包不随容量试验重建。
+
 - Python 命令在远端唯一 `venv-rocm` 运行；当前本机只验证 Python 语法。新协议教师预热可从随机初始化开始，原协议仍要求 `--initial`。注意力对照使用 `--kind attention`，两结构走相同规则和预算。
 - 结构验证覆盖真实七学说隐藏敌舰字段禁读、当前能力相同但依赖不同、显式先验、3 种尺寸及 2／3／4 武器、集合顺序无关、增量与完整历史一致、跨语言数值，以及真实整局合法行动。5×7、8×4 为合成结构用例，不是其他尺寸游戏的实战验收。
 - `unified-pipeline-selftest.py <数据目录> <gru.json> <attention.json> <新输出目录>` 分开检查旧教师采集与神经自对弈，覆盖真实终局胜负回报、教师截断排除价值、末端自举、当前策略／历史快照、采样概率重算和实际 PPO 更新；PPO 不允许程序化 AI 代走。r40 的新 `neural-current-history-v1` 协议已通过原生 GPU 及 `--resume` 复验，包含与连续训练参数／下一批结果一致、历史保留、缺失协议拒绝；不与旧混合池证据混用。

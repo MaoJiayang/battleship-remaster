@@ -36,7 +36,7 @@ def main():
             raise RuntimeError("教师训练截断被误标为终局或记录了未执行行动。")
         for kind in ("gru", "attention"):
             model = json.loads(getattr(arguments, kind).read_text(encoding="utf-8"))
-            network = UnifiedNetwork(kind).to(device)
+            network = UnifiedNetwork(kind, model.get("architecture")).to(device)
             load_unified(network, model)
             network.eval()
             generator = np.random.default_rng(251027)

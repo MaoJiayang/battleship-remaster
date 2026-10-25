@@ -228,7 +228,7 @@ def main():
     unified = initial["format"] == "naval-unified-v1"
     if unified:
         from unified_model import UnifiedNetwork, load_unified
-        network = UnifiedNetwork(arguments.kind).to(device)
+        network = UnifiedNetwork(arguments.kind, initial.get("architecture")).to(device)
         load_unified(network, initial)
     else:
         network = MemoryNetwork(initial["globalSize"], arguments.kind).to(device)
@@ -250,6 +250,8 @@ def main():
             raise ValueError("PPO 检查点的对手协议不一致；含旧 AI 的训练需保留为独立对照。")
         if checkpoint["kind"] != arguments.kind or checkpoint["layout"] != layout or checkpoint["seed"] != arguments.seed:
             raise ValueError("PPO 检查点的结构或规则不一致。")
+        if unified and checkpoint.get("architecture", {"widthMultiplier": 1}) != network.architecture:
+            raise ValueError("PPO 检查点的网络宽度不一致。")
         network.load_state_dict(checkpoint["network"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         generator.bit_generator.state = checkpoint["numpy_rng"]
@@ -304,6 +306,7 @@ def main():
                     pool.pop(0)
             torch.save({"network": network.state_dict(), "optimizer": optimizer.state_dict(), "kind": arguments.kind,
                         "opponent_protocol": OPPONENT_PROTOCOL,
+                        **({"architecture": dict(network.architecture)} if unified else {}),
                         "layout": layout, "seed": arguments.seed, "iteration": iteration + 1, "history": history, "numpy_rng": generator.bit_generator.state,
                         "torch_rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state_all(),
                         "pool": [opponent.state_dict() for opponent in pool]}, arguments.output / f"checkpoint-{iteration + 1:03d}.pt")

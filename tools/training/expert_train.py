@@ -51,6 +51,7 @@ def main():
     parser.add_argument("--initial", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--kind", choices=("gru", "attention"), required=True)
+    parser.add_argument("--width-multiplier", type=int, choices=(1, 2))
     parser.add_argument("--epochs", type=int, default=32)
     parser.add_argument("--minibatch", type=int, default=128)
     parser.add_argument("--learning-rate", type=float, default=0.0003)
@@ -73,12 +74,17 @@ def main():
         from unified_data import UnifiedDataset
         from unified_model import UnifiedNetwork, load_unified
         dataset = UnifiedDataset(arguments.data)
-        network = UnifiedNetwork(arguments.kind).to(device)
+        architecture = initial.get("architecture", {"widthMultiplier": 1}) if initial else {"widthMultiplier": arguments.width_multiplier or 1}
+        if arguments.width_multiplier is not None and arguments.width_multiplier != architecture["widthMultiplier"]:
+            raise ValueError("指定宽度与监督起步模型不一致。")
+        network = UnifiedNetwork(arguments.kind, architecture).to(device)
         if initial:
             if initial["rulesId"] != dataset.layout["rulesId"]:
                 raise ValueError("统一冷启动起步模型规则不一致。")
             load_unified(network, initial)
     else:
+        if arguments.width_multiplier is not None:
+            raise ValueError("宽度对照仅用于统一模型。")
         if not initial:
             raise ValueError("旧模型监督训练必须指定起步权重。")
         dataset = ExpertDataset(arguments.data)
