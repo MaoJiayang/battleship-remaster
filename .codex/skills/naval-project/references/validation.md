@@ -167,13 +167,13 @@ python tools/training/ppo.py --initial <模型.json> --output <新自对弈目�
 
 - Python 命令在远端唯一 `venv-rocm` 运行；当前本机只验证 Python 语法。新协议教师预热可从随机初始化开始，原协议仍要求 `--initial`。注意力对照使用 `--kind attention`，两结构走相同规则和预算。
 - 结构验证覆盖真实七学说隐藏敌舰字段禁读、当前能力相同但依赖不同、显式先验、3 种尺寸及 2／3／4 武器、集合顺序无关、增量与完整历史一致、跨语言数值，以及真实整局合法行动。5×7、8×4 为合成结构用例，不是其他尺寸游戏的实战验收。
-- `unified-pipeline-selftest.py <数据目录> <gru.json> <attention.json> <新输出目录>` 分开检查旧教师采集与神经自对弈，覆盖真实终局胜负回报、教师截断排除价值、末端自举、当前策略／历史快照、采样概率重算和实际 PPO 更新；PPO 不允许程序化 AI 代走。旧混合池的检查点恢复曾经验证，新 `neural-current-history-v1` 协议须另做 GPU 及 `--resume` 复验，不混同旧证据。
+- `unified-pipeline-selftest.py <数据目录> <gru.json> <attention.json> <新输出目录>` 分开检查旧教师采集与神经自对弈，覆盖真实终局胜负回报、教师截断排除价值、末端自举、当前策略／历史快照、采样概率重算和实际 PPO 更新；PPO 不允许程序化 AI 代走。r40 的新 `neural-current-history-v1` 协议已通过原生 GPU 及 `--resume` 复验，包含与连续训练参数／下一批结果一致、历史保留、缺失协议拒绝；不与旧混合池证据混用。
 - `audit-unified-data.py <数据目录> --output <报告.json> --rules-id <预期规则指纹>` 可单独用 NumPy 审计，无需 PyTorch：核对分片哈希、49 个有序学说对位、整局划分、每座位可见历史前缀、实际胜负标签、合法动作及敌舰未知血量。报告还列出各学说／武器样本数和历史画像覆盖；完整规模训练前确认 `complete=true`、规则指纹正确，再启动监督。`audit-unified-selftest.py <真实数据目录>` 重算哈希后注入历史越界、跨集合、错误赢家及非法动作，另验证错误规则指纹，确保语义错误确实被拒绝。
 - 教师采集现只需 Node＋NumPy：`python tools/training/unified_data.py --output <全新目录> --games 98 --batches 20 --seed 251033`。`unified-data-selftest.py <真实统一数据目录>` 以已有分片逐数组对照整理结果和历史前缀，再真实采集统一协议终局／截断及原协议截断；无需安装本机 PyTorch。2026-10-25 本机用 r27 的 626 条已保存真实记录全部精确往返，新规则 `4bce9d7c` 采集测试通过。旧记录只作数据兼容参照，不混入新训练；抽出的张量转换仍需远端 GPU 梯度／跨语言链路复验。
 - r34 已在本机完成全部 1960 局新规则教师采集、清单及错误注入审计、704 条新规则冒烟分片往返。远端确认旧任务结束后，源码／数据归档与独立启动脚本已同步到集中训练目录 `downloads/` 并启动；归档哈希及当前阶段见 AI 实验参考。用唯一 `venv-rocm` 执行脚本并传入 `--data-sha256 e6bd1b989a805f76c0700657036b1aebb7afe988a46a764d8279d9a589ab57e9`，保持 SSH 监督直至实际退出；不要重新使用仍未执行的 r32 计划而重复采集。跨机重放比较数组，不要求含 ZIP 时间戳的数据文件字节相同。先完成所有检查，再逐结构执行监督、开发对战、PPO、开发对战；尚未完成的排队阶段不能报告成功。
 - 监督模型的 `training.seconds` 是包含评估及暂停的累计经过时间。遇到断连、休眠或突增，先比较各 `epoch-*.json` 的累计秒数及文件时间，并核对远端系统电源事件，再解释吞吐。r29 注意力的约 6.7 小时含约 5 小时 45 分钟休眠，不能据此认定 GPU 训练缓慢；具体正常轮间隔见 AI 实验参考。
 - `unified-parity.mjs` 性能段会从头处理完整历史；实战 `DirectNeuralPolicy` 增量处理。`unified-runtime-selftest.mjs` 当前计时包围完整 `engine.decide()`，另报编码部分，不含动画及结算；r27／r28 旧计时是编码＋选招，两者范围不同。只有 Node CPU 证据，未做手机／浏览器帧率或统一模型的单文件发布验收。
-- 训练后数值对照按 [PyTorch 单精度默认容差](https://docs.pytorch.org/docs/2.14/testing.html#torch.testing.assert_close) 逐元素检查 `|实际−参考| ≤ 1e-5 + 1.3e-6×|参考|`，同时要求合法动作概率和胜率概率误差低于 `1e-5`，报告保留最大原始评分误差。浮点求和次序会造成 CPU／GPU／JavaScript 的单精度差异，不能仅放大固定阈值消除失败；先保留失败并用同权重 CPU 单／双精度参照核对，再检查真实概率、增量历史和集合重排。r40 的 GRU 已完成这组核对；最终注意力模型仍待验证。
+- 训练后数值对照按 [PyTorch 单精度默认容差](https://docs.pytorch.org/docs/2.14/testing.html#torch.testing.assert_close) 逐元素检查 `|实际−参考| ≤ 1e-5 + 1.3e-6×|参考|`，同时要求合法动作概率和胜率概率误差低于 `1e-5`，报告保留最大原始评分误差。浮点求和次序会造成 CPU／GPU／JavaScript 的单精度差异，不能仅放大固定阈值消除失败；先保留失败并用同权重 CPU 单／双精度参照核对，再检查真实概率、增量历史和集合重排。r40 的最终 GRU／注意力均已完成这组核对，概率最大误差分别约 `7.95e-7`／`1.08e-6`。
 
 - `node tools/training/generate-data.mjs <配置.json> <全新数据目录>`。`mode=warmup` 使用无搜索旧困难 AI，仅记录终局价值；`mode=selfplay` 必须指定相对配置文件的 `model`，固定 `searchIterations`（默认 64）、按根访问概率探索。训练无 16 毫秒逐手约束，可显式增加搜索量；`games/jobs/seed/tuning` 全部存入清单。
 - 数据包含 `features.f32`、`targets.f32`、`masks.u8` 和分片清单；完整清单记录模型及源码哈希。布局交换组 `splitGroup` 跨分片保持一致，按该组哈希分出验证集，避免镜像布局泄漏；物理规则指纹不同的数据不能混合。
@@ -200,7 +200,7 @@ python tools/training/ppo.py --initial <模型.json> --output <新自对弈目�
 - 起步可用旧空间模型，也可用同种历史结构的已训练 JSON 权重。每轮保存 `iteration-NNN.json`、指标与逐局结果；最新实现另保存优化器、历史对手和随机数状态的 `checkpoint-NNN.pt`。`--resume <检查点.pt>` 在新输出目录继续，种子、结构与规则需要匹配。r11 已用强制一手截断完成保存／恢复／下一轮更新和导出验证；检查点只加载本项目自行生成的可信文件。
 - 当前 PPO 轮次指标按 `current/history` 分列对局数、胜负得分和截断，旧历史实验才含 `old-HARD`。训练行为为合法概率分布采样，默认配对评估为贪心，两者需要在冻结权重的配对条件下分别诊断；最终选择须看多样冻结对手及独立矩阵，不能用自对弈接近一半或对旧 AI 的单项胜率替代棋力。
 - `ppo_audit.py --model <历史模型.json> --output <新报告.json> --games 98 --batches 8 --minibatch 64` 冻结参数，只采集当前神经策略自对弈，按整批轨迹标准化优势，记录概率重算误差、熵、最大动作概率、各损失梯度范数／夹角及总梯度裁剪尺度。输出包含对手协议；旧脚本中的旧 HARD 分组仅属于历史证据。诊断保留原参数与模式；原生 MIOpen GRU 反向需要训练模式，诊断器临时切换后恢复，网络当前没有随机失活或批量归一化层。
-- 上述诊断入口现也按 `format=naval-unified-v1` 加载统一 GRU／注意力及统一观测环境，报告包含规则、实际设备、框架和诊断脚本哈希；不改变训练算法或输出新权重。`unified-pipeline-selftest.py` 追加实际梯度有限、概率重算、原参数不变和推理模式恢复检查；2026-10-25 本机语法检查通过，新 GPU 诊断扩展尚待 r42 实测，不能用早期记忆模型诊断结果代替。
+- 上述诊断入口也按 `format=naval-unified-v1` 加载统一 GRU／注意力及统一观测环境，报告包含规则、实际设备、框架和诊断脚本哈希；不改变训练算法或输出新权重。`unified-pipeline-selftest.py` 追加实际梯度有限、概率重算、原参数不变和推理模式恢复检查；2026-10-25 本机语法、r42 CPU 回归及 RX 9060 XT 的两结构真实终局／更新／无更新诊断整链路通过，不用早期记忆模型诊断结果代替。
 - 这些梯度仅诊断固定模型、固定新采样轨迹的局部更新，不证明训练因果或完整收敛。r15 的首次 GPU 诊断因在评估模式下反向失败，r16／r17 修正后已通过两结构的真实 GPU 检查及无更新自测。
 - `node tools/training/validate-memory.mjs <模型.json> <parity.json>` 检查 PyTorch／JavaScript 误差、完整历史与分段增量缓存一致，以及单次追加事件的预热耗时；它不包含当前棋盘观测编码。历史注意力为当前局面查询过去事件、双头、顺序位置编码，不能称作完整自回归 Transformer。
 - 配对配置 `candidate: { model: "相对配置文件的模型.json", direct: true, tuning: { search: false } }` 启用直接策略；默认贪心决策，训练按合法分布采样。可选 `stochastic=true` 评估训练行为分布，`layout=uniform` 使用联合均匀布阵对照，默认仍为原分散布阵。历史模型必须显式 `direct=true`，避免静默以空历史参加搜索。
