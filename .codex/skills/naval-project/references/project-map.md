@@ -116,6 +116,7 @@ scheduleAiTurn 构建可克隆视野快照并立即请求 Worker
 - `unifiedObservation.js` 的 `naval-grid-v1` 输入为动态高宽的 22 通道网格、8 个全局量、变长舰船／武器／覆盖偏移及能力变化集合，输出动作数为己方武器数×格子数。当前游戏适配器 `unifiedAdapter.js` 仍按真实 11×11、AP／HE／水听生成合法动作；网络的尺寸支持不代表游戏引擎已改为可变尺寸。
 - 武器当前伤害、覆盖、穿透、侦察方式与可用性为主输入；双方舰船—武器依赖通过公开能力的缺舰／单舰／击沉数变化描述输入，不按学说名独热编码，不手工规定优先攻击航母。依赖编译按公开舰队状态与规则指纹缓存，每个策略／训练座位只留当前缓存；己方血量、布局和历史先验仍逐手更新。
 - `unifiedNetwork.js` 与 `tools/training/unified_model.py` 对应：共享两层卷积、集合编码、逐格 GRU／时间注意力、按武器覆盖汇聚的共享动作评分、全局胜率头。默认空间／集合／记忆宽度 12／8／8，参数量分别 7014／6830；可选结构元数据 `architecture.widthMultiplier=2` 用于容量对照，旧权重省略时默认 1，加载与恢复校验结构。JavaScript 增量更新历史，参数不含固定棋盘、五舰种槽或三武器输出维数。
+- 学说增强使用 `doctrines.js/createDoctrineVariant()` 的不可变参数描述；仅接受七原型的整数参数白名单和范围，保留武器形状及舰船依赖，法国主炮原固定 4 伤可在实验描述中参数化、正式默认仍为 4。`SimulationEngine` 的可选 `config.doctrine` 同时影响实际结算和能力输入，不改全局 `DOCTRINES`。`tools/training/doctrine-variants.mjs` 生成七原始锚点及 31 个单参数邻域变体，共 38 个描述；`policy-environment.mjs` 显式传入目录时才启用，按原型家族内均匀抽样并保留配对参数。增强规则范围为 `cc1fc3bb`，原始仍为 `4bce9d7c`；旧观测拒绝增强，原权重不会自动获得新规则验证范围。
 - `unified_data.py` 采集新规则下真实旧 HARD 出招、完整终局及共享历史前缀，按整局分割并保存压缩数值数组；`expert_train.py` 按数据格式显式选择新模型，随后复用 `ppo.py` 的胜负回报、截断自举及历史池。只有显式 `encoding=unified`、统一格式权重及 `direct=true` 才启用新链路；普通游戏与冻结体验包未替换。
 - 原型显式支持历史布阵先验及置信度；当前离线模拟没有玩家画像，不能宣称已学会使用这些输入。射击热图继续仅影响部署。r26–r29 的已训练真实规则域为旧 `27fe331d`；当前 `4bce9d7c` 须新采数据与训练，结构测试不授权任意新规则零样本上线。
 - `simulation_data.py` 提供不依赖训练框架的 Node 环境客户端、整局划分、源码哈希及原历史协议常量；旧模块保持导入兼容。`unified_inputs.py` 共用 NumPy 批次整理，`unified_data.py` 可在仅有 NumPy 的 CPU 环境采集；`unified_model.py` 在同一数组上转 PyTorch 张量供原 GPU 网络训练。网络、标签、随机协议和数据格式保持，CPU 采集不等于 CPU 训练。

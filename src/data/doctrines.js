@@ -109,7 +109,56 @@ export const DOCTRINES = {
 
 const DEFAULT_FACTION = 'us';
 
+export const DOCTRINE_VARIANT_FORMAT = 'naval-doctrine-variant-v1';
+export const DOCTRINE_PARAMETER_RANGES = freezeDoctrine({
+    us: { 'ap.suspectBonus': [0, 2, 1], 'ap.maxPenetrations': [1, 3, 2] },
+    ijn: { 'he.centerDamage': [2, 4, 3], 'he.outerDamage': [1, 2, 1],
+        'he.fallback.centerDamage': [1, 3, 2], 'ap.cvBonus': [0, 2, 1] },
+    rn: { 'sonar.radius': [1, 2, 1] },
+    km: { 'ap.sunkBonus': [1, 2, 1], 'ap.sunkBonusCap': [1, 3, 2] },
+    fn: { 'ap.quadDamage': [3, 5, 4], 'ap.fallbackDamage': [1, 3, 2], 'ap.maxPenetrations': [1, 2, 1] },
+    rm: { 'defense.apReduction': [0, 2, 1], 'defense.apReductionMinDamage': [2, 4, 3], 'defense.heVulnerability': [0, 2, 1] },
+    sn: { 'he.centerDamage': [1, 3, 2], 'he.outerDamage': [1, 2, 1], 'ap.damagePenalty': [0, 2, 1] }
+});
+const variantDoctrines = new WeakMap();
+
+function freezeDoctrine(value) {
+    if (value && typeof value === 'object') {
+        for (const nested of Object.values(value)) freezeDoctrine(nested);
+        Object.freeze(value);
+    }
+    return value;
+}
+
+export function createDoctrineVariant(base, parameters = {}) {
+    if (!Object.hasOwn(DOCTRINE_PARAMETER_RANGES, base) || !parameters || typeof parameters !== 'object' || Array.isArray(parameters)) {
+        throw new Error('学说参数变体的原型或参数无效');
+    }
+    const resolved = structuredClone(DOCTRINES[base]);
+    const normalized = {};
+    for (const key of Object.keys(parameters).sort()) {
+        const range = Object.hasOwn(DOCTRINE_PARAMETER_RANGES[base], key) ? DOCTRINE_PARAMETER_RANGES[base][key] : null;
+        const value = parameters[key];
+        if (!range || !Number.isInteger(value) || value < range[0] || value > range[1]) throw new Error(`学说变体参数越界或不支持：${key}`);
+        const path = key.split('.');
+        let target = resolved;
+        for (const component of path.slice(0, -1)) target = target[component] ??= {};
+        target[path.at(-1)] = value;
+        normalized[key] = value;
+    }
+    const variant = freezeDoctrine({ format: DOCTRINE_VARIANT_FORMAT, base, parameters: normalized });
+    variantDoctrines.set(variant, freezeDoctrine(resolved));
+    return variant;
+}
+
 export function getDoctrine(factionId) {
+    if (factionId && typeof factionId === 'object') {
+        if (variantDoctrines.has(factionId)) return variantDoctrines.get(factionId);
+        if (Object.keys(factionId).sort().join(',') !== 'base,format,parameters' || factionId.format !== DOCTRINE_VARIANT_FORMAT) {
+            throw new Error('学说参数变体协议无效');
+        }
+        return variantDoctrines.get(createDoctrineVariant(factionId.base, factionId.parameters));
+    }
     return DOCTRINES[factionId] || DOCTRINES[DEFAULT_FACTION];
 }
 
@@ -138,7 +187,7 @@ export function getAPDamage(factionId, ships = [], opts = {}) {
     if (doctrine.ap?.quadTurrets) {
         // 法国四联装：火力核心是战列舰，损失后由巡洋舰炮维持
         damage = hasAliveCode(ships, 'BB')
-            ? 4
+            ? (doctrine.ap.quadDamage ?? 4)
             : (doctrine.ap.fallbackDamage ?? 1);
     } else if (hasAliveCode(ships, 'BB')) {
         damage = 3;

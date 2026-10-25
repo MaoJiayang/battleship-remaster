@@ -136,6 +136,7 @@ def main():
     parser.add_argument("--games", type=int, default=98)
     parser.add_argument("--seed", type=int, default=251026)
     parser.add_argument("--max-plies", type=int, default=320)
+    parser.add_argument("--doctrine-catalog", type=Path)
     arguments = parser.parse_args()
     if arguments.games < 2 or min(arguments.batches, arguments.max_plies) < 1:
         parser.error("采集预算无效。")
@@ -144,7 +145,12 @@ def main():
                 "teacher": "old-HARD fastSampling=true search=false; actual executed actions",
                 "split": "SHA256(expert|batch-seed|game-index) modulo 5; whole games", "arguments": vars(arguments).copy()}
     manifest["arguments"]["output"] = str(arguments.output)
-    environment = Environment("unified")
+    manifest["arguments"]["doctrine_catalog"] = str(arguments.doctrine_catalog) if arguments.doctrine_catalog else None
+    catalog = json.loads(arguments.doctrine_catalog.read_text(encoding="utf-8")) if arguments.doctrine_catalog else None
+    if catalog is not None:
+        manifest["doctrine_catalog"] = catalog
+        manifest["doctrine_catalog_sha256"] = hashlib.sha256(arguments.doctrine_catalog.read_bytes()).hexdigest()
+    environment = Environment("unified", {"doctrineCatalog": catalog} if catalog is not None else None)
     started = time.perf_counter()
     try:
         for iteration in range(arguments.batches):

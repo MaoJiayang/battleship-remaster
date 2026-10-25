@@ -51,7 +51,10 @@ export function encodeGameUnifiedObservation(context, options = {}) {
         sunk: ship.sunk, r: ship.r, c: ship.c, vertical: ship.vertical ?? ship.v, hp: ship.hp }));
     const regions = activeSensorRegions([...neuralSensorRegions(context, options.history), ...(context.sonarEvidence ?? [])], context.viewGrid.flat());
     const abilities = checkAIAbilities(own, context.aiFaction, context.playerFaction, { sunkEnemyShips: targets.filter(ship => ship.sunk).length, neutralBias: true });
-    const rulesId = neuralRulesId();
+    if ((typeof context.aiFaction === 'object' || typeof context.playerFaction === 'object') && !context.doctrineVariants) {
+        throw new Error('参数化学说须使用独立的训练规则范围');
+    }
+    const rulesId = neuralRulesId({ doctrineVariants: Boolean(context.doctrineVariants) });
     const cache = options.mechanismCache ?? {};
     const key = JSON.stringify([rulesId, context.aiFaction, context.playerFaction,
         ...[own, targets].map(ships => ships.map(ship => [ship.id, ship.code, ship.len, ship.maxHp, ship.sunk]))]);

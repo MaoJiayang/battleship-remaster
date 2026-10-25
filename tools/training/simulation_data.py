@@ -25,15 +25,18 @@ def source_hash():
 
 
 class Environment:
-    def __init__(self, encoding="legacy"):
+    def __init__(self, encoding="legacy", reset_options=None):
         self.encoding = encoding
+        self.reset_options = dict(reset_options or {})
+        if set(self.reset_options) - {"doctrineCatalog"}:
+            raise ValueError("模拟环境重置扩展参数无效。")
         self.process = subprocess.Popen(["node", str(Path(__file__).with_name("policy-environment.mjs"))],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8",
                                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
 
     def call(self, request):
         if request.get("type") == "reset":
-            request = {**request, "encoding": self.encoding}
+            request = {**self.reset_options, **request, "encoding": self.encoding}
         self.process.stdin.write(json.dumps(request) + "\n")
         self.process.stdin.flush()
         line = self.process.stdout.readline()

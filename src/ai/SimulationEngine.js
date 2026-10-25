@@ -29,7 +29,9 @@ import {
     applyAPDefense,
     getHEProfile,
     getHEOffsets,
-    applyHEDefense
+    applyHEDefense,
+    createDoctrineVariant,
+    getDoctrine
 } from '../data/doctrines.js';
 
 const MAX_PLIES = 400;
@@ -38,8 +40,17 @@ const OTHER_SEAT = { A: 'B', B: 'A' };
 function normalizeConfig(config = {}, defaultLevel = 'HARD') {
     const level = config.level || defaultLevel;
     const base = DIFFICULTY_SETTINGS[level] || DIFFICULTY_SETTINGS.HARD;
+    let doctrine;
+    if (config.doctrine !== undefined) {
+        getDoctrine(config.doctrine);
+        if (!config.doctrine || typeof config.doctrine !== 'object' || config.doctrine.base !== (config.faction || 'us')) {
+            throw new Error('模拟学说变体与阵营原型不一致');
+        }
+        doctrine = createDoctrineVariant(config.doctrine.base, config.doctrine.parameters);
+    }
     return {
         faction: config.faction || 'us',
+        ...(doctrine ? { doctrine } : {}),
         level,
         alpha: config.alpha ?? base.alpha,
         randomness: config.randomness ?? base.randomness,
@@ -216,13 +227,14 @@ export class SimulationEngine {
             playerViewGrid: defender.view,
             sonarEvidence: attacker.sonarEvidence,
             ...(this.recordPublicHistory ? { publicEvents: this.publicHistory, decisionSeat: attacker === this.sides.A ? 'A' : 'B' } : {}),
-            aiFaction: attacker.faction,
-            playerFaction: defender.faction
+            aiFaction: attacker.config.doctrine ?? attacker.faction,
+            playerFaction: defender.config.doctrine ?? defender.faction,
+            ...(this.configA.doctrine || this.configB.doctrine ? { doctrineVariants: true } : {})
         };
     }
 
     _abilities(side, opponent) {
-        return checkAIAbilities(side.ships, side.faction, opponent.faction, {
+        return checkAIAbilities(side.ships, side.config.doctrine ?? side.faction, opponent.config.doctrine ?? opponent.faction, {
             sunkEnemyShips: opponent.ships.filter(s => s.sunk).length,
             neutralBias: side.config.neutralBias
         });
@@ -350,9 +362,9 @@ export class SimulationEngine {
     _executeAP(attacker, defender, r, c, abilities) {
         const targetSuspect = attacker.view[r][c] === VIEW_STATE.SUSPECT;
         const sunkEnemyShips = defender.ships.filter(s => s.sunk).length;
-        let damage = getAPDamage(attacker.faction, attacker.ships, { targetSuspect, sunkEnemyShips });
-        damage = applyAPDefense(defender.faction, damage);
-        const maxPenetrations = getAPMaxPenetrations(attacker.faction, attacker.ships);
+        let damage = getAPDamage(attacker.config.doctrine ?? attacker.faction, attacker.ships, { targetSuspect, sunkEnemyShips });
+        damage = applyAPDefense(defender.config.doctrine ?? defender.faction, damage);
+        const maxPenetrations = getAPMaxPenetrations(attacker.config.doctrine ?? attacker.faction, attacker.ships);
 
         const result = resolveHit(r, c, damage, defender.grid, defender.ships, false, {
             penetrate: true,
@@ -370,7 +382,7 @@ export class SimulationEngine {
     }
 
     _executeHE(attacker, defender, r, c, abilities) {
-        const profile = getHEProfile(attacker.faction, attacker.ships);
+        const profile = getHEProfile(attacker.config.doctrine ?? attacker.faction, attacker.ships);
         const offsets = getHEOffsets(profile.shape);
         const events = [];
 
@@ -388,7 +400,7 @@ export class SimulationEngine {
 
             const isCenter = dr === 0 && dc === 0;
             const baseDamage = isCenter ? profile.centerDamage : profile.outerDamage;
-            const cellDamage = isCenter ? applyHEDefense(defender.faction, baseDamage) : baseDamage;
+            const cellDamage = isCenter ? applyHEDefense(defender.config.doctrine ?? defender.faction, baseDamage) : baseDamage;
             const result = resolveHit(
                 nr, nc, cellDamage,
                 defender.grid, defender.ships, false,

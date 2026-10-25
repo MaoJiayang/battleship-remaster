@@ -46,6 +46,9 @@ function abilityFeatures(abilities) {
 }
 
 export function encodeNeuralObservation(context, options = {}) {
+    if (context.doctrineVariants || typeof context.aiFaction === 'object' || typeof context.playerFaction === 'object') {
+        throw new Error('旧观测协议不支持参数化学说');
+    }
     const view = context.viewGrid.flat();
     const ownShips = context.enemyShips;
     const targets = context.myShips.map(ship => ({ id: ship.id, code: ship.code, len: ship.len, maxHp: ship.maxHp, sunk: ship.sunk }));

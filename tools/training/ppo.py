@@ -213,6 +213,7 @@ def main():
     parser.add_argument("--minibatch", type=int, default=64)
     parser.add_argument("--seed", type=int, default=240124)
     parser.add_argument("--resume", type=Path)
+    parser.add_argument("--doctrine-catalog", type=Path)
     arguments = parser.parse_args()
     if min(arguments.iterations, arguments.games, arguments.max_plies, arguments.epochs, arguments.minibatch) < 1 or arguments.games % 2:
         parser.error("各预算必须为正整数，对局数必须为偶数。")
@@ -226,6 +227,10 @@ def main():
     device = torch.device("cuda", devices[0])
     initial = json.loads(arguments.initial.read_text(encoding="utf-8"))
     unified = initial["format"] == "naval-unified-v1"
+    catalog = json.loads(arguments.doctrine_catalog.read_text(encoding="utf-8")) if arguments.doctrine_catalog else None
+    catalog_hash = hashlib.sha256(arguments.doctrine_catalog.read_bytes()).hexdigest() if arguments.doctrine_catalog else None
+    if catalog is not None and (not isinstance(catalog, dict) or not unified or initial["rulesId"] != catalog.get("rulesId")):
+        raise ValueError("学说参数增强需使用相应独立规则范围的统一起步权重。")
     if unified:
         from unified_model import UnifiedNetwork, load_unified
         network = UnifiedNetwork(arguments.kind, initial.get("architecture")).to(device)
@@ -252,6 +257,8 @@ def main():
             raise ValueError("PPO 检查点的结构或规则不一致。")
         if unified and checkpoint.get("architecture", {"widthMultiplier": 1}) != network.architecture:
             raise ValueError("PPO 检查点的网络宽度不一致。")
+        if checkpoint.get("doctrine_catalog_sha256") != catalog_hash:
+            raise ValueError("PPO 检查点的学说变体采样目录不一致。")
         network.load_state_dict(checkpoint["network"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         generator.bit_generator.state = checkpoint["numpy_rng"]
@@ -266,7 +273,7 @@ def main():
                 parameter.requires_grad_(False)
             pool.append(frozen)
     (arguments.output / "initial-model.json").write_text(json.dumps(network.export(metadata)), encoding="utf-8")
-    environment = NeuralSelfPlayEnvironment("unified" if unified else "legacy")
+    environment = NeuralSelfPlayEnvironment("unified" if unified else "legacy", {"doctrineCatalog": catalog} if catalog is not None else None)
     source = hashlib.sha256()
     source_root = Path(__file__).resolve().parents[2]
     filenames = sorted((source_root / "src").rglob("*.js")) + sorted(Path(__file__).parent.glob("*.py")) + sorted(Path(__file__).parent.glob("*.mjs")) + sorted((source_root / "tools/sim").glob("*.mjs"))
@@ -287,6 +294,7 @@ def main():
             history.append(summary)
             metadata["training"] = {"algorithm": "PPO-clip", "gamma": 1, "advantage": "Monte-Carlo return minus frozen value",
                                     "opponent_protocol": OPPONENT_PROTOCOL,
+                                    "doctrine_catalog_sha256": catalog_hash,
                                     "reward": "terminal win=1 draw=0.5 loss=0; time-limit bootstraps own value",
                                     "initial_sha256": hashlib.sha256(arguments.initial.read_bytes()).hexdigest(),
                                     "source_sha256": source.hexdigest(), "torch": str(torch.__version__), "device": str(device),
@@ -306,6 +314,7 @@ def main():
                     pool.pop(0)
             torch.save({"network": network.state_dict(), "optimizer": optimizer.state_dict(), "kind": arguments.kind,
                         "opponent_protocol": OPPONENT_PROTOCOL,
+                        "doctrine_catalog_sha256": catalog_hash,
                         **({"architecture": dict(network.architecture)} if unified else {}),
                         "layout": layout, "seed": arguments.seed, "iteration": iteration + 1, "history": history, "numpy_rng": generator.bit_generator.state,
                         "torch_rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state_all(),

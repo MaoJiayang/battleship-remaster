@@ -51,6 +51,27 @@ def main():
             except ValueError:
                 continue
             raise RuntimeError(f"数据审计漏过语义错误：{name}")
+        if original.get("doctrine_catalog"):
+            manifest_changes = {
+                "missing-catalog": lambda manifest: manifest.pop("doctrine_catalog"),
+                "wrong-variant-domain": lambda manifest: manifest["shards"][0]["games"][0].__setitem__("doctrineRulesId", "wrong-rules"),
+                "unlisted-variant": lambda manifest: manifest["shards"][0]["games"][0]["doctrines"][0]["parameters"].__setitem__("unsupported", 1),
+                "invalid-catalog-parameter": lambda manifest: manifest["doctrine_catalog"]["variants"][0]["parameters"].__setitem__("ap.suspectBonus", 99)
+            }
+            for name, change in manifest_changes.items():
+                target = root / name
+                target.mkdir()
+                (target / entry["file"]).write_bytes((arguments.data / entry["file"]).read_bytes())
+                manifest = copy.deepcopy(original)
+                manifest["shards"] = [manifest["shards"][0]]
+                manifest["arguments"]["batches"] = 1
+                change(manifest)
+                (target / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+                try:
+                    audit(target)
+                except ValueError:
+                    continue
+                raise RuntimeError(f"数据审计漏过学说参数错误：{name}")
     print("UNIFIED DATA AUDIT SELFTEST OK: 规则、历史、分割、胜负及非法行动")
 
 

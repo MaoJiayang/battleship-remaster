@@ -5,6 +5,7 @@ import { encodeNeuralObservation, neuralAction, neuralActionIndex } from '../../
 import { encodePublicEvent } from '../../src/ai/neuralHistory.js';
 import { encodeGameUnifiedObservation, encodeGameUnifiedEvent } from '../../src/ai/unifiedAdapter.js';
 import { FACTIONS, hashSeed, mulberry32 } from '../sim/core.mjs';
+import { validateDoctrineCatalog } from './doctrine-variants.mjs';
 
 let games = [];
 let cursors = [];
@@ -35,6 +36,8 @@ function reset(spec) {
         || spec.learnerSeats.some(seat => seat !== 'A' && seat !== 'B'))) throw new Error('学习座位配置无效');
     if (spec.encoding !== undefined && !['legacy', 'unified'].includes(spec.encoding)) throw new Error('观测编码配置无效');
     encoding = spec.encoding ?? 'legacy';
+    if (spec.doctrineCatalog && encoding !== 'unified') throw new Error('学说参数增强仅支持统一观测');
+    const doctrineFamilies = spec.doctrineCatalog ? validateDoctrineCatalog(spec.doctrineCatalog) : null;
     games = [];
     cursors = [];
     mechanismCaches = [];
@@ -50,10 +53,18 @@ function reset(spec) {
             const fleetB = deployFleet(layout);
             const factionA = FACTIONS[group % 7];
             const factionB = FACTIONS[Math.floor(group / 7) % 7];
+            const variant = (family, seat) => {
+                const choices = doctrineFamilies[family];
+                const random = mulberry32(hashSeed(`ppo-doctrine|${spec.seed}|${group}|${seat}`));
+                return choices[Math.floor(random() * choices.length)];
+            };
+            const doctrineA = doctrineFamilies ? variant(factionA, 'A') : undefined;
+            const doctrineB = doctrineFamilies ? variant(factionB, 'B') : undefined;
             const learnerSeat = spec.learnerSeats?.[index];
             const nextSeat = spec.maxPlies % 2 === 0 ? 'A' : 'B';
             const maxPlies = spec.maxPlies + Number(Boolean(learnerSeat && learnerSeat !== nextSeat));
-            const game = new SimulationEngine({ faction: factionA }, { faction: factionB }, {
+            const game = new SimulationEngine({ faction: factionA, ...(doctrineA ? { doctrine: doctrineA } : {}) },
+                { faction: factionB, ...(doctrineB ? { doctrine: doctrineB } : {}) }, {
                 fleetA, fleetB, maxPlies, recordPublicHistory: true
             });
             game.policySeed = seed;
@@ -66,7 +77,8 @@ function reset(spec) {
     } finally { Math.random = saved; }
     return { observations: games.map((_, index) => observation(index)),
         configurations: games.map((game, index) => ({ index, seed: game.policySeed, layout: game.layout,
-            factions: [game.configA.faction, game.configB.faction], tuning: game.configA.tuning })) };
+            factions: [game.configA.faction, game.configB.faction], tuning: game.configA.tuning,
+            ...(doctrineFamilies ? { doctrines: [game.configA.doctrine, game.configB.doctrine], doctrineRulesId: spec.doctrineCatalog.rulesId } : {}) })) };
 }
 
 function step(commands) {
@@ -86,7 +98,9 @@ function step(commands) {
             if (command.action !== null) {
                 if (!Number.isInteger(command.action) || command.action < 0 || command.action >= 363) throw new Error('行动编号无效');
                 const context = game._decisionContext(side, game.sides[seat === 'A' ? 'B' : 'A']);
-                const encoded = encodeNeuralObservation(context, { sonarHistory: side.engine.sonarHistory });
+                const encoded = (encoding === 'unified' ? encodeGameUnifiedObservation : encodeNeuralObservation)(context,
+                    { sonarHistory: side.engine.sonarHistory, history: side.engine.actionHistory,
+                        damageGrid: side.engine.damageDealtGrid, mechanismCache: mechanismCaches[index][seat] });
                 if (!encoded.mask[command.action]) throw new Error('外部策略选择了非法行动');
                 const action = neuralAction(command.action);
                 side.engine.decide = () => side.engine.recordDecision(action, game._abilities(side, game.sides[seat === 'A' ? 'B' : 'A']), side.view);

@@ -1,6 +1,8 @@
 import argparse
 import hashlib
 import json
+import os
+import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -26,12 +28,34 @@ def audit(root, expected_rules=None):
     truncated = 0
     max_history = 0
     prior_records = 0
+    variant_games = Counter()
+    variant_parameters = Counter()
+    catalog = manifest.get("doctrine_catalog")
+    if catalog is not None:
+        validation = subprocess.run(["node", str(Path(__file__).with_name("doctrine-variants.mjs")), "--validate"],
+            input=json.dumps(catalog), text=True, encoding="utf-8", capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        if validation.returncode:
+            raise ValueError(f"学说变体目录的实际规则校验失败：{validation.stderr}")
+    allowed_variants = {json.dumps(variant, sort_keys=True) for variant in catalog["variants"]} if catalog else None
+    if catalog and catalog.get("rulesId") != manifest["layout"]["rulesId"]:
+        raise ValueError("学说变体目录与训练规则范围不一致。")
     for entry in manifest["shards"]:
         filename = root / entry["file"]
         if hashlib.sha256(filename.read_bytes()).hexdigest() != entry["sha256"]:
             raise ValueError("统一数据分片哈希不符。")
         games = {game["index"]: game for game in entry["games"]}
         for game in games.values():
+            if catalog:
+                if game.get("doctrineRulesId") != catalog["rulesId"] or len(game.get("doctrines", [])) != 2:
+                    raise ValueError("增强对局缺少实际学说参数或规则身份。")
+                for family, doctrine in zip(game["factions"], game["doctrines"]):
+                    if doctrine.get("base") != family or json.dumps(doctrine, sort_keys=True) not in allowed_variants:
+                        raise ValueError("实际对局的学说参数不属于采样目录。")
+                    variant_games[f"{family}/{'variant' if doctrine['parameters'] else 'original'}"] += 1
+                    variant_parameters.update(f"{family}/{key}={value}" for key, value in doctrine["parameters"].items())
+            elif "doctrines" in game:
+                raise ValueError("普通数据含未声明的学说参数增强。")
             configurations[tuple(game["factions"])] += 1
             games_by_split["validation" if game["validation"] else "train"] += 1
             policies[tuple(game["factions"])] += 1
@@ -86,6 +110,7 @@ def audit(root, expected_rules=None):
               "hostMatchups": {"/".join(key): value for key, value in sorted(configurations.items())},
               "policyMatchups": {"/".join(key): value for key, value in sorted(policies.items())},
               "returns": dict(returns), "maxHistory": max_history, "recordsWithHistoricalPrior": prior_records,
+              "doctrineSamples": dict(variant_games), "doctrineParameters": dict(variant_parameters),
               "manifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
               "auditSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     if complete and manifest["arguments"]["games"] % 49 == 0 and (len(configurations) != 49 or len(set(configurations.values())) != 1):

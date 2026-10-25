@@ -169,6 +169,10 @@ python tools/training/ppo.py --initial <模型.json> --output <新自对弈目�
 
 容量对照可向上述 Python 自测追加 `--width-multiplier 2`，监督预热 `expert_train.py` 也支持该参数；PPO、冻结诊断和真实终局自测按起步权重自动恢复宽度。省略结构元数据的旧权重按倍率 1 加载；自测覆盖宽度错配拒绝、旧元数据兼容、导出恢复与增量历史，远端显卡及训练后跨语言数值结果仍需逐次记录。正式包与两个冻结试玩包不随容量试验重建。
 
+参数化学说数据先运行 `node tools/training/doctrine-variants-selftest.mjs`，再以 `node tools/training/doctrine-variants.mjs <全新目录清单.json>` 生成目录；`unified_data.py` 可追加 `--doctrine-catalog <目录清单.json>`。原始七学说锚点、参数边界、序列化、真实伤害／扫描、规则隔离、配对及确定性已在本机通过；r46 冒烟采集 14 局、755 条真实教师行动、零截断，完整审计及错误注入通过。它尚非扩大训练集或棋力结果，也未加入贴边布局和非零历史先验。
+
+增强清单保存实际每局双方参数及目录来源；`audit-unified-data.py` 对增强数据额外调用 Node 的同源目录校验，核对范围、家族、实际采样成员及规则身份，并报告原型／变体及参数覆盖。普通数据审计仍只需 Python＋NumPy。`ppo.py --doctrine-catalog` 仅接受相同增强规则范围的统一起步模型，检查点恢复校验目录文件哈希；不重标现有权重。`doctrine-variants-selftest.py <增强数据目录> <目录清单.json> <新输出目录>` 仅在 CPU 上做少量真实教师更新、纯神经终局／截断 PPO 及导出对照，原生环境实测状态见 AI 实验参考。
+
 - Python 命令在远端唯一 `venv-rocm` 运行；当前本机只验证 Python 语法。新协议教师预热可从随机初始化开始，原协议仍要求 `--initial`。注意力对照使用 `--kind attention`，两结构走相同规则和预算。
 - 结构验证覆盖真实七学说隐藏敌舰字段禁读、当前能力相同但依赖不同、显式先验、3 种尺寸及 2／3／4 武器、集合顺序无关、增量与完整历史一致、跨语言数值，以及真实整局合法行动。5×7、8×4 为合成结构用例，不是其他尺寸游戏的实战验收。
 - `unified-pipeline-selftest.py <数据目录> <gru.json> <attention.json> <新输出目录>` 分开检查旧教师采集与神经自对弈，覆盖真实终局胜负回报、教师截断排除价值、末端自举、当前策略／历史快照、采样概率重算和实际 PPO 更新；PPO 不允许程序化 AI 代走。r40 的新 `neural-current-history-v1` 协议已通过原生 GPU 及 `--resume` 复验，包含与连续训练参数／下一批结果一致、历史保留、缺失协议拒绝；不与旧混合池证据混用。
