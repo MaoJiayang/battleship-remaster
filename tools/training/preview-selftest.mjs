@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { SimulationEngine } from '../../src/ai/SimulationEngine.js';
 import { DirectNeuralPolicy } from '../../src/ai/directPolicy.js';
 import { MemoryNeuralNetwork } from '../../src/ai/memoryNetwork.js';
+import { UnifiedNeuralNetwork } from '../../src/ai/unifiedNetwork.js';
 import { PreviewDecisionHistory, PreviewPolicyRuntime } from '../../src/ai/previewPolicyRuntime.js';
 import { mulberry32 } from '../sim/core.mjs';
 import { beginMatch, abandonMatch } from '../../src/game/matchRecorder.js';
@@ -10,9 +11,10 @@ import { beginMatch, abandonMatch } from '../../src/game/matchRecorder.js';
 const filename = process.env.NAVAL_PREVIEW_MODEL;
 assert.ok(filename, '请通过 NAVAL_PREVIEW_MODEL 指定体验模型');
 const model = JSON.parse(fs.readFileSync(filename, 'utf8'));
+const Network = model.format === 'naval-unified-v1' ? UnifiedNeuralNetwork : MemoryNeuralNetwork;
 Math.random = mulberry32(641235);
 for (const firstSeat of ['A', 'B']) {
-    for (const faction of ['us', 'ijn', 'sn']) {
+    for (const faction of ['us', 'ijn', 'rn', 'km', 'fn', 'rm', 'sn']) {
         const history = new PreviewDecisionHistory();
         const runtime = new PreviewPolicyRuntime(model);
         const fallback = new PreviewPolicyRuntime(model);
@@ -20,7 +22,7 @@ for (const firstSeat of ['A', 'B']) {
             firstSeat, maxPlies: 40, recordPublicHistory: true
         });
         const reference = game.sides.B.engine;
-        reference.directPolicy = new DirectNeuralPolicy(new MemoryNeuralNetwork(model));
+        reference.directPolicy = new DirectNeuralPolicy(new Network(model));
         while (!game.finished && game.plies < game.maxPlies) {
             const seat = game.currentSeat;
             const attacker = game.sides[seat];

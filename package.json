@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "single": "vite build --mode single",
-    "single:neural": "vite build --mode neural-preview"
+    "single:neural": "vite build --mode neural-preview",
+    "single:unified": "vite build --mode unified-preview"
   },
   "devDependencies": {
     "vite": "^5.2.0",

@@ -2,6 +2,7 @@ import { AIDecisionEngine } from './aiStrategy.js';
 import { checkAIAbilities } from './aiCore.js';
 import { DirectNeuralPolicy } from './directPolicy.js';
 import { MemoryNeuralNetwork } from './memoryNetwork.js';
+import { UnifiedNeuralNetwork } from './unifiedNetwork.js';
 import { publicDecisionEvent } from './neuralHistory.js';
 
 export class PreviewDecisionHistory {
@@ -37,7 +38,8 @@ export class PreviewDecisionHistory {
 export class PreviewPolicyRuntime {
     constructor(model) {
         this.engine = new AIDecisionEngine();
-        this.policy = new DirectNeuralPolicy(new MemoryNeuralNetwork(model));
+        const Network = model.format === 'naval-unified-v1' ? UnifiedNeuralNetwork : MemoryNeuralNetwork;
+        this.policy = new DirectNeuralPolicy(new Network(model));
         this.reset();
     }
 
